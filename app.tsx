@@ -308,8 +308,8 @@ function TaskStatusMark({ column }: { column: BoardColumn }) {
   }
   if (column === "done") {
     return (
-      <span aria-label="Done" title="Done" className="mt-px inline-flex size-4 shrink-0 items-center justify-center rounded-full bg-emerald-500 text-white">
-        <Icon name="Check" className="size-2.5" aria-hidden />
+      <span aria-label="Done" title="Done" className={`mt-px inline-flex size-4 shrink-0 items-center justify-center rounded-full ${COLUMN_META.done.badge}`}>
+        <Icon name="Check" className="size-3" aria-hidden />
       </span>
     );
   }
@@ -337,7 +337,11 @@ function TaskCard({ task, now, onArchive, onOpen }: {
   const titleText = category ? `[${category}] ${intent}` : intent;
   const titleNode = (
     <>
-      {category ? <span className="font-normal text-muted-foreground">[{category}] </span> : null}
+      {category ? (
+        <span className="mr-1.5 inline-block translate-y-[-1px] rounded-full bg-muted px-1.5 py-px align-middle text-[9.5px] font-semibold uppercase leading-4 tracking-wider text-muted-foreground">
+          {category}
+        </span>
+      ) : null}
       {intent}
     </>
   );
@@ -497,7 +501,6 @@ function BoardColumnView({ column, title, tasks, now, onArchive, onOpen, adding,
     <section className="relative flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-border/60 bg-muted/30">
       <span className={`absolute inset-x-0 top-0 h-0.5 ${meta.accent} opacity-70`} aria-hidden />
       <header className="flex h-10 shrink-0 items-center gap-2 px-3 pt-0.5">
-        <span className={`size-2 rounded-full ${meta.dot}`} aria-hidden />
         <h2 className={`text-[11px] font-semibold uppercase tracking-[0.12em] ${meta.title}`}>{title.toUpperCase()}</h2>
         <span className={`rounded-full px-1.5 py-px text-[10px] font-semibold tabular-nums ${meta.badge}`}>{tasks.length}</span>
         {onStartAdding && !adding ? (
@@ -614,7 +617,7 @@ function BottomBoardOverlay() {
   const { board, refetch } = api;
   useTaskStatusNotifications();
   const blockedTasks = board?.tasks.filter((task) => task.column === "blocked").length ?? 0;
-  const wipTasks = board?.tasks.filter((task) => task.column === "wip").length ?? 0;
+  const doneTasks = board?.tasks.filter((task) => task.column === "done").length ?? 0;
 
   const resizeBy = useCallback((delta: number) => {
     setPanelHeight((height) => clampPanelHeight(height + delta));
@@ -716,11 +719,11 @@ function BottomBoardOverlay() {
       >
         <Icon name={PLUGIN_ICON} className="size-4 text-muted-foreground" aria-hidden />
         Shop Kanban
-        {wipTasks > 0 ? (
-          <span className={`rounded-full px-1.5 py-px text-[10px] font-semibold tabular-nums ${COLUMN_META.wip.badge}`}>{wipTasks} wip</span>
-        ) : null}
         {blockedTasks > 0 ? (
           <span className={`rounded-full px-1.5 py-px text-[10px] font-semibold tabular-nums ${COLUMN_META.blocked.badge}`}>{blockedTasks} blocked</span>
+        ) : null}
+        {doneTasks > 0 ? (
+          <span className={`rounded-full px-1.5 py-px text-[10px] font-semibold tabular-nums ${COLUMN_META.done.badge}`}>{doneTasks} done</span>
         ) : null}
         <Icon name="ChevronUp" className="size-3.5 text-muted-foreground" aria-hidden />
       </button>

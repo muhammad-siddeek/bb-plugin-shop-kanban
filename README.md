@@ -40,7 +40,7 @@ Expected UI surfaces:
 - Bottom Shop Kanban overlay registered via `experimental_appOverlay` (the only
   surface; no nav-rail entry is registered).
 - Plugin icon: `ListTodo` (checklist).
-- Floating reopen pill when hidden (shows WIP/blocked counts).
+- Floating reopen pill when hidden (shows blocked/done counts).
 - Draggable/keyboard resizable top handle.
 - Uppercase, color-coded column headers with counts.
 - Compact cards titled `[category] user intent` (e.g. `[shop kanban] refine
