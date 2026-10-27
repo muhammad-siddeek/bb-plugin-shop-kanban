@@ -1,6 +1,7 @@
 import { definePluginApp } from "@get-bb/plugin-sdk/app";
 import { BOTTOM_BOARD_HEIGHT_VAR, BOTTOM_BOARD_OPEN_CLASS } from "./ui/model";
 import { BottomBoardOverlay } from "./ui/overlay";
+import { OmpIcon } from "./ui/provider-icons";
 
 export default definePluginApp((app) => {
   app.contentScripts.register({
@@ -28,4 +29,8 @@ export default definePluginApp((app) => {
     id: "bottom-board",
     component: BottomBoardOverlay,
   });
+
+  // Provider icon registrations are app-wide: this also replaces omp's generic glyph in bb's
+  // sidebar and pickers, not just on cards.
+  app.slots.experimental_providerIcon({ providerKind: "agent", providerId: "acp-omp", icon: OmpIcon });
 });

@@ -13,6 +13,9 @@
 - The archive button moved to the card's top-right corner and appears on
   hover or focus (always shown on touch devices). The footer keeps the
   updated time and status on the left.
+- omp threads show bb's omp mark instead of a generic toolbox, on cards and
+  in bb's sidebar and pickers, when a `customAgents` entry replaces bb's
+  shipped omp agent. The mark follows the surrounding text color.
 
 ## 0.5.0
 

@@ -33,6 +33,14 @@ Columns are derived from live thread state; you never drag cards around.
 - Clicking a card opens the thread at its latest message. The Queue `+` button
   starts a new task thread.
 
+### omp icon
+
+An ACP providers `customAgents` entry with id `omp` replaces bb's shipped omp
+agent, and bb gives custom agents a generic toolbox glyph. The plugin
+registers bb's omp mark for the `acp-omp` provider, drawn in the surrounding
+text color. The registration is app-wide, so bb's sidebar and pickers show
+the mark too, but only while this plugin is loaded.
+
 ## Model-written labels
 
 Titles, summaries, and the Blocked-vs-Done call for finished replies are
