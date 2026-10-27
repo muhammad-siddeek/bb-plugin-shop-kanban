@@ -10,7 +10,7 @@
     "name": "Shop Kanban",
     "description": "Shop Kanban board of BB thread cards.",
     "branding": {
-      "icon": "Columns"
+      "icon": "ListTodo"
     },
     "server": "./server.cjs",
     "skills": [

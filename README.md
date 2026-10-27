@@ -27,7 +27,12 @@ bb plugin run shop-kanban list --json
 
 Expected UI surfaces:
 
-- Bottom Shop Kanban overlay registered via `experimental_appOverlay`.
-- Floating reopen button when hidden.
+- Bottom Shop Kanban overlay registered via `experimental_appOverlay` (the only
+  surface; no nav-rail entry is registered).
+- Plugin icon: `ListTodo` (checklist).
+- Floating reopen pill when hidden (shows WIP/blocked counts).
 - Draggable/keyboard resizable top handle.
-- Nav panel fallback titled `Shop Kanban`.
+- Uppercase, color-coded column headers with counts.
+- Cards show title (click to open the thread), note, and a relative
+  "updated" timestamp; move/archive actions appear on hover/focus.
+- Queue `+` button opens an inline add-task form (Enter adds, Esc cancels).
