@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.7.1
+
+- Search finds running threads. They were left out of the index until they
+  settled, so a thread that kept running (or never settled) could not be found.
+  Running threads are now exported at most every 5 minutes, then once more when
+  they settle.
+
 ## 0.7.0
 
 - A search bar in the board's title bar finds past threads, archived

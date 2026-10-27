@@ -77,8 +77,9 @@ markdown file (title, then each user turn and assistant reply) under the
 plugin's host data directory and indexed by qmd's BM25 full-text search in a
 dedicated `shop-kanban` index, collection `threads`. The index syncs about 15
 seconds after the plugin loads, a few seconds after a thread goes idle, is
-archived, unarchived or deleted, and every 10 minutes. A thread is re-exported
-only when it changed, and running threads wait until they settle. Each sync
+archived, unarchived or deleted, and every 10 minutes. An idle thread is
+re-exported only when it changed; a running thread at most every 5 minutes,
+then once more when it settles, so long-running threads are searchable. Each sync
 checks which files the host actually has, so a wiped qmd index, a cleared data
 directory or a switch to another host rebuilds itself.
 

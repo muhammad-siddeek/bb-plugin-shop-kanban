@@ -9,12 +9,14 @@ import { rows, type ThreadMessage, type ThreadReader } from "./threads";
 
 // Thread search: every visible thread, archived included, is exported as one markdown file on a persistent
 // host and indexed there by qmd (BM25). Idle threads are re-exported when their `updatedAt` moves; running
-// threads wait until they settle. Searching never touches the board.
+// threads every few minutes, then once more when they settle. Searching never touches the board.
 
 const INDEX_KEY = "search-index-v1";
 /** Quiet period after thread events before syncing. */
 const SYNC_DELAY_MS = 5_000;
 const SYNC_INTERVAL_MS = 10 * 60_000;
+/** Running threads can go hours without settling, and may not bump `updatedAt` mid-turn, so they refresh on a clock. */
+const RUNNING_EXPORT_INTERVAL_MS = 5 * 60_000;
 const STARTUP_DELAY_MS = 15_000;
 const EXPORT_CONCURRENCY = 3;
 /** Threads exported per host write; the index is updated after every batch so results appear early. */
@@ -31,8 +33,8 @@ const ROLE_HEADING_LINE = /^#{1,6}\s+(User|Assistant|Message)\s*$/;
 
 const NO_HOST = "No connected host to keep the search index on (ephemeral hosts are skipped).";
 
-/** Which threads the index holds on `hostId`: thread id → the `updatedAt` that was exported. */
-type IndexState = { hostId: string | null; synced: Record<string, number> };
+/** Which threads the index holds on `hostId`: thread id → the exported `updatedAt`, or null when exported mid-run. */
+type IndexState = { hostId: string | null; synced: Record<string, number | null> };
 
 function clip(text: string, max: number): string {
   return text.length <= max ? text : `${text.slice(0, max).trimEnd()}${ELLIPSIS}`;
@@ -87,6 +89,14 @@ export function createSearchIndex(bb: BbPluginApi, reader: ThreadReader) {
   let syncAgain = false;
   let syncError: string | null = null;
   let syncTimer: ReturnType<typeof setTimeout> | undefined;
+  /** When each running thread was last exported by this process. */
+  const runningExports = new Map<string, number>();
+
+  /** Idle: whenever `updatedAt` moved since the export (a mid-run export never matches). Running: on a clock. */
+  function needsExport(thread: LiveThread, exported: number | null | undefined, now: number): boolean {
+    if (!isRunningSelf(thread)) return exported !== (thread.updatedAt ?? 0);
+    return now - (runningExports.get(thread.id) ?? 0) >= RUNNING_EXPORT_INTERVAL_MS;
+  }
 
   async function loadState(): Promise<IndexState> {
     if (state) return state;
@@ -152,8 +162,9 @@ export function createSearchIndex(bb: BbPluginApi, reader: ThreadReader) {
       Object.entries(previous.hostId === hostId ? previous.synced : {}).filter(([id]) => onHost.has(id)),
     );
     const remove = status.threadIds.filter((id) => !live.has(id));
+    const now = Date.now();
     const stale = threads
-      .filter((thread) => !isRunningSelf(thread) && synced[thread.id] !== (thread.updatedAt ?? 0))
+      .filter((thread) => needsExport(thread, synced[thread.id], now))
       .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
     // Claim the host now, so search stops waiting for it even when nothing needs exporting.
     await saveState({ hostId, synced });
@@ -171,7 +182,12 @@ export function createSearchIndex(bb: BbPluginApi, reader: ThreadReader) {
         syncError = explain(command, write?.error ?? "The host could not update the search index.");
         return;
       }
-      for (const { thread } of docs) synced[thread.id] = thread.updatedAt ?? 0;
+      for (const { thread } of docs) {
+        const running = isRunningSelf(thread);
+        synced[thread.id] = running ? null : thread.updatedAt ?? 0;
+        if (running) runningExports.set(thread.id, Date.now());
+        else runningExports.delete(thread.id);
+      }
       await saveState({ hostId, synced });
     }
     syncError = null;
