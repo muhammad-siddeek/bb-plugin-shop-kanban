@@ -5,7 +5,7 @@ export const LABEL_CONCURRENCY = 2;
 export const LABEL_PROMPT_VERSION = 5;
 
 export const LABEL_SYSTEM = [
-  "You label cards on a Kanban board where each card is a coding-agent conversation thread.",
+  "You label threads on a Kanban board where each thread is a coding-agent session.",
   "Reply with only one JSON object and nothing else.",
 ].join(" ");
 
@@ -51,7 +51,7 @@ export function labelPrompt(input: {
     input.categories.length
       ? `Categories already on the board: ${input.categories.join(", ")}`
       : "No categories on the board yet.",
-    `Current card title: ${input.currentTitle ?? input.title ?? "(none)"}`,
+    `Current thread title: ${input.currentTitle ?? input.title ?? "(none)"}`,
     `User messages in this thread, oldest first:\n"""\n${userHistory(input.firstPrompt, input.prompts)}\n"""`,
     `Latest user message (the latest exchange is about this):\n"""\n${clip(input.lastPrompt ?? input.firstPrompt, 1_500) || "(none)"}\n"""`,
     input.running
@@ -60,11 +60,11 @@ export function labelPrompt(input: {
     "",
     'Return JSON: {"category": string, "intent": string, "summary": string, "needsInput": boolean}',
     '- category: 1-2 lowercase words naming the product, repo, plugin or tool the work is about, e.g. "checkout api", "docs site", "ci pipeline". Reuse a board category only if this thread is about that same thing; otherwise make a new one. Prefer names that appear in the request.',
-    '- intent: the user\'s overall goal across the whole conversation in 2-5 words, lowercase imperative, keep acronyms and proper nouns, e.g. "refine UI", "fix flaky checkout test". It must describe what the whole conversation is about, not just the first or the latest message. Short follow-ups ("wait for them", "check on agents", "try again") do not change the goal. If later requests moved the work on (e.g. from writing docs to auditing coverage and running CI), the intent must name the broader goal. Keep the current card title only if it already describes the whole conversation; a title that names just the opening request after the work moved on is wrong.',
+    '- intent: the user\'s overall goal across the whole thread in 2-5 words, lowercase imperative, keep acronyms and proper nouns, e.g. "refine UI", "fix flaky checkout test". It must describe what the whole thread is about, not just the first or the latest message. Short follow-ups ("wait for them", "check on agents", "try again") do not change the goal. If later requests moved the work on (e.g. from writing docs to auditing coverage and running CI), the intent must name the broader goal. Keep the current thread title only if it already describes the whole thread; a title that names just the opening request after the work moved on is wrong.',
     input.running
-      ? '- summary: one sentence, at most 18 words, saying what the agent is doing now for the latest user message, present progressive, e.g. "Making card clicks scroll to the latest message."'
-      : '- summary: one sentence, at most 18 words, saying what happened in the latest exchange, past tense, no "I", e.g. "Made cards smaller, synced cards with bb threads, and added a blocked reason." Only if it stopped to ask the user something, end with what it needs, e.g. "…; asks whether to merge duplicates."',
-    "- needsInput: true only if the reply directly asks the user a question (or says it is waiting on them) and the agent cannot continue the task until they answer. False when the task is finished, even if the reply lists suggested next steps, recommendations, decisions for later, things to review or verify, or optional offers (\"I can also…\", \"let me know if you want…\").",
+      ? '- summary: one sentence, at most 18 words, saying what the agent is doing now for the latest user message, present progressive, e.g. "Making board clicks scroll to the latest message."'
+      : '- summary: one sentence, at most 18 words, saying what happened in the latest exchange, past tense, no "I", e.g. "Made the board denser, synced titles with bb threads, and added a blocked reason." Only if it stopped to ask the user something, end with what it needs, e.g. "…; asks whether to merge duplicates."',
+    "- needsInput: true only if the reply directly asks the user a question (or says it is waiting on them) and the agent cannot continue the work until they answer. False when the work is finished, even if the reply lists suggested next steps, recommendations, decisions for later, things to review or verify, or optional offers (\"I can also…\", \"let me know if you want…\").",
   ]
     .filter((line) => line !== "")
     .join("\n");

@@ -1,10 +1,10 @@
 import { PLUGIN_SLUG } from "../brand";
-import type { BoardSession } from "../server/schema";
+import type { BoardSession, SearchResponse } from "../server/schema";
 
 // Shared board types, constants, and pure helpers.
 
-// Type-only re-export of the server's schema type; keeps zod out of the browser bundle.
-export type { BoardSession };
+// Type-only re-exports of the server's schema types; keeps zod out of the browser bundle.
+export type { BoardSession, SearchResponse };
 
 export type BoardColumn = "queue" | "wip" | "blocked" | "done";
 
@@ -106,7 +106,7 @@ export function defaultPanelHeight(): number {
 }
 
 export function shortNameFromPrompt(prompt: string): string {
-  const firstLine = prompt.split(/\r?\n/u).map((line) => line.trim()).find(Boolean) ?? "New task";
+  const firstLine = prompt.split(/\r?\n/u).map((line) => line.trim()).find(Boolean) ?? "New thread";
   return firstLine.length <= 40 ? firstLine : `${firstLine.slice(0, 37).trimEnd()}…`;
 }
 

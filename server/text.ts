@@ -18,11 +18,11 @@ export function cleanShortName(value: string): string {
 }
 
 export function compactTitle(value: unknown): string {
-  const words = cleanShortName(typeof value === "string" && value.trim() ? value : "Task")
+  const words = cleanShortName(typeof value === "string" && value.trim() ? value : "Thread")
     .split(/\s+/u)
     .slice(0, 5)
     .join(" ");
-  return words || "Task";
+  return words || "Thread";
 }
 
 export function normalizeColumn(value: unknown): Column {
@@ -69,13 +69,13 @@ function inferCategory(title: string, context: string): string {
   const { category } = categoryParts(title);
   if (category) return category;
   // Tokens are 3+ non-space chars, so the result is empty only when there are none.
-  return categoryTokens(`${title} ${context}`).slice(0, 2).join(" ").slice(0, 28).trim() || "task";
+  return categoryTokens(`${title} ${context}`).slice(0, 2).join(" ").slice(0, 28).trim() || "thread";
 }
 
 export function categorizedTitle(value: string, context: string): string {
-  const title = oneLine(value) || "Task";
+  const title = oneLine(value) || "Thread";
   const { category, rest } = categoryParts(title);
-  const body = rest || "Task";
+  const body = rest || "Thread";
   return `[${category || inferCategory(body, context)}] ${body}`;
 }
 

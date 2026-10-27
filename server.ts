@@ -16,6 +16,7 @@ import { registerAgentTools, registerCli, toolHelp } from "./server/agents";
 import { createSessionInfo } from "./server/session";
 import { createLabeler } from "./server/labeler";
 import { createThreadReader } from "./server/threads";
+import { createSearchIndex } from "./server/search";
 
 export { rpcContract } from "./server/schema";
 
@@ -94,6 +95,7 @@ export default async function plugin(bb: BbPluginApi) {
   const labels = createLabeler(bb, publishBoardChanged);
   const sessions = createSessionInfo(bb);
   const reader = createThreadReader(bb);
+  const search = createSearchIndex(bb, reader);
 
   function publishBoardChanged() {
     bb.realtime.publish(BOARD_CHANGED, { at: Date.now() });
@@ -383,6 +385,7 @@ export default async function plugin(bb: BbPluginApi) {
       publishBoardChanged();
       return { ok };
     },
+    board_search: async ({ query }: { query: string }) => search.search(query),
   });
 
   const boardApi = { listBoard, spawnTask, updateTask, markTaskResult, removeTask };
@@ -406,7 +409,14 @@ export default async function plugin(bb: BbPluginApi) {
     await labels.forget(thread.id);
     await removeTask(thread.id);
     publishBoardChanged();
+    search.scheduleSync();
   });
+
+  // Settled, archived and restored threads change what the thread search index should hold.
+  const searchSyncEvents: PluginThreadEventName[] = ["thread.idle", "thread.archived", "thread.unarchived"];
+  for (const event of searchSyncEvents) {
+    bb.events.on(event, () => search.scheduleSync());
+  }
 
   const refreshEvents: PluginThreadEventName[] = ["thread.created", "thread.idle", "thread.archived", "thread.unarchived", "interaction.pending", "turn.failed", "message.queued", "experimental_thread.parentChanged"];
   for (const event of refreshEvents) {
@@ -417,6 +427,7 @@ export default async function plugin(bb: BbPluginApi) {
 
   bb.onDispose(() => {
     labels.dispose();
+    search.dispose();
     bb.log.info("disposed");
   });
 }

@@ -10,10 +10,10 @@ export type Result = z.infer<typeof resultSchema>;
 const boardColumnSchema = z.object({ id: columnSchema, title: z.string(), description: z.string() });
 
 export const COLUMNS: Record<Column, z.infer<typeof boardColumnSchema>> = {
-  queue: { id: "queue", title: "Queue", description: "Tasks waiting to be started." },
-  wip: { id: "wip", title: "WIP", description: "Tasks currently running, or with running children." },
-  blocked: { id: "blocked", title: "Blocked", description: "Idle tasks that need user input or asked a question." },
-  done: { id: "done", title: "Done", description: "Idle tasks whose last message reported completion." },
+  queue: { id: "queue", title: "Queue", description: "Threads waiting to be started." },
+  wip: { id: "wip", title: "WIP", description: "Threads currently running, or with running children." },
+  blocked: { id: "blocked", title: "Blocked", description: "Idle threads that need user input or asked a question." },
+  done: { id: "done", title: "Done", description: "Idle threads whose last message reported completion." },
 };
 
 const threadSummarySchema = z.object({
@@ -75,6 +75,25 @@ const boardStateSchema = z.object({ columns: z.array(boardColumnSchema), tasks: 
 const shortNameInput = z.string().trim().min(1).max(40);
 const threadRefSchema = z.object({ threadId: z.string() });
 
+/** A thread matching a search: any visible thread, archived or not, on the board or not. */
+const searchResultSchema = z.object({
+  threadId: z.string(),
+  title: z.string(),
+  snippet: z.string().nullable(),
+  archived: z.boolean(),
+  updatedAt: z.number().nullable(),
+});
+
+const searchResponseSchema = z.object({
+  results: z.array(searchResultSchema),
+  /** Threads in the index. */
+  indexed: z.number(),
+  /** A sync is exporting or re-indexing threads right now. */
+  indexing: z.boolean(),
+  /** Why search or the last index sync failed; null when both are fine. */
+  error: z.string().nullable(),
+});
+
 export const rpcContract = {
   board_list: { input: z.null(), output: boardStateSchema },
   board_spawn_task: {
@@ -102,6 +121,7 @@ export const rpcContract = {
   },
   board_remove_task: { input: threadRefSchema, output: z.object({ removed: z.boolean() }) },
   board_mark_read: { input: threadRefSchema, output: z.object({ ok: z.boolean() }) },
+  board_search: { input: z.object({ query: z.string().trim().min(1).max(200) }), output: searchResponseSchema },
 };
 
 export type StoredTask = {
@@ -122,3 +142,4 @@ export type StoredTask = {
 
 export type BoardTask = z.infer<typeof boardTaskSchema>;
 export type BoardSession = z.infer<typeof boardSessionSchema>;
+export type SearchResponse = z.infer<typeof searchResponseSchema>;

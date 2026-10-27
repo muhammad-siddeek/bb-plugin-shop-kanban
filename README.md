@@ -1,12 +1,12 @@
 # Shop Kanban
 
 A Kanban board for [bb](https://getbb.app) threads. It opens as an overlay at
-the bottom of the bb app and shows every non-archived top-level thread as a
-card. Child threads roll up into their parent card.
+the bottom of the bb app and shows every non-archived top-level thread. Child
+threads roll up into their parent thread.
 
 ## Columns
 
-Columns are derived from live thread state; you never drag cards around.
+Columns are derived from live thread state; you never drag threads around.
 
 - **Queue**: the thread has not started yet (pending, queued, or no output).
 - **WIP**: the thread or one of its descendants is running, including
@@ -14,9 +14,9 @@ Columns are derived from live thread state; you never drag cards around.
 - **Blocked**: the thread is idle and needs you: a pending interaction, an
   error, a failed result, or a last reply that asks a question.
 - **Done**: the thread is idle and its last reply reports completion. Unread
-  Done cards come first with a solid check; opening a card marks it read.
+  Done threads come first with a solid check; opening a thread marks it read.
 
-## Cards
+## Threads on the board
 
 - A `[category] intent` title, e.g. `[docs site] search page`. The title is
   written back to the bb sidebar thread title unless you rename the thread
@@ -30,8 +30,8 @@ Columns are derived from live thread state; you never drag cards around.
   service tier and model id. Running threads refresh these every 5 seconds,
   idle threads every minute.
 - An archive button in the top-right corner, shown on hover or focus.
-- Clicking a card opens the thread at its latest message. The Queue `+` button
-  starts a new task thread.
+- Clicking a thread opens it at its latest message. The Queue `+` button
+  starts a new thread.
 
 ### omp icon
 
@@ -58,17 +58,55 @@ bb plugin config shop-kanban set labelerCommand pi
 bb plugin config shop-kanban set labelerModels anthropic/claude-haiku-4-5
 ```
 
-With labels off, or when the CLI is unavailable, cards use heuristic titles
+With labels off, or when the CLI is unavailable, threads use heuristic titles
 and an excerpt of the latest message.
+
+## Thread search
+
+The search bar in the board's title bar finds past threads, archived
+ones included, by what was said in them. Results show the thread title, a
+matching excerpt, an Archived badge and when the thread last changed.
+Picking a result (click, or arrow keys and Enter) opens the thread in bb and
+nothing else: the board is not touched, nothing is unarchived or marked read.
+
+Search runs [qmd](https://github.com/tobi/qmd) on one connected persistent
+host: the one already holding the index while it stays connected, otherwise
+the first persistent host bb lists. Ephemeral hosts are skipped, because the
+index would go away with them. Every visible thread is exported as one
+markdown file (title, then each user turn and assistant reply) under the
+plugin's host data directory and indexed by qmd's BM25 full-text search in a
+dedicated `shop-kanban` index, collection `threads`. The index syncs about 15
+seconds after the plugin loads, a few seconds after a thread goes idle, is
+archived, unarchived or deleted, and every 10 minutes. A thread is re-exported
+only when it changed, and running threads wait until they settle. Each sync
+checks which files the host actually has, so a wiped qmd index, a cleared data
+directory or a switch to another host rebuilds itself.
+
+The host needs qmd on the bb host daemon's `PATH`, and qmd needs Node.js 22 or
+newer (its README also asks for Homebrew's SQLite on macOS, for SQLite
+extensions). Search uses only qmd's keyword index, so qmd never downloads its
+embedding models. If the daemon's `PATH` lacks qmd (common with nvm or a
+GUI-launched daemon), set `searchCommand` to qmd's absolute path. Search shows
+qmd's errors, such as a missing CLI, under the search bar.
+
+```sh
+npm install -g @tobilu/qmd                       # once, on the host
+bb plugin config shop-kanban set searchCommand "$(command -v qmd)"   # only if bb cannot find qmd
+qmd --index shop-kanban search "redis timeout"   # same index from a terminal
+```
+
+| Setting         | Default | Meaning                                                |
+| --------------- | ------- | ------------------------------------------------------ |
+| `searchCommand` | `qmd`   | qmd CLI to run. Leave empty to turn thread search off. |
 
 ## Agent tools
 
 Agents get four tools for tracking their own work on the board:
 
-- `shop_kanban_move_card`: move the current or a given card.
-- `shop_kanban_spawn_task`: spawn a child thread/card.
+- `shop_kanban_move_card`: move the current or a given thread to another column.
+- `shop_kanban_spawn_task`: spawn a child thread.
 - `shop_kanban_create_theory_tasks`: spawn one independent thread per theory.
-- `shop_kanban_mark_result`: mark a card done (success) or blocked (failure).
+- `shop_kanban_mark_result`: mark a thread done (success) or blocked (failure).
 
 The bundled `shop-kanban` skill explains when to use them.
 

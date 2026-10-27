@@ -2,8 +2,8 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { hostContract } from "../contract";
 import { LABEL_CONCURRENCY, LABEL_PROMPT_VERSION, LABEL_RETRY_MS, LABEL_SYSTEM, hashText, labelPrompt, parseLabel } from "./labels";
 import type { CardLabel, LabelView, LiveThread, ThreadDetails } from "./status";
+import { connectedHostId } from "./hosts";
 import { safe } from "./text";
-import { rows } from "./threads";
 
 // Model-written card labels: a small model on the thread's host writes the "[category] intent" title and a
 // summary of the latest interaction. Labels are stored in KV, refreshed in the background with bounded
@@ -20,7 +20,7 @@ export function createLabeler(bb: BbPluginApi, onChange: () => void) {
       type: "string",
       label: "Labeler command",
       description:
-        "CLI on the thread's host that runs a small model in print mode (pi-compatible flags: -p --model --system-prompt). Leave empty to turn model-written card labels off; the board then uses heuristic titles and excerpts.",
+        "CLI on the thread's host that runs a small model in print mode (pi-compatible flags: -p --model --system-prompt). Leave empty to turn model-written thread labels off; the board then uses heuristic titles and excerpts.",
       default: "pi",
     },
     labelerModels: {
@@ -64,10 +64,7 @@ export function createLabeler(bb: BbPluginApi, onChange: () => void) {
 
   async function resolveHostId(thread: LiveThread): Promise<string | null> {
     if (thread.hostId) return thread.hostId;
-    if (fallbackHostId) return fallbackHostId;
-    const hosts = await safe(async () => bb.sdk.hosts.list());
-    const list = rows(hosts, "hosts");
-    fallbackHostId = list.find((entry) => entry?.status === "connected")?.id ?? list[0]?.id ?? null;
+    fallbackHostId ??= await connectedHostId(bb);
     return fallbackHostId;
   }
 

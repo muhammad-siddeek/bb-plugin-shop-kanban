@@ -2,11 +2,17 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { toLiveThread, type LiveThread, type ThreadDetails } from "./status";
 import { compactTitle, safe } from "./text";
 
-// Thread reads for the board: the live thread list, descendants, parent titles, and each
-// thread's user turns and last output. Every read degrades to null/empty instead of throwing.
+// Thread reads for the board and search: the live and archived thread lists, descendants, parent
+// titles, each thread's user turns and last output, and every message of a thread for the search index.
+// Every read degrades to null/empty instead of throwing.
 
 const PAGE = 200;
 const MAX_THREADS = 5_000;
+/** The events route caps a page at 100. */
+const EVENT_PAGE = 100;
+const MAX_EVENT_PAGES = 500;
+
+export type ThreadMessage = { role: "user" | "assistant" | "message"; text: string };
 
 /** The SDK types `limit` as a string; the board has always sent a number. */
 type EventListArgs = Parameters<BbPluginApi["sdk"]["threads"]["events"]["list"]>[0];
@@ -108,12 +114,12 @@ export function createThreadReader(bb: BbPluginApi) {
     return details;
   }
 
-  /** All non-archived threads (hidden included); null when even the first page fails. */
-  async function listAllThreads(): Promise<LiveThread[] | null> {
+  /** All non-archived (or all archived) threads, hidden included; null when even the first page fails. */
+  async function listAllThreads(archived = false): Promise<LiveThread[] | null> {
     const all: LiveThread[] = [];
     for (let offset = 0; offset < MAX_THREADS; offset += PAGE) {
       const page = await safe(async () =>
-        await bb.sdk.threads.list({ archived: false, includeHidden: true, limit: PAGE, offset }),
+        await bb.sdk.threads.list({ archived, includeHidden: true, limit: PAGE, offset }),
       );
       if (page === null) return offset === 0 ? null : all;
       const list = rows(page, "threads");
@@ -124,6 +130,36 @@ export function createThreadReader(bb: BbPluginApi) {
       if (list.length < PAGE) break;
     }
     return all;
+  }
+
+  /** Every user turn and assistant reply, oldest first; null when a read fails. */
+  async function readMessages(threadId: string): Promise<ThreadMessage[] | null> {
+    const messages: ThreadMessage[] = [];
+    let afterSeq: string | undefined;
+    for (let page = 0; page < MAX_EVENT_PAGES; page += 1) {
+      const events = await safe(async () =>
+        await bb.sdk.threads.events.list({
+          threadId,
+          order: "asc",
+          limit: String(EVENT_PAGE),
+          types: ["client/turn/requested", "item/completed"],
+          ...(afterSeq ? { afterSeq } : {}),
+        }),
+      );
+      if (events === null) return null;
+      for (const event of events) {
+        if (event.type === "client/turn/requested") {
+          const text = eventText(event);
+          if (text) messages.push({ role: event.data.initiator === "user" ? "user" : "message", text });
+        } else if (event.type === "item/completed" && event.data.item.type === "agentMessage" && event.data.item.text.trim()) {
+          messages.push({ role: "assistant", text: event.data.item.text });
+        }
+      }
+      const last = events.at(-1);
+      if (!last || events.length < EVENT_PAGE) break;
+      afterSeq = String(last.seq);
+    }
+    return messages;
   }
 
   /** Every descendant of a thread (hidden included); empty when the read fails. */
@@ -145,5 +181,7 @@ export function createThreadReader(bb: BbPluginApi) {
     firstPromptCache.delete(threadId);
   }
 
-  return { getThread, titleChainForParent, threadDetails, listAllThreads, listDescendants, retain, forget };
+  return { getThread, titleChainForParent, threadDetails, listAllThreads, listDescendants, readMessages, retain, forget };
 }
+
+export type ThreadReader = ReturnType<typeof createThreadReader>;

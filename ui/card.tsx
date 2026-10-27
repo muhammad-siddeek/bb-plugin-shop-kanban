@@ -217,7 +217,7 @@ export function TaskCard({ task, now, unread, selected, invertedTheme, provider,
             </span>
           ) : null}
           {task.missingThread ? (
-            <span className="min-w-0 truncate text-[10.5px] font-medium text-rose-500" title="The BB thread for this card no longer exists">
+            <span className="min-w-0 truncate text-[10.5px] font-medium text-rose-500" title="This BB thread no longer exists">
               <span className="text-muted-foreground/50" aria-hidden>· </span>
               no thread
             </span>

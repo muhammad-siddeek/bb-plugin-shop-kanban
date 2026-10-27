@@ -52,15 +52,15 @@ function AddTaskForm({ onAdd, onCancel, onError }: {
         value={prompt}
         onChange={(event) => setPrompt(event.target.value)}
         onKeyDown={handleKeyDown}
-        placeholder="Describe a new task…"
+        placeholder="What should the new thread do?"
         disabled={pending}
         rows={3}
         className="block min-h-16 w-full resize-none bg-transparent px-1 py-0.5 text-[13px] leading-snug text-foreground outline-none placeholder:text-muted-foreground/60 disabled:cursor-wait disabled:opacity-60"
       />
       <div className="mt-1.5 flex items-center gap-1.5 border-t border-border/50 pt-1.5">
-        <span className="flex min-w-0 items-center gap-1 truncate text-[10px] text-muted-foreground/70" title="Enter to add · Shift+Enter for a new line · Esc to cancel">
+        <span className="flex min-w-0 items-center gap-1 truncate text-[10px] text-muted-foreground/70" title="Enter to start · Shift+Enter for a new line · Esc to cancel">
           <kbd className="rounded border border-border/70 bg-muted/60 px-1 font-sans text-[9px] leading-[14px] text-muted-foreground">↵</kbd>
-          <span>add</span>
+          <span>start</span>
           <kbd className="ml-1 rounded border border-border/70 bg-muted/60 px-1 font-sans text-[9px] leading-[14px] text-muted-foreground">esc</kbd>
           <span>cancel</span>
         </span>
@@ -79,9 +79,9 @@ function AddTaskForm({ onAdd, onCancel, onError }: {
           {pending ? (
             <>
               <span className="inline-flex size-2.5 animate-spin rounded-full border-[1.5px] border-primary-foreground/30 border-t-primary-foreground" aria-hidden />
-              Adding…
+              Starting…
             </>
-          ) : "Add task"}
+          ) : "Start thread"}
         </button>
       </div>
     </form>
@@ -123,7 +123,7 @@ function BoardColumnView({ column, title, tasks, now, readLocally, selectedThrea
         <h2 className={`truncate text-[11px] font-bold uppercase leading-none tracking-[0.12em] ${meta.title}`}>{title.toUpperCase()}</h2>
         <span className={`inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full px-1.5 text-[10px] font-semibold leading-none tabular-nums ${meta.badge}`}>{tasks.length}</span>
         {onStartAdding && !adding ? (
-          <IconButton icon="Plus" label="Add task" onClick={onStartAdding} small className="ml-auto" />
+          <IconButton icon="Plus" label="New thread" onClick={onStartAdding} small className="ml-auto" />
         ) : null}
       </header>
       <div data-board-column-scroll="" className="min-h-0 flex-1 space-y-1.5 overflow-y-auto overscroll-contain p-2 [scrollbar-width:thin]">
@@ -149,10 +149,10 @@ function BoardColumnView({ column, title, tasks, now, readLocally, selectedThrea
               className="flex w-full shrink-0 items-center justify-center gap-1.5 rounded-lg border border-dashed border-border/60 px-3 py-5 text-[11px] text-muted-foreground/70 transition-colors hover:border-sky-500/50 hover:bg-sky-500/5 hover:text-sky-500 focus-visible:border-sky-500/60 focus-visible:text-sky-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/20"
             >
               <Icon name="Plus" className="size-3.5" aria-hidden />
-              Add a task
+              New thread
             </button>
           ) : (
-            <ColumnEmpty>No cards</ColumnEmpty>
+            <ColumnEmpty>No threads</ColumnEmpty>
           )
         ) : null}
       </div>

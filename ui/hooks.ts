@@ -45,7 +45,7 @@ export function useTaskStatusNotifications() {
     if (!payload || typeof payload !== "object") return;
     const data = payload as { column?: string; title?: string; note?: string };
     if (data.column !== "done" && data.column !== "blocked") return;
-    console.info(`[${PLUGIN_SLUG}] ${data.title ?? "Task"} moved to ${data.column}`, data.note ?? "");
+    console.info(`[${PLUGIN_SLUG}] ${data.title ?? "Thread"} moved to ${data.column}`, data.note ?? "");
   });
 }
 

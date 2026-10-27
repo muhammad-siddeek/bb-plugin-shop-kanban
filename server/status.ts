@@ -169,7 +169,7 @@ export function deriveStatus(
   }
 
   if (runningSelf || runningChildren > 0) {
-    const reason = runningSelf ? "Running" : `${runningChildren} child task${runningChildren === 1 ? "" : "s"} running`;
+    const reason = runningSelf ? "Running" : `${runningChildren} child thread${runningChildren === 1 ? "" : "s"} running`;
     return { column: "wip", reason, description: label.summary ?? (storedFresh ? stored?.note : null) ?? promptText ?? stored?.note ?? null, runningChildren };
   }
 
@@ -182,7 +182,7 @@ export function deriveStatus(
   }
 
   if (descendants.some((child) => child.hasPendingInteraction)) {
-    return { column: "blocked", reason: "A child task is waiting for your response", description: outputText ?? stored?.note ?? promptText, runningChildren };
+    return { column: "blocked", reason: "A child thread is waiting for your response", description: outputText ?? stored?.note ?? promptText, runningChildren };
   }
 
   if (!details.output?.trim()) {

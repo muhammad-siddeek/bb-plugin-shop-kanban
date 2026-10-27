@@ -17,6 +17,7 @@ import {
 import { useBoard, useTaskStatusNotifications } from "./hooks";
 import { IconButton } from "./primitives";
 import { BoardView } from "./column";
+import { ThreadSearch } from "./search";
 
 /** Height updater for a resize-handle key, or null when the key does not resize the panel. */
 function keyboardResize(key: string): ((height: number) => number) | null {
@@ -184,10 +185,14 @@ export function BottomBoardOverlay() {
         {board ? (
           <span className="hidden items-center gap-2.5 text-xs tabular-nums text-muted-foreground sm:inline-flex">
             <span aria-hidden className="h-3.5 w-px bg-border" />
-            {board.tasks.length} task{board.tasks.length === 1 ? "" : "s"}
+            {board.tasks.length} thread{board.tasks.length === 1 ? "" : "s"}
           </span>
         ) : null}
         <CountBadge column="blocked" count={blockedTasks} />
+        <div className="ml-3 min-w-0">
+          {/* Header (40px) plus a little breathing room below the list. */}
+          <ThreadSearch maxListHeight={panelHeight - 56} />
+        </div>
         <div className="ml-auto flex items-center gap-1">
           <IconButton
             icon="ArrowReloadHorizontal"

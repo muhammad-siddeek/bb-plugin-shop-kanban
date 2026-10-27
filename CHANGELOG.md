@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- A search bar in the board's title bar finds past threads, archived
+  ones included, through a qmd full-text index of every thread's user turns
+  and assistant replies. Picking a result only opens the thread in bb; the
+  board is left as it is. New `searchCommand` setting (default `qmd`; empty
+  turns search off). The index lives on one connected persistent host, rebuilds
+  itself when its files or qmd's index go missing, and runs qmd through
+  cross-spawn so Windows npm shims work.
+- User-facing text and agent instructions (board, agent tools, bundled skill,
+  CLI output, docs) now say "thread", bb's own word, instead of task, card or
+  conversation. Tool names, RPC methods and CLI commands are unchanged.
+
 ## 0.6.0
 
 - Cards show, flush right in the footer: what the session has spent (when the
