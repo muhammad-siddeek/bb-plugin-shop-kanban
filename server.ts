@@ -395,6 +395,8 @@ type ThreadDetails = {
   lastUserInputAt: number | null;
   lastUserPrompt: string | null;
   firstUserPrompt: string | null;
+  /** Recent user messages, oldest first (at most 50). */
+  userPrompts: string[];
 };
 
 /** Model-written card label: "[category] intent" title plus a summary of the latest interaction. */
@@ -406,6 +408,12 @@ type CardLabel = {
   summary: string | null;
   needsInput: boolean | null;
   failedAt?: number;
+  /** Title the board last wrote to the bb thread, to tell our renames from the user's. */
+  appliedTitle?: string;
+  /** The title our last rename replaced; seeing it again just means a stale snapshot. */
+  replacedTitle?: string | null;
+  /** The user renamed the thread themselves; stop syncing and show their title. */
+  userTitled?: boolean;
 };
 
 type LabelView = { title: string | null; summary: string | null; needsInput: boolean | null };
@@ -470,7 +478,7 @@ function deriveStatus(
 const LABEL_MODELS = ["anthropic/claude-haiku-5-5", "anthropic/claude-haiku-4-5"];
 const LABEL_RETRY_MS = 10 * 60_000;
 const LABEL_CONCURRENCY = 2;
-const LABEL_PROMPT_VERSION = 3;
+const LABEL_PROMPT_VERSION = 5;
 
 const LABEL_SYSTEM = [
   "You label cards on a Kanban board where each card is a coding-agent conversation thread.",
@@ -491,29 +499,44 @@ function clip(value: string | null | undefined, max: number): string {
   return `${text.slice(0, head)}\n…\n${text.slice(text.length - (max - head))}`;
 }
 
+function userHistory(firstPrompt: string | null, prompts: string[]): string {
+  const list = prompts.length > 0 ? [...prompts] : firstPrompt ? [firstPrompt] : [];
+  if (firstPrompt && list[0] !== firstPrompt) list.unshift(firstPrompt);
+  const last = list.length - 1;
+  // Opening and latest messages carry the most intent; middle ones are trimmed hard.
+  const lines = list.map((text, index) => `${index + 1}. ${clip(oneLine(text), index === 0 || index === last ? 700 : 220)}`);
+  let joined = lines.join("\n");
+  while (joined.length > 5_000 && lines.length > 3) {
+    lines.splice(1, 1);
+    joined = [lines[0], "…", ...lines.slice(1)].join("\n");
+  }
+  return joined || "(none)";
+}
+
 function labelPrompt(input: {
   title: string | null;
+  currentTitle: string | null;
   firstPrompt: string | null;
   lastPrompt: string | null;
+  prompts: string[];
   output: string | null;
   running: boolean;
   categories: string[];
 }): string {
-  const sameRequest = !input.lastPrompt || input.lastPrompt === input.firstPrompt;
   return [
     input.categories.length
       ? `Categories already on the board: ${input.categories.join(", ")}`
       : "No categories on the board yet.",
-    `Thread title: ${input.title ?? "(none)"}`,
-    `First user request:\n"""\n${clip(input.firstPrompt, 1_500) || "(none)"}\n"""`,
-    sameRequest ? "" : `Latest user message:\n"""\n${clip(input.lastPrompt, 1_500)}\n"""`,
+    `Current card title: ${input.currentTitle ?? input.title ?? "(none)"}`,
+    `User messages in this thread, oldest first:\n"""\n${userHistory(input.firstPrompt, input.prompts)}\n"""`,
+    `Latest user message (the latest exchange is about this):\n"""\n${clip(input.lastPrompt ?? input.firstPrompt, 1_500) || "(none)"}\n"""`,
     input.running
       ? "The agent is still working on the latest user message."
       : `Agent's latest reply (it has finished):\n"""\n${clip(input.output, 3_500) || "(none)"}\n"""`,
     "",
     'Return JSON: {"category": string, "intent": string, "summary": string, "needsInput": boolean}',
     '- category: 1-2 lowercase words naming the product, repo, plugin or tool the work is about, e.g. "shop kanban", "verdict casebook", "bb setup". Reuse a board category only if this thread is about that same thing; otherwise make a new one. Prefer names that appear in the request.',
-    '- intent: what the user wants from the whole thread in 2-5 words, lowercase imperative, keep acronyms and proper nouns, e.g. "refine UI", "fix flaky checkout test".',
+    '- intent: the user\'s overall goal across the whole conversation in 2-5 words, lowercase imperative, keep acronyms and proper nouns, e.g. "refine UI", "fix flaky checkout test". It must describe what the whole conversation is about, not just the first or the latest message. Short follow-ups ("wait for them", "check on agents", "try again") do not change the goal. If later requests moved the work on (e.g. from writing docs to auditing coverage and running CI), the intent must name the broader goal. Keep the current card title only if it already describes the whole conversation; a title that names just the opening request after the work moved on is wrong.',
     input.running
       ? '- summary: one sentence, at most 18 words, saying what the agent is doing now for the latest user message, present progressive, e.g. "Making card clicks scroll to the latest message."'
       : '- summary: one sentence, at most 18 words, saying what happened in the latest exchange, past tense, no "I", e.g. "Made cards smaller, synced cards with bb threads, and added a blocked reason." Only if it stopped to ask the user something, end with what it needs, e.g. "…; asks whether to merge duplicates."',
@@ -602,6 +625,38 @@ export default async function plugin(bb: any) {
     }
   }
 
+  const TITLE_SETTLE_MS = 60_000;
+  const renaming = new Set<string>();
+
+  /**
+   * Keep the bb sidebar title equal to the card title. A title that differs from the one we
+   * last applied means someone renamed the thread by hand: respect it from then on.
+   */
+  function syncThreadTitle(thread: LiveThread, title: string, all: Record<string, CardLabel>) {
+    const label = all[thread.id];
+    if (!label || label.userTitled || thread.title === title || renaming.has(thread.id)) return;
+    if (label.appliedTitle && thread.title && thread.title !== label.appliedTitle && thread.title !== label.replacedTitle) {
+      all[thread.id] = { ...label, userTitled: true };
+      persistLabels();
+      publishBoardChangedSoon();
+      return;
+    }
+    // Let bb's own titler finish on brand-new threads before taking over.
+    if (!thread.title && thread.createdAt && Date.now() - thread.createdAt < TITLE_SETTLE_MS) return;
+    renaming.add(thread.id);
+    void (async () => {
+      try {
+        await bb.sdk.threads.update({ threadId: thread.id, title });
+        all[thread.id] = { ...all[thread.id], appliedTitle: title, replacedTitle: thread.title };
+        persistLabels();
+      } catch (error) {
+        bb.log.info(`rename failed for ${thread.id}: ${error instanceof Error ? error.message : String(error)}`);
+      } finally {
+        renaming.delete(thread.id);
+      }
+    })();
+  }
+
   /** Returns the current (possibly stale) label and schedules a refresh when the thread moved on. */
   function labelView(
     thread: LiveThread,
@@ -610,12 +665,12 @@ export default async function plugin(bb: any) {
     all: Record<string, CardLabel>,
   ): LabelView {
     const current = all[thread.id];
-    const titleSig = hashText(details.firstUserPrompt ?? thread.title ?? thread.id);
+    const titleSig = `v${LABEL_PROMPT_VERSION}:${details.userPrompts.length}:${details.lastUserInputAt ?? 0}:${hashText(details.firstUserPrompt ?? thread.title ?? thread.id)}`;
     const summarySig = running
       ? `v${LABEL_PROMPT_VERSION}:run:${details.lastUserInputAt ?? 0}`
       : `v${LABEL_PROMPT_VERSION}:idle:${details.lastUserInputAt ?? 0}:${hashText(details.output ?? "")}`;
-    const hasTitle = current !== undefined && current.titleSig === titleSig;
-    const fresh = hasTitle && current.summarySig === summarySig;
+    const hasTitle = current !== undefined && Boolean(current.category && current.intent);
+    const fresh = hasTitle && current.titleSig === titleSig && current.summarySig === summarySig;
     const backingOff = current?.failedAt !== undefined && Date.now() - current.failedAt < LABEL_RETRY_MS && current.summarySig === summarySig;
     const worthLabeling = running || Boolean(details.output?.trim()) || Boolean(details.lastUserPrompt);
 
@@ -632,8 +687,10 @@ export default async function plugin(bb: any) {
               system: LABEL_SYSTEM,
               prompt: labelPrompt({
                 title: thread.title,
+                currentTitle: current?.category && current.intent ? `[${current.category}] ${current.intent}` : null,
                 firstPrompt: details.firstUserPrompt,
                 lastPrompt: details.lastUserPrompt,
+                prompts: details.userPrompts,
                 output: details.output,
                 running,
                 categories,
@@ -646,20 +703,23 @@ export default async function plugin(bb: any) {
           const parsed = result?.text ? parseLabel(result.text) : null;
           if (!parsed) throw new Error(result?.error ?? "Labeler returned no usable JSON.");
           const previous = all[thread.id];
-          const keepTitle = previous !== undefined && previous.titleSig === titleSig;
+          // Only a new user message may retitle the card; summary refreshes keep the title.
+          const keepTitle = previous !== undefined && Boolean(previous.category && previous.intent) && previous.titleSig === titleSig;
           all[thread.id] = {
+            ...previous,
             titleSig,
             category: keepTitle ? previous.category : parsed.category,
             intent: keepTitle ? previous.intent : parsed.intent,
             summarySig,
             summary: parsed.summary,
             needsInput: running ? null : parsed.needsInput,
+            failedAt: undefined,
           };
         } catch (error) {
           bb.log.info(`label failed for ${thread.id}: ${error instanceof Error ? error.message : String(error)}`);
           const previous = all[thread.id];
           all[thread.id] = previous
-            ? { ...previous, summarySig, failedAt: Date.now() }
+            ? { ...previous, titleSig, summarySig, failedAt: Date.now() }
             : { titleSig: "", category: "", intent: "", summarySig, summary: null, needsInput: null, failedAt: Date.now() };
         } finally {
           labelInFlight.delete(thread.id);
@@ -670,8 +730,10 @@ export default async function plugin(bb: any) {
       pumpLabels();
     }
 
+    if (current?.userTitled && thread.title) return { title: thread.title, summary: fresh ? current.summary : null, needsInput: fresh && !running ? current.needsInput : null };
+    if (hasTitle) syncThreadTitle(thread, `[${current.category}] ${current.intent}`, all);
     return {
-      title: hasTitle && current.category && current.intent ? `[${current.category}] ${current.intent}` : null,
+      title: hasTitle ? `[${current.category}] ${current.intent}` : null,
       summary: fresh ? current.summary : null,
       needsInput: fresh && !running ? current.needsInput : null,
     };
@@ -732,20 +794,28 @@ export default async function plugin(bb: any) {
     };
   }
 
-  /** Latest user-initiated turn: time and prompt text. */
-  async function lastUserTurn(threadId: string): Promise<{ at: number | null; prompt: string | null }> {
+  function eventText(event: any): string | null {
+    return Array.isArray(event?.data?.input)
+      ? event.data.input
+          .filter((part: any) => part?.type === "text" && typeof part.text === "string")
+          .map((part: any) => part.text)
+          .join("\n") || null
+      : null;
+  }
+
+  /** Latest user-initiated turn (time and text) plus the recent user messages, oldest first. */
+  async function lastUserTurn(threadId: string): Promise<{ at: number | null; prompt: string | null; prompts: string[] }> {
     const result = await safe(async () =>
       await bb.sdk.threads.events.list({ threadId, order: "desc", limit: 50, types: ["client/turn/requested"] }),
     );
     const events: any[] = Array.isArray(result) ? result : Array.isArray(result?.events) ? result.events : [];
-    const event = events.find((entry) => entry?.data?.initiator === "user") ?? events[0];
-    const prompt = Array.isArray(event?.data?.input)
-      ? event.data.input
-          .filter((part: any) => part?.type === "text" && typeof part.text === "string")
-          .map((part: any) => part.text)
-          .join("\n")
-      : null;
-    return { at: typeof event?.createdAt === "number" ? event.createdAt : null, prompt: prompt || null };
+    const userEvents = events.filter((entry) => entry?.data?.initiator === "user");
+    const event = userEvents[0] ?? events[0];
+    const prompts = userEvents
+      .map(eventText)
+      .filter((text): text is string => Boolean(text))
+      .reverse();
+    return { at: typeof event?.createdAt === "number" ? event.createdAt : null, prompt: eventText(event), prompts };
   }
 
   /** The thread's opening user request (cached; it never changes). */
@@ -788,6 +858,7 @@ export default async function plugin(bb: any) {
       lastUserInputAt: turn.at,
       lastUserPrompt: turn.prompt,
       firstUserPrompt: firstPrompt,
+      userPrompts: turn.prompts,
     };
     detailsCache.set(thread.id, details);
     return details;
@@ -938,8 +1009,9 @@ export default async function plugin(bb: any) {
     );
 
     const time = (value: string) => Date.parse(value) || 0;
+    // Oldest first within each column (earlier timestamp at the top).
     tasks.sort((a, b) =>
-      a.column === "wip" && b.column === "wip" ? time(b.createdAt) - time(a.createdAt) : time(b.updatedAt) - time(a.updatedAt),
+      a.column === "wip" && b.column === "wip" ? time(a.createdAt) - time(b.createdAt) : time(a.updatedAt) - time(b.updatedAt),
     );
 
     return { columns: COLUMN_IDS.map((id) => COLUMNS[id]), tasks };

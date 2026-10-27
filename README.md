@@ -51,7 +51,10 @@ Expected UI surfaces:
 Card labels are written by a small model: the `bb.host` entry (`host.ts`) runs
 `pi -p` with `anthropic/claude-haiku-5-5` (fallback `claude-haiku-4-5`). Labels
 are cached in plugin kv (`labels-v2`) and refreshed only when a thread gets a
-new user message or a new final reply. The model also decides whether a
+new user message or a new final reply. The title is re-derived from all of the
+user's messages, so it follows the overall intent as the conversation moves on.
+The board also writes the card title to the bb thread title (sidebar). If you
+rename a thread yourself, the board stops syncing it and shows your title. The model also decides whether a
 finished reply is actually waiting on the user (Blocked) or done. Until a label
 exists — or if `pi` is unavailable — the card falls back to the thread title
 and an excerpt of the latest message.
