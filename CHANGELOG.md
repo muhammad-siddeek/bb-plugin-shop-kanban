@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.0
 
 - Public-release prep.
 - Configurable labeler: `labelerCommand` (default `pi`, empty turns model
