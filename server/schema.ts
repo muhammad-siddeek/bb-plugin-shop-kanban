@@ -25,6 +25,23 @@ const threadSummarySchema = z.object({
   archivedAt: z.number().nullable(),
 });
 
+/** The card thread's harness session: current execution options (display labels) and usage so far. */
+const boardSessionSchema = z.object({
+  modelId: z.string().nullable(),
+  /** Catalog display name; the raw model id until the provider's catalog has loaded. */
+  model: z.string().nullable(),
+  reasoning: z.string().nullable(),
+  /** Null for the provider's default tier. */
+  serviceTier: z.string().nullable(),
+  access: z.string().nullable(),
+  /** Spent so far in the session; null when the harness doesn't report cost. */
+  cost: z.object({ amount: z.number(), currency: z.string() }).nullable(),
+  usedTokens: z.number().nullable(),
+  contextWindow: z.number().nullable(),
+  /** Token counts are bb's estimate rather than the harness's report. */
+  estimated: z.boolean(),
+});
+
 const boardTaskSchema = z.object({
   threadId: z.string(),
   shortName: z.string(),
@@ -48,6 +65,7 @@ const boardTaskSchema = z.object({
   lastUserInputAt: z.string().nullable(),
   missingThread: z.boolean(),
   thread: threadSummarySchema.nullable(),
+  session: boardSessionSchema.nullable(),
 });
 
 const boardColumnSchema = z.object({ id: columnSchema, title: z.string(), description: z.string() });
@@ -105,3 +123,4 @@ export type StoredTask = {
 };
 
 export type BoardTask = z.infer<typeof boardTaskSchema>;
+export type BoardSession = z.infer<typeof boardSessionSchema>;

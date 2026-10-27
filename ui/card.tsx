@@ -11,6 +11,7 @@ import {
   type BoardColumn,
   type BoardTask,
 } from "./model";
+import { HarnessMeta, type AgentProvider } from "./session";
 
 // All marks share one 16px frame so they line up with the 18px title line (mt-px centers them).
 const MARK_FRAME = "mt-px inline-flex size-4 shrink-0 items-center justify-center";
@@ -59,7 +60,7 @@ function TaskStatusMark({ column, unread = false }: { column: BoardColumn; unrea
   );
 }
 
-export function TaskCard({ task, now, unread, selected, invertedTheme, onArchive, onOpen }: {
+export function TaskCard({ task, now, unread, selected, invertedTheme, provider, onArchive, onOpen }: {
   task: BoardTask;
   now: number;
   unread: boolean;
@@ -67,6 +68,8 @@ export function TaskCard({ task, now, unread, selected, invertedTheme, onArchive
   selected: boolean;
   /** Opposite of bb's active theme; the selected card renders in it so it stands out. */
   invertedTheme: ThemeScope;
+  /** The harness the card's thread runs on; null when bb's roster doesn't list it. */
+  provider: AgentProvider | null;
   onArchive: (threadId: string) => void;
   onOpen: (threadId: string) => void;
 }) {
@@ -190,6 +193,7 @@ export function TaskCard({ task, now, unread, selected, invertedTheme, onArchive
             {formatRelativeTime(activity, now)}
           </time>
         ) : null}
+        <HarnessMeta provider={provider} session={task.session} />
         {reason ? (
           <span className={`min-w-0 truncate text-[10.5px] font-medium opacity-90 ${meta.title}`} title={reason}>
             <span className="text-muted-foreground/50" aria-hidden>· </span>

@@ -35,6 +35,20 @@ export type BoardTask = {
     updatedAt: number | null;
     archivedAt: number | null;
   } | null;
+  session: BoardSession | null;
+};
+
+/** The thread's harness session, labels resolved server-side (see server/schema.ts). */
+export type BoardSession = {
+  modelId: string | null;
+  model: string | null;
+  reasoning: string | null;
+  serviceTier: string | null;
+  access: string | null;
+  cost: { amount: number; currency: string } | null;
+  usedTokens: number | null;
+  contextWindow: number | null;
+  estimated: boolean;
 };
 
 export type BoardState = {

@@ -15,6 +15,7 @@ import { categorizedTitle, cleanShortName, compactTitle, normalizeColumn, nowIso
 import { deriveStatus, isRunningSelf, toLiveThread, type CardLabel, type LabelView, type LiveThread, type ThreadDetails } from "./server/status";
 import { LABEL_CONCURRENCY, LABEL_PROMPT_VERSION, LABEL_RETRY_MS, LABEL_SYSTEM, hashText, labelPrompt, parseLabel } from "./server/labels";
 import { registerAgentTools, registerCli, toolHelp } from "./server/agents";
+import { createSessionInfo } from "./server/session";
 
 export { rpcContract } from "./server/schema";
 
@@ -91,6 +92,7 @@ export default async function plugin(bb: BbPluginApi) {
   const detailsCache = new Map<string, ThreadDetails>();
   const firstPromptCache = new Map<string, string | null>();
   const host = bb.hosts.experimental_client({ contract: hostContract });
+  const sessions = createSessionInfo(bb);
   let labels: Record<string, CardLabel> | null = null;
   let labelsWrite: Promise<void> = Promise.resolve();
   const labelQueue: Array<() => Promise<void>> = [];
@@ -420,7 +422,7 @@ export default async function plugin(bb: BbPluginApi) {
     childCount: number,
   ): Promise<BoardTask> {
     const running = isRunningSelf(thread) || descendants.some(isRunningSelf);
-    const [details, all] = await Promise.all([threadDetails(thread, !running), loadLabels()]);
+    const [details, all, session] = await Promise.all([threadDetails(thread, !running), loadLabels(), sessions.sessionFor(thread, isRunningSelf(thread))]);
     const label = labelView(thread, details, running, all);
     const derived = deriveStatus(thread, details, stored, descendants, label);
     const title = label.title ?? threadTitle(thread, stored);
@@ -446,6 +448,7 @@ export default async function plugin(bb: BbPluginApi) {
       lastUserInputAt: details.lastUserInputAt === null ? null : iso(details.lastUserInputAt),
       missingThread: false,
       thread: threadSummary(thread),
+      session,
     };
   }
 
@@ -463,6 +466,7 @@ export default async function plugin(bb: BbPluginApi) {
         lastUserInputAt: null,
         missingThread: true,
         thread: null,
+        session: null,
       };
     }
     const descendants = (await safe(async () => {
@@ -510,6 +514,7 @@ export default async function plugin(bb: BbPluginApi) {
 
     // Forget cached details for threads no longer listed.
     for (const id of detailsCache.keys()) if (!byId.has(id)) detailsCache.delete(id);
+    sessions.retain(new Set(byId.keys()));
 
     const tasks = await Promise.all(
       roots.map((thread) =>

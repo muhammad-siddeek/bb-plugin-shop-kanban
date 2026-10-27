@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Cards show the harness the thread runs on (e.g. omp, Pi, Codex) as an icon
+  right of the timestamp, using the same provider artwork as the bb sidebar.
+- Next to the harness icon: what the session has spent (when the harness
+  reports cost) and a ring with the share of the context window in use, which
+  turns amber at 70% and red at 90%.
+- Hovering or focusing the icon opens a tooltip with the harness, model,
+  thinking level, service tier, access mode, exact context tokens, and cost.
+
 ## 0.5.0
 
 - The card for the thread open in bb is highlighted: it renders in the

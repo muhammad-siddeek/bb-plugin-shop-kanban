@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { FormEvent, KeyboardEvent, ReactNode } from "react";
-import { experimental_Icon as Icon, experimental_useCodeTheme, useBbContext, useBbNavigate } from "@get-bb/plugin-sdk/app";
+import { experimental_Icon as Icon, experimental_useCodeTheme, experimental_useProviders, useBbContext, useBbNavigate } from "@get-bb/plugin-sdk/app";
 import { CLOCK_TICK_MS, columnMeta, groupTasksByColumn, isUnread, scrollThreadToLatest, shortNameFromPrompt, type BoardColumn, type BoardTask } from "./model";
 import { useNow, type BoardApi } from "./hooks";
 import { IconButton } from "./primitives";
 import { TaskCard, type ThemeScope } from "./card";
+import type { AgentProvider } from "./session";
 
 function AddTaskForm({ onAdd, onCancel, onError }: {
   onAdd: (prompt: string) => Promise<void>;
@@ -94,7 +95,7 @@ function ColumnEmpty({ children }: { children: ReactNode }) {
   );
 }
 
-function BoardColumnView({ column, title, tasks, now, readLocally, selectedThreadId, invertedTheme, onArchive, onOpen, adding, onStartAdding, addForm }: {
+function BoardColumnView({ column, title, tasks, now, readLocally, selectedThreadId, invertedTheme, providersById, onArchive, onOpen, adding, onStartAdding, addForm }: {
   column: BoardColumn;
   title: string;
   tasks: BoardTask[];
@@ -102,6 +103,7 @@ function BoardColumnView({ column, title, tasks, now, readLocally, selectedThrea
   now: number;
   selectedThreadId: string | null;
   invertedTheme: ThemeScope;
+  providersById: ReadonlyMap<string, AgentProvider>;
   onArchive: (threadId: string) => void;
   onOpen: (threadId: string) => void;
   adding: boolean;
@@ -132,6 +134,7 @@ function BoardColumnView({ column, title, tasks, now, readLocally, selectedThrea
             unread={task.column === "done" && isUnread(task, readLocally)}
             selected={task.threadId === selectedThreadId}
             invertedTheme={invertedTheme}
+            provider={task.thread?.providerId ? providersById.get(task.thread.providerId) ?? null : null}
             onArchive={onArchive}
             onOpen={onOpen}
           />
@@ -160,6 +163,9 @@ export function BoardView({ api }: { api: BoardApi }) {
   const selectedThreadId = context?.threadId ?? null;
   // The selected card renders in the opposite theme so it pops against the board.
   const invertedTheme: ThemeScope = experimental_useCodeTheme().mode === "dark" ? "light" : "dark";
+  // Same roster and lookup as bb's sidebar: a thread's harness icon is its agent provider's artwork.
+  const { providers } = experimental_useProviders();
+  const providersById = useMemo(() => new Map(providers.map((provider) => [provider.id, provider])), [providers]);
   const navigate = useBbNavigate() as { toThread?: (threadId: string) => unknown } | null;
   const { rpc, board, error, report, refetch } = api;
   // Cards opened from the board count as read right away, before bb's read state round-trips.
@@ -227,6 +233,7 @@ export function BoardView({ api }: { api: BoardApi }) {
               readLocally={readLocally}
               selectedThreadId={selectedThreadId}
               invertedTheme={invertedTheme}
+              providersById={providersById}
               onArchive={archiveTask}
               onOpen={openTask}
               adding={column.id === "queue" && adding}
