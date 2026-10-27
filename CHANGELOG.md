@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- The card for the thread open in bb is highlighted: it renders in the
+  opposite theme (light card in dark mode, dark card in light mode) with an
+  outline in its column's accent color.
+- The selected card stays fully visible: the board scrolls just enough to show
+  it when it becomes selected (from bb or the board), when it's clicked while
+  partly hidden, and when the layout shifts under it (reorders, size changes,
+  panel resize). Scrolling away yourself never snaps back.
+
 ## 0.4.0
 
 - Public-release prep.

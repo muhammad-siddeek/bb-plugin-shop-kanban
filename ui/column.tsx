@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { FormEvent, KeyboardEvent, ReactNode } from "react";
-import { experimental_Icon as Icon, useBbContext, useBbNavigate } from "@get-bb/plugin-sdk/app";
+import { experimental_Icon as Icon, experimental_useCodeTheme, useBbContext, useBbNavigate } from "@get-bb/plugin-sdk/app";
 import { CLOCK_TICK_MS, columnMeta, groupTasksByColumn, isUnread, scrollThreadToLatest, shortNameFromPrompt, type BoardColumn, type BoardTask } from "./model";
 import { useNow, type BoardApi } from "./hooks";
 import { IconButton } from "./primitives";
-import { TaskCard } from "./card";
+import { TaskCard, type ThemeScope } from "./card";
 
 function AddTaskForm({ onAdd, onCancel, onError }: {
   onAdd: (prompt: string) => Promise<void>;
@@ -94,12 +94,14 @@ function ColumnEmpty({ children }: { children: ReactNode }) {
   );
 }
 
-function BoardColumnView({ column, title, tasks, now, readLocally, onArchive, onOpen, adding, onStartAdding, addForm }: {
+function BoardColumnView({ column, title, tasks, now, readLocally, selectedThreadId, invertedTheme, onArchive, onOpen, adding, onStartAdding, addForm }: {
   column: BoardColumn;
   title: string;
   tasks: BoardTask[];
   readLocally: ReadonlySet<string>;
   now: number;
+  selectedThreadId: string | null;
+  invertedTheme: ThemeScope;
   onArchive: (threadId: string) => void;
   onOpen: (threadId: string) => void;
   adding: boolean;
@@ -120,7 +122,7 @@ function BoardColumnView({ column, title, tasks, now, readLocally, onArchive, on
           <IconButton icon="Plus" label="Add task" onClick={onStartAdding} small className="ml-auto" />
         ) : null}
       </header>
-      <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto overscroll-contain p-2 [scrollbar-width:thin]">
+      <div data-board-column-scroll="" className="min-h-0 flex-1 space-y-1.5 overflow-y-auto overscroll-contain p-2 [scrollbar-width:thin]">
         {adding ? addForm : null}
         {tasks.map((task) => (
           <TaskCard
@@ -128,6 +130,8 @@ function BoardColumnView({ column, title, tasks, now, readLocally, onArchive, on
             task={task}
             now={now}
             unread={task.column === "done" && isUnread(task, readLocally)}
+            selected={task.threadId === selectedThreadId}
+            invertedTheme={invertedTheme}
             onArchive={onArchive}
             onOpen={onOpen}
           />
@@ -153,6 +157,9 @@ function BoardColumnView({ column, title, tasks, now, readLocally, onArchive, on
 
 export function BoardView({ api }: { api: BoardApi }) {
   const context = useBbContext();
+  const selectedThreadId = context?.threadId ?? null;
+  // The selected card renders in the opposite theme so it pops against the board.
+  const invertedTheme: ThemeScope = experimental_useCodeTheme().mode === "dark" ? "light" : "dark";
   const navigate = useBbNavigate() as { toThread?: (threadId: string) => unknown } | null;
   const { rpc, board, error, report, refetch } = api;
   // Cards opened from the board count as read right away, before bb's read state round-trips.
@@ -209,7 +216,7 @@ export function BoardView({ api }: { api: BoardApi }) {
           Loading board…
         </div>
       ) : (
-        <div className="grid min-h-0 flex-1 auto-cols-[minmax(250px,1fr)] grid-flow-col gap-2.5 overflow-x-auto overscroll-x-contain p-3 [scrollbar-width:thin]">
+        <div data-board-scroll="" className="grid min-h-0 flex-1 auto-cols-[minmax(250px,1fr)] grid-flow-col gap-2.5 overflow-x-auto overscroll-x-contain p-3 [scrollbar-width:thin]">
           {board.columns.map((column) => (
             <BoardColumnView
               key={column.id}
@@ -218,6 +225,8 @@ export function BoardView({ api }: { api: BoardApi }) {
               tasks={grouped.get(column.id) ?? []}
               now={now}
               readLocally={readLocally}
+              selectedThreadId={selectedThreadId}
+              invertedTheme={invertedTheme}
               onArchive={archiveTask}
               onOpen={openTask}
               adding={column.id === "queue" && adding}

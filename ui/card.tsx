@@ -1,8 +1,24 @@
+import { useCallback, useEffect, useRef } from "react";
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
-import { COLUMN_META, columnMeta, formatRelativeTime, taskActivityTime, taskCardTitle, type BoardColumn, type BoardTask } from "./model";
+import {
+  COLUMN_META,
+  boardCardLayoutKey,
+  columnMeta,
+  formatRelativeTime,
+  revealBoardCard,
+  taskActivityTime,
+  taskCardTitle,
+  type BoardColumn,
+  type BoardTask,
+} from "./model";
 
 // All marks share one 16px frame so they line up with the 18px title line (mt-px centers them).
 const MARK_FRAME = "mt-px inline-flex size-4 shrink-0 items-center justify-center";
+const BLOCKED_STRIPE =
+  "before:absolute before:inset-y-2 before:left-0 before:w-[2px] before:rounded-r-full before:bg-rose-500/70 before:content-['']";
+
+/** Theme class that re-scopes bb's color tokens for a subtree (`.light` / `.dark`). */
+export type ThemeScope = "light" | "dark";
 
 function TaskStatusMark({ column, unread = false }: { column: BoardColumn; unread?: boolean }) {
   if (column === "wip") {
@@ -43,13 +59,58 @@ function TaskStatusMark({ column, unread = false }: { column: BoardColumn; unrea
   );
 }
 
-export function TaskCard({ task, now, unread, onArchive, onOpen }: {
+export function TaskCard({ task, now, unread, selected, invertedTheme, onArchive, onOpen }: {
   task: BoardTask;
   now: number;
   unread: boolean;
+  /** Card belongs to the thread currently open in bb. */
+  selected: boolean;
+  /** Opposite of bb's active theme; the selected card renders in it so it stands out. */
+  invertedTheme: ThemeScope;
   onArchive: (threadId: string) => void;
   onOpen: (threadId: string) => void;
 }) {
+  const ref = useRef<HTMLElement>(null);
+  const reveal = useRef({ frame: 0, force: false, layout: null as string | null });
+  // Eager reveal: keep the selected card fully visible whenever the layout around it changes (selection,
+  // mount, any re-render such as a sibling reorder or note change, resize/reflow) and whenever it is
+  // clicked. Triggers compare a scroll-independent layout key instead of listening to scroll events,
+  // so a user who scrolls away is only pulled back if the board layout actually shifts.
+  const scheduleReveal = useCallback((force = false) => {
+    const state = reveal.current;
+    state.force ||= force;
+    if (state.frame) return;
+    state.frame = requestAnimationFrame(() => {
+      state.frame = 0;
+      const card = ref.current;
+      const layout = card ? boardCardLayoutKey(card) : null;
+      if (!card || (!state.force && layout === state.layout)) return;
+      state.force = false;
+      state.layout = layout;
+      revealBoardCard(card);
+    });
+  }, []);
+  useEffect(() => {
+    if (selected) scheduleReveal();
+  });
+  useEffect(() => {
+    const card = ref.current;
+    if (!selected || !card) return;
+    const state = reveal.current;
+    const observer = new ResizeObserver(() => scheduleReveal());
+    for (const element of [card, card.closest("[data-board-column-scroll]"), card.closest("[data-board-scroll]")]) {
+      if (element) observer.observe(element);
+    }
+    return () => {
+      observer.disconnect();
+      cancelAnimationFrame(state.frame);
+      Object.assign(state, { frame: 0, force: false, layout: null });
+    };
+  }, [selected, scheduleReveal]);
+  const open = () => {
+    onOpen(task.threadId);
+    scheduleReveal(true);
+  };
   const { category, intent } = taskCardTitle(task);
   const titleText = category ? `[${category}] ${intent}` : intent;
   const emphasized = unread && task.column === "done";
@@ -66,26 +127,36 @@ export function TaskCard({ task, now, unread, onArchive, onOpen }: {
   const titleClass = `flex h-[18px] min-w-0 items-center gap-1.5 text-[13px] leading-[18px] text-foreground ${
     emphasized ? "font-semibold" : "font-medium"
   }`;
+  const meta = columnMeta(task.column);
   const activity = taskActivityTime(task);
   const canOpen = !task.missingThread;
   const reason = task.statusReason && task.column !== "done" && task.statusReason !== "Running" ? task.statusReason : null;
 
-  const stateClass =
-    task.column === "blocked"
-      ? "border-border/60 hover:border-border before:absolute before:inset-y-2 before:left-0 before:w-[2px] before:rounded-r-full before:bg-rose-500/70 before:content-['']"
-      : emphasized
-        ? "border-emerald-500/30 hover:border-emerald-500/50"
-        : "border-border/60 hover:border-border";
+  // Selection wins over the column/unread border; the blocked stripe stays either way.
+  const borderClass = selected
+    ? "border-border"
+    : emphasized
+      ? "border-emerald-500/30 hover:border-emerald-500/50"
+      : "border-border/60 hover:border-border";
+  const stateClass = task.column === "blocked" ? `${borderClass} ${BLOCKED_STRIPE}` : borderClass;
+  // Selected: flip the card into the opposite theme (bg-card, text-*, bg-muted follow) and ring it
+  // in the column accent. Outline 2px + 2px offset stays inside the column's p-2 scroll padding.
+  const surfaceClass = selected
+    ? `${invertedTheme} shadow-md outline-2 outline-offset-2 ${meta.outline}`
+    : "shadow-xs hover:shadow-sm";
 
   return (
     <article
+      ref={ref}
+      aria-current={selected ? "true" : undefined}
+      data-selected={selected ? "" : undefined}
       onClick={(event) => {
         if (!canOpen || (event.target as HTMLElement).closest("button, a, [role='button']")) return;
-        onOpen(task.threadId);
+        open();
       }}
-      className={`group relative rounded-lg border bg-card px-2.5 pb-1.5 pt-2 shadow-xs transition-[border-color,box-shadow] duration-150 hover:shadow-sm has-[[data-card-open]:focus-visible]:ring-2 has-[[data-card-open]:focus-visible]:ring-ring/60 ${
+      className={`group relative rounded-lg border bg-card px-2.5 pb-1.5 pt-2 transition-[border-color,box-shadow,background-color] duration-150 has-[[data-card-open]:focus-visible]:ring-2 has-[[data-card-open]:focus-visible]:ring-ring/60 ${
         canOpen ? "cursor-pointer" : ""
-      } ${stateClass}`}
+      } ${stateClass} ${surfaceClass}`}
     >
       <div className="flex items-start gap-2">
         <TaskStatusMark column={task.column} unread={unread} />
@@ -94,7 +165,7 @@ export function TaskCard({ task, now, unread, onArchive, onOpen }: {
             <button
               type="button"
               data-card-open=""
-              onClick={() => onOpen(task.threadId)}
+              onClick={open}
               title={`Open thread · ${titleText}`}
               className={`${titleClass} w-full rounded-sm text-left decoration-muted-foreground/40 underline-offset-2 hover:underline focus-visible:outline-none`}
             >
@@ -120,7 +191,7 @@ export function TaskCard({ task, now, unread, onArchive, onOpen }: {
           </time>
         ) : null}
         {reason ? (
-          <span className={`min-w-0 truncate text-[10.5px] font-medium opacity-90 ${columnMeta(task.column).title}`} title={reason}>
+          <span className={`min-w-0 truncate text-[10.5px] font-medium opacity-90 ${meta.title}`} title={reason}>
             <span className="text-muted-foreground/50" aria-hidden>· </span>
             {reason}
           </span>

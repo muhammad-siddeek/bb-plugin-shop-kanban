@@ -58,26 +58,31 @@ export const COLUMN_META: Record<BoardColumn, {
   title: string;
   accent: string;
   badge: string;
+  outline: string;
 }> = {
   queue: {
     title: "text-sky-500",
     accent: "bg-sky-500",
     badge: "bg-sky-500/15 text-sky-500",
+    outline: "outline-sky-500",
   },
   wip: {
     title: "text-amber-500",
     accent: "bg-amber-500",
     badge: "bg-amber-500/15 text-amber-500",
+    outline: "outline-amber-500",
   },
   blocked: {
     title: "text-rose-500",
     accent: "bg-rose-500",
     badge: "bg-rose-500/15 text-rose-500",
+    outline: "outline-rose-500",
   },
   done: {
     title: "text-emerald-500",
     accent: "bg-emerald-500",
     badge: "bg-emerald-500/15 text-emerald-500",
+    outline: "outline-emerald-500",
   },
 };
 
@@ -155,6 +160,69 @@ export function scrollThreadToLatest(threadId: string) {
     else cleanup();
   };
   window.requestAnimationFrame(tick);
+}
+
+// Reveal margins: the column list's p-2 (covers the selected card's 4px outline) and the grid's p-3.
+const REVEAL_MARGIN_Y = 8;
+const REVEAL_MARGIN_X = 12;
+
+/**
+ * Smallest scroll delta that fits [start, end] inside the band inset by `margin`: zero when it already
+ * fits, otherwise just the overshoot at the nearer edge; content larger than the band aligns its start.
+ */
+function revealDelta(start: number, end: number, bandStart: number, bandSize: number, margin: number): number {
+  const min = bandStart + margin;
+  const max = bandStart + bandSize - margin;
+  if (start < min) return Math.round(start - min);
+  if (end > max) return Math.round(end - start > max - min ? start - min : end - max);
+  return 0;
+}
+
+/**
+ * Scroll the board so `card` is fully visible with minimal movement: no scroll when it already is,
+ * otherwise only enough to clear the nearest edge — vertically in its column, horizontally in the board
+ * grid. Scrolls only the board's own containers (never `scrollIntoView`, which would move bb's layout too).
+ */
+export function revealBoardCard(card: HTMLElement) {
+  if (typeof window === "undefined") return;
+  const behavior: ScrollBehavior = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
+
+  const list = card.closest<HTMLElement>("[data-board-column-scroll]");
+  if (list) {
+    const cardRect = card.getBoundingClientRect();
+    const top = list.getBoundingClientRect().top + list.clientTop;
+    const delta = revealDelta(cardRect.top, cardRect.bottom, top, list.clientHeight, REVEAL_MARGIN_Y);
+    if (delta !== 0) list.scrollTo({ top: list.scrollTop + delta, behavior });
+  }
+
+  const column = card.closest<HTMLElement>("section");
+  const grid = column?.closest<HTMLElement>("[data-board-scroll]");
+  if (column && grid) {
+    const columnRect = column.getBoundingClientRect();
+    const left = grid.getBoundingClientRect().left + grid.clientLeft;
+    const delta = revealDelta(columnRect.left, columnRect.right, left, grid.clientWidth, REVEAL_MARGIN_X);
+    if (delta !== 0) grid.scrollTo({ left: grid.scrollLeft + delta, behavior });
+  }
+}
+
+/** Scroll-independent signature of where `card` sits on the board; changes only when the layout does. */
+export function boardCardLayoutKey(card: HTMLElement): string | null {
+  const list = card.closest<HTMLElement>("[data-board-column-scroll]");
+  const column = list?.closest<HTMLElement>("section");
+  const grid = column?.closest<HTMLElement>("[data-board-scroll]");
+  if (!list || !column || !grid) return null;
+  const cardRect = card.getBoundingClientRect();
+  const columnRect = column.getBoundingClientRect();
+  return [
+    cardRect.top - list.getBoundingClientRect().top + list.scrollTop,
+    cardRect.height,
+    list.clientHeight,
+    columnRect.left - grid.getBoundingClientRect().left + grid.scrollLeft,
+    columnRect.width,
+    grid.clientWidth,
+  ]
+    .map((value) => Math.round(value))
+    .join(":");
 }
 
 function parseTime(value: string | number | null | undefined): number | null {
