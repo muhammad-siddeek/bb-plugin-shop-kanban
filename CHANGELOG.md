@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.7.0
 
 - A search bar in the board's title bar finds past threads, archived
   ones included, through a qmd full-text index of every thread's user turns

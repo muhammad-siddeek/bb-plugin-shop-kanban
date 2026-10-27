@@ -127,7 +127,7 @@ bb shop-kanban remove <thread-id> [--json]
 From the bb plugin store, or from this repository:
 
 ```sh
-bb plugin install git:https://github.com/muhammad-siddeek/bb-plugin-shop-kanban.git@^0.6.0
+bb plugin install git:https://github.com/muhammad-siddeek/bb-plugin-shop-kanban.git@^0.7.0
 ```
 
 ## Development

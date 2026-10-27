@@ -1,6 +1,6 @@
 {
   "name": "bb-plugin-shop-kanban",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Kanban board of bb threads: live status columns, model-written titles, agent tools.",
   "license": "MIT",
   "author": "Muhammad Siddeek (https://github.com/muhammad-siddeek)",
