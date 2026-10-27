@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.5.0
 
 - The card for the thread open in bb is highlighted: it renders in the
   opposite theme (light card in dark mode, dark card in light mode) with an
