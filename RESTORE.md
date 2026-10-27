@@ -21,14 +21,18 @@ bb plugin install --yes .
 
 ## Known-good releases
 
-Releases are git tags. `v0.2.0` is the stable redesigned board: live
-thread-status columns, model-written `[category] intent` titles and summaries,
-open-at-latest, archive button.
+Releases are git tags:
+
+- `v0.3.0` — bb sidebar titles synced with card titles (follow the overall
+  user intent; manual renames respected), read/unread status on Done cards,
+  oldest-first column order.
+- `v0.2.0` — redesigned board: live thread-status columns, model-written
+  `[category] intent` titles and summaries, open-at-latest, archive button.
 
 Experiment on a branch, never on `main`:
 
 ```sh
-git switch -c experiments v0.2.0   # or: git switch experiments
+git switch experiments   # or start fresh: git switch -c <name> v0.3.0
 ```
 
 The plugin is installed from this directory (`path:`), so bb runs whatever is
@@ -37,7 +41,7 @@ checked out here after a build + reload. To go back to the release:
 ```sh
 cd ~/world/bb-plugins/shop-kanban
 git stash -u                # only if you have uncommitted experiments to keep
-git switch main             # or: git switch --detach v0.2.0
+git switch main             # or: git switch --detach v0.3.0
 bb plugin build . && bb plugin reload shop-kanban
 ```
 
