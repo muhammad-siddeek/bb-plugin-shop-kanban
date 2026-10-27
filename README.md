@@ -86,8 +86,10 @@ bb shop-kanban remove <thread-id> [--json]
 
 ## Install
 
+From the bb plugin store, or from this repository:
+
 ```sh
-bb plugin install <path-or-git-url> --yes
+bb plugin install git:https://github.com/muhammad-siddeek/bb-plugin-shop-kanban.git@^0.6.0
 ```
 
 ## Development
@@ -102,3 +104,7 @@ bb plugin reload shop-kanban
 ## Requirements
 
 bb >= 0.47.
+
+## License
+
+MIT

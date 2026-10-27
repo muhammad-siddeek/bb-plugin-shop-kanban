@@ -16,6 +16,9 @@
 - omp threads show bb's omp mark instead of a generic toolbox, on cards and
   in bb's sidebar and pickers, when a `customAgents` entry replaces bb's
   shipped omp agent. The mark follows the surrounding text color.
+- Published: MIT license, public repository at
+  github.com/muhammad-siddeek/bb-plugin-shop-kanban, and a store overview
+  (`PLUGIN_OVERVIEW.md`).
 
 ## 0.5.0
 

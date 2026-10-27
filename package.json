@@ -2,6 +2,16 @@
   "name": "bb-plugin-shop-kanban",
   "version": "0.6.0",
   "description": "Kanban board of bb threads: live status columns, model-written titles, agent tools.",
+  "license": "MIT",
+  "author": "Muhammad Siddeek (https://github.com/muhammad-siddeek)",
+  "homepage": "https://github.com/muhammad-siddeek/bb-plugin-shop-kanban#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/muhammad-siddeek/bb-plugin-shop-kanban.git"
+  },
+  "bugs": {
+    "url": "https://github.com/muhammad-siddeek/bb-plugin-shop-kanban/issues"
+  },
   "type": "commonjs",
   "engines": {
     "bb": ">=0.47",
@@ -9,7 +19,7 @@
   },
   "bb": {
     "name": "Shop Kanban",
-    "description": "Shop Kanban board of BB thread cards.",
+    "description": "Kanban board of bb threads: live status columns, model-written titles, agent tools.",
     "branding": {
       "icon": "ListTodo"
     },
@@ -31,7 +41,9 @@
     "skills",
     "dist",
     "README.md",
-    "CHANGELOG.md"
+    "PLUGIN_OVERVIEW.md",
+    "CHANGELOG.md",
+    "LICENSE"
   ],
   "dependencies": {
     "zod": "^4.6.7"
