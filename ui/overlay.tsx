@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { KeyboardEvent, PointerEvent } from "react";
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
+import { PLUGIN_NAME } from "../brand";
 import {
   BOTTOM_BOARD_HEIGHT_VAR,
   BOTTOM_BOARD_OPEN_CLASS,
@@ -141,13 +142,13 @@ export function BottomBoardOverlay() {
         type="button"
         className="group fixed bottom-4 right-4 z-50 inline-flex h-9 cursor-pointer select-none items-center gap-2 rounded-full border border-border bg-card/90 pl-2 pr-2.5 text-[13px] font-medium text-foreground shadow-[0_8px_24px_-8px_rgba(0,0,0,0.35),0_2px_6px_-2px_rgba(0,0,0,0.15)] ring-1 ring-black/5 backdrop-blur-md transition-[transform,background-color,box-shadow] duration-150 ease-out hover:-translate-y-0.5 hover:bg-card hover:shadow-[0_12px_28px_-8px_rgba(0,0,0,0.4),0_2px_6px_-2px_rgba(0,0,0,0.15)] active:translate-y-0 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         onClick={() => setOpen(true)}
-        aria-label="Open Shop Kanban board"
-        title="Open Shop Kanban board"
+        aria-label={`Open ${PLUGIN_NAME} board`}
+        title={`Open ${PLUGIN_NAME} board`}
       >
         <span className="inline-flex size-6 shrink-0 items-center justify-center rounded-full bg-muted text-foreground">
           <Icon name={PLUGIN_ICON} className="size-3.5" aria-hidden />
         </span>
-        <span className="tracking-tight">Shop Kanban</span>
+        <span className="tracking-tight">{PLUGIN_NAME}</span>
         {blockedTasks > 0 ? (
           <span className={`inline-flex h-5 items-center rounded-full px-2 text-[10px] font-semibold uppercase tracking-wide tabular-nums ${COLUMN_META.blocked.badge}`}>{blockedTasks} blocked</span>
         ) : null}
@@ -167,7 +168,7 @@ export function BottomBoardOverlay() {
       <div
         role="separator"
         aria-orientation="horizontal"
-        aria-label="Resize Shop Kanban board panel"
+        aria-label={`Resize ${PLUGIN_NAME} board panel`}
         aria-valuemin={PANEL_MIN_HEIGHT}
         aria-valuemax={maxPanelHeight()}
         aria-valuenow={panelHeight}
@@ -186,7 +187,7 @@ export function BottomBoardOverlay() {
           <span className="inline-flex size-6 shrink-0 items-center justify-center rounded-md bg-muted text-foreground">
             <Icon name={PLUGIN_ICON} className="size-3.5" aria-hidden />
           </span>
-          <span className="truncate text-[13px] font-semibold tracking-tight text-foreground">Shop Kanban</span>
+          <span className="truncate text-[13px] font-semibold tracking-tight text-foreground">{PLUGIN_NAME}</span>
         </div>
         {board ? (
           <span className="hidden items-center gap-2.5 text-xs tabular-nums text-muted-foreground sm:inline-flex">

@@ -6,7 +6,7 @@ import { useNow, type BoardApi } from "./hooks";
 import { IconButton } from "./primitives";
 import { TaskCard } from "./card";
 
-export function AddTaskForm({ onAdd, onCancel, onError }: {
+function AddTaskForm({ onAdd, onCancel, onError }: {
   onAdd: (prompt: string) => Promise<void>;
   onCancel: () => void;
   onError: (cause: unknown) => void;
@@ -86,7 +86,7 @@ export function AddTaskForm({ onAdd, onCancel, onError }: {
   );
 }
 
-export function ColumnEmpty({ children }: { children: ReactNode }) {
+function ColumnEmpty({ children }: { children: ReactNode }) {
   return (
     <div className="flex shrink-0 items-center justify-center rounded-lg border border-dashed border-border/60 px-3 py-5 text-[11px] text-muted-foreground/60">
       {children}
@@ -94,7 +94,7 @@ export function ColumnEmpty({ children }: { children: ReactNode }) {
   );
 }
 
-export function BoardColumnView({ column, title, tasks, now, readLocally, onArchive, onOpen, adding, onStartAdding, addForm }: {
+function BoardColumnView({ column, title, tasks, now, readLocally, onArchive, onOpen, adding, onStartAdding, addForm }: {
   column: BoardColumn;
   title: string;
   tasks: BoardTask[];

@@ -4,7 +4,7 @@ import { COLUMN_META, columnMeta, formatRelativeTime, taskActivityTime, taskCard
 // All marks share one 16px frame so they line up with the 18px title line (mt-px centers them).
 const MARK_FRAME = "mt-px inline-flex size-4 shrink-0 items-center justify-center";
 
-export function TaskStatusMark({ column, unread = false }: { column: BoardColumn; unread?: boolean }) {
+function TaskStatusMark({ column, unread = false }: { column: BoardColumn; unread?: boolean }) {
   if (column === "wip") {
     return (
       <span aria-label="In progress" title="In progress" className={MARK_FRAME}>

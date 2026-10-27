@@ -1,11 +1,12 @@
 import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 
-/** Server ↔ host contract. The host runs a small model (via `pi -p`) to label cards. */
+/** Server ↔ host contract. The host runs a small model through a pi-compatible CLI to label cards. */
 export const hostContract = defineRpcContract({
   complete: {
     input: z
       .object({
+        command: z.string().trim().min(1).max(200),
         system: z.string().max(8_000),
         prompt: z.string().max(60_000),
         models: z.array(z.string().min(1)).min(1).max(4),

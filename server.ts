@@ -1,8 +1,5 @@
-// Shop Kanban server.
-//
-// Reconstructed from the previously bundled server.cjs, plus derived task status:
-// every non-archived, visible, top-level BB thread is a card, and its column is
-// computed from live thread state rather than the column an agent last reported.
+// Board server: every non-archived, visible, top-level BB thread is a card, and its
+// column is derived from live thread state rather than the column an agent last reported.
 //
 //   WIP      the thread (or any descendant) is currently running
 //   Blocked  not running, and it needs the user: a pending interaction, an error,
@@ -10,12 +7,13 @@
 //   Done     not running, and the last message reports completion
 //   Queue    not started yet (pending, queued work waiting, or no turn finished)
 
+import type { BbPluginApi, PluginThreadEventName } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { hostContract } from "./contract";
 import { COLUMN_IDS, COLUMNS, rpcContract, type BoardTask, type Column, type Result, type StoredTask } from "./server/schema";
 import { categorizedTitle, cleanShortName, compactTitle, normalizeColumn, nowIso, safe } from "./server/text";
 import { deriveStatus, isRunningSelf, toLiveThread, type CardLabel, type LabelView, type LiveThread, type ThreadDetails } from "./server/status";
-import { LABEL_CONCURRENCY, LABEL_MODELS, LABEL_PROMPT_VERSION, LABEL_RETRY_MS, LABEL_SYSTEM, hashText, labelPrompt, parseLabel } from "./server/labels";
+import { LABEL_CONCURRENCY, LABEL_PROMPT_VERSION, LABEL_RETRY_MS, LABEL_SYSTEM, hashText, labelPrompt, parseLabel } from "./server/labels";
 import { registerAgentTools, registerCli, toolHelp } from "./server/agents";
 
 export { rpcContract } from "./server/schema";
@@ -37,6 +35,25 @@ function resultForUpdate(
   return columnChanged ? null : previous ?? null;
 }
 
+/** The SDK types `limit` as a string; the board has always sent a number. */
+type EventListArgs = Parameters<BbPluginApi["sdk"]["threads"]["events"]["list"]>[0];
+
+/** SDK list calls return either a bare array or an object wrapping it under `key`. */
+function rows(value: unknown, key: string): any[] {
+  const wrapped = (value as Record<string, unknown> | null | undefined)?.[key];
+  return Array.isArray(value) ? value : Array.isArray(wrapped) ? wrapped : [];
+}
+
+/** Text parts of a `client/turn/requested` event, joined. */
+function eventText(event: any): string | null {
+  return Array.isArray(event?.data?.input)
+    ? event.data.input
+        .filter((part: any) => part?.type === "text" && typeof part.text === "string")
+        .map((part: any) => part.text)
+        .join("\n") || null
+    : null;
+}
+
 function metadataFor(task: StoredTask) {
   return {
     boardTask: true,
@@ -52,8 +69,24 @@ function metadataFor(task: StoredTask) {
   };
 }
 
-export default async function plugin(bb: any) {
+export default async function plugin(bb: BbPluginApi) {
   bb.log.info("loaded");
+
+  const settings = bb.settings.define({
+    labelerCommand: {
+      type: "string",
+      label: "Labeler command",
+      description:
+        "CLI on the thread's host that runs a small model in print mode (pi-compatible flags: -p --model --system-prompt). Leave empty to turn model-written card labels off; the board then uses heuristic titles and excerpts.",
+      default: "pi",
+    },
+    labelerModels: {
+      type: "string",
+      label: "Labeler models",
+      description: "Comma-separated models to try in order.",
+      default: "anthropic/claude-haiku-4-5",
+    },
+  });
 
   const detailsCache = new Map<string, ThreadDetails>();
   const firstPromptCache = new Map<string, string | null>();
@@ -91,7 +124,7 @@ export default async function plugin(bb: any) {
     if (thread.hostId) return thread.hostId;
     if (fallbackHostId) return fallbackHostId;
     const hosts = await safe(async () => bb.sdk.hosts.list());
-    const list: any[] = Array.isArray(hosts) ? hosts : Array.isArray(hosts?.hosts) ? hosts.hosts : [];
+    const list = rows(hosts, "hosts");
     fallbackHostId = list.find((entry) => entry?.status === "connected")?.id ?? list[0]?.id ?? null;
     return fallbackHostId;
   }
@@ -160,12 +193,17 @@ export default async function plugin(bb: any) {
       labelInFlight.add(thread.id);
       labelQueue.push(async () => {
         try {
+          const { labelerCommand, labelerModels } = await settings.get();
+          const command = labelerCommand.trim();
+          const models = labelerModels.split(",").map((model) => model.trim()).filter(Boolean).slice(0, 4);
+          if (!command || models.length === 0) throw new Error("Labeler is turned off in settings.");
           const hostId = await resolveHostId(thread);
           if (!hostId) throw new Error("No connected host to run the labeler.");
           const categories = Array.from(new Set(Object.values(all).map((entry) => entry.category).filter(Boolean))).slice(0, 30);
           const result = await host.call(
             "complete",
             {
+              command,
               system: LABEL_SYSTEM,
               prompt: labelPrompt({
                 title: thread.title,
@@ -177,7 +215,7 @@ export default async function plugin(bb: any) {
                 running,
                 categories,
               }),
-              models: LABEL_MODELS,
+              models,
               timeoutMs: 12_000,
             },
             { hostId },
@@ -276,21 +314,16 @@ export default async function plugin(bb: any) {
     };
   }
 
-  function eventText(event: any): string | null {
-    return Array.isArray(event?.data?.input)
-      ? event.data.input
-          .filter((part: any) => part?.type === "text" && typeof part.text === "string")
-          .map((part: any) => part.text)
-          .join("\n") || null
-      : null;
+  function turnRequests(threadId: string, order: "asc" | "desc", limit: number) {
+    return safe(async () =>
+      await bb.sdk.threads.events.list({ threadId, order, limit, types: ["client/turn/requested"] } as unknown as EventListArgs),
+    );
   }
 
   /** Latest user-initiated turn (time and text) plus the recent user messages, oldest first. */
   async function lastUserTurn(threadId: string): Promise<{ at: number | null; prompt: string | null; prompts: string[] }> {
-    const result = await safe(async () =>
-      await bb.sdk.threads.events.list({ threadId, order: "desc", limit: 50, types: ["client/turn/requested"] }),
-    );
-    const events: any[] = Array.isArray(result) ? result : Array.isArray(result?.events) ? result.events : [];
+    const result = await turnRequests(threadId, "desc", 50);
+    const events = rows(result, "events");
     const userEvents = events.filter((entry) => entry?.data?.initiator === "user");
     const event = userEvents[0] ?? events[0];
     const prompts = userEvents
@@ -303,18 +336,11 @@ export default async function plugin(bb: any) {
   /** The thread's opening user request (cached; it never changes). */
   async function firstUserPrompt(threadId: string): Promise<string | null> {
     if (firstPromptCache.has(threadId)) return firstPromptCache.get(threadId) ?? null;
-    const result = await safe(async () =>
-      await bb.sdk.threads.events.list({ threadId, order: "asc", limit: 10, types: ["client/turn/requested"] }),
-    );
+    const result = await turnRequests(threadId, "asc", 10);
     if (result === null) return null;
-    const events: any[] = Array.isArray(result) ? result : Array.isArray(result?.events) ? result.events : [];
+    const events = rows(result, "events");
     const event = events.find((entry) => entry?.data?.initiator === "user") ?? events[0];
-    const prompt = Array.isArray(event?.data?.input)
-      ? event.data.input
-          .filter((part: any) => part?.type === "text" && typeof part.text === "string")
-          .map((part: any) => part.text)
-          .join("\n") || null
-      : null;
+    const prompt = eventText(event);
     firstPromptCache.set(threadId, prompt);
     return prompt;
   }
@@ -354,12 +380,12 @@ export default async function plugin(bb: any) {
         await bb.sdk.threads.list({ archived: false, includeHidden: true, limit: PAGE, offset }),
       );
       if (page === null) return offset === 0 ? null : all;
-      const rows: any[] = Array.isArray(page) ? page : Array.isArray(page?.threads) ? page.threads : [];
-      for (const row of rows) {
+      const list = rows(page, "threads");
+      for (const row of list) {
         const thread = toLiveThread(row);
         if (thread) all.push(thread);
       }
-      if (rows.length < PAGE) break;
+      if (list.length < PAGE) break;
     }
     return all;
   }
@@ -441,8 +467,7 @@ export default async function plugin(bb: any) {
     }
     const descendants = (await safe(async () => {
       const result = await bb.sdk.threads.experimental_listDescendants({ threadIds: [thread.id], includeHidden: true });
-      const rows: any[] = Array.isArray(result) ? result : Array.isArray(result?.threads) ? result.threads : [];
-      return rows.map(toLiveThread).filter((entry): entry is LiveThread => entry !== null);
+      return rows(result, "threads").map(toLiveThread).filter((entry): entry is LiveThread => entry !== null);
     })) ?? [];
     return materialize(thread, stored, descendants, descendants.filter((entry) => entry.parentThreadId === thread.id).length);
   }
@@ -613,9 +638,7 @@ export default async function plugin(bb: any) {
   }
 
   async function archiveThread(threadId: string): Promise<boolean> {
-    if ((await safe(() => bb.sdk.threads.archive({ threadId }))) !== null) return true;
-    if ((await safe(() => bb.sdk.threads.archive({ id: threadId }))) !== null) return true;
-    return (await safe(() => bb.sdk.threads.archive(threadId))) !== null;
+    return (await safe(() => bb.sdk.threads.archive({ threadId }))) !== null;
   }
 
   async function markTaskResult(threadId: string, success: boolean, summary: string) {
@@ -686,7 +709,8 @@ export default async function plugin(bb: any) {
     publishBoardChanged();
   });
 
-  for (const event of ["thread.created", "thread.idle", "thread.archived", "thread.unarchived", "interaction.pending", "turn.failed", "message.queued", "experimental_thread.parentChanged"]) {
+  const refreshEvents: PluginThreadEventName[] = ["thread.created", "thread.idle", "thread.archived", "thread.unarchived", "interaction.pending", "turn.failed", "message.queued", "experimental_thread.parentChanged"];
+  for (const event of refreshEvents) {
     bb.events.on(event, () => publishBoardChanged());
   }
 

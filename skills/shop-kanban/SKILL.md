@@ -22,7 +22,7 @@ Give every task a short title that describes the **whole conversation goal**, no
 
 Use the task description/note to say **how far the work has gotten** and what changed most recently.
 
-Look at all tasks on the board holistically and group related tasks with a 1-2 word bracketed category prefix, for example `[shop kanban]`. The board also auto-adds this prefix for new tasks when it is missing.
+Look at all tasks on the board holistically and group related tasks with a 1-2 word bracketed category prefix, for example `[docs site]`. The board also auto-adds this prefix for new tasks when it is missing.
 
 When one BB session spawns another, the child title is:
 
@@ -32,7 +32,7 @@ Keep each segment short, usually 2-5 words and under 40 characters, for example:
 
 - `[auth race] auth race > [auth race] cache theory`
 - `[checkout] checkout bug > [checkout] retry fix`
-- `[shop kanban] board UI > [shop kanban] task tools`
+- `[docs site] search page > [docs site] result ranking`
 
 ## Tools
 

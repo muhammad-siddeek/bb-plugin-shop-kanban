@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { PLUGIN_NAME, PLUGIN_SLUG, TOOL_PREFIX } from "../brand";
 import { COLUMN_IDS, COLUMNS, columnSchema, type BoardTask, type Column, type Result } from "./schema";
 
 export type BoardApi = {
@@ -9,22 +10,28 @@ export type BoardApi = {
   removeTask(threadId: string, options?: { archiveThread?: boolean }): Promise<boolean>;
 };
 
+const TOOLS = {
+  moveCard: `${TOOL_PREFIX}_move_card`,
+  spawnTask: `${TOOL_PREFIX}_spawn_task`,
+  createTheoryTasks: `${TOOL_PREFIX}_create_theory_tasks`,
+  markResult: `${TOOL_PREFIX}_mark_result`,
+};
+
 export function toolHelp(titleChain: string): string {
   return [
     `You are working on Kanban card ${JSON.stringify(titleChain)}.`,
-    "Move the card as work progresses with shop_kanban_move_card. Columns are Queue, WIP, Blocked, and Done.",
-    "When you finish, call shop_kanban_mark_result with success=true or success=false and a short summary.",
+    `Move the card as work progresses with ${TOOLS.moveCard}. Columns are Queue, WIP, Blocked, and Done.`,
+    `When you finish, call ${TOOLS.markResult} with success=true or success=false and a short summary.`,
     "Task titles should describe the whole conversation goal, not the latest implementation step.",
     "Task descriptions/notes should describe how far the work has gotten and what changed most recently.",
-    "The board categorizes task titles holistically and prefixes them with a 1-2 word bracketed category such as [shop kanban].",
+    "The board categorizes task titles holistically and prefixes them with a 1-2 word bracketed category such as [docs site].",
     "When spawning from a parent task, titles are formatted as parent > child, so keep each segment short.",
   ].join("\n");
 }
 
-
 export function registerAgentTools(bb: any, { spawnTask, updateTask, markTaskResult }: BoardApi) {
   bb.agents.registerTool({
-    name: "shop_kanban_move_card",
+    name: TOOLS.moveCard,
     description: "Move the current or specified Kanban board thread card to another column as work progresses.",
     instructions:
       "Use this when your task state changes. If no threadId is supplied, it updates the current thread. Columns: queue, wip, blocked, done.",
@@ -59,7 +66,7 @@ export function registerAgentTools(bb: any, { spawnTask, updateTask, markTaskRes
   });
 
   bb.agents.registerTool({
-    name: "shop_kanban_spawn_task",
+    name: TOOLS.spawnTask,
     description: "Spawn a new BB thread as a Kanban card, usually as a child of the current card.",
     instructions:
       "Choose a shortName that describes the whole conversation goal, not just the latest step. The board will add a 1-2 word bracketed category prefix based on all board tasks. Child cards are titled parent > child, so keep names short.",
@@ -79,7 +86,7 @@ export function registerAgentTools(bb: any, { spawnTask, updateTask, markTaskRes
   });
 
   bb.agents.registerTool({
-    name: "shop_kanban_create_theory_tasks",
+    name: TOOLS.createTheoryTasks,
     description:
       "For an investigation card, spawn one independent BB thread/card per theory so separate agents can try different solutions.",
     instructions:
@@ -116,7 +123,7 @@ export function registerAgentTools(bb: any, { spawnTask, updateTask, markTaskRes
             `Try this theory independently: ${theory.theory}`,
             "Investigate or implement the smallest convincing test/solution.",
             "Do not assume another theory task will do your work.",
-            "When done, call shop_kanban_mark_result with success=true if the theory worked, otherwise success=false, and include a concise summary.",
+            `When done, call ${TOOLS.markResult} with success=true if the theory worked, otherwise success=false, and include a concise summary.`,
           ].join("\n\n");
         spawned.push(
           await spawnTask({
@@ -135,7 +142,7 @@ export function registerAgentTools(bb: any, { spawnTask, updateTask, markTaskRes
   });
 
   bb.agents.registerTool({
-    name: "shop_kanban_mark_result",
+    name: TOOLS.markResult,
     description: "Mark the current or specified Kanban card as done or blocked when the agent finishes.",
     instructions:
       "Always call this when finishing a Kanban task. Include a concise summary. Success moves to Done; failure moves to Blocked.",
@@ -158,50 +165,45 @@ export function registerAgentTools(bb: any, { spawnTask, updateTask, markTaskRes
   });
 
   bb.agents.configure(() => ({
-    tools: ["shop_kanban_move_card", "shop_kanban_spawn_task", "shop_kanban_create_theory_tasks", "shop_kanban_mark_result"],
-    skills: ["shop-kanban"],
+    tools: Object.values(TOOLS),
+    skills: [PLUGIN_SLUG],
     instructions: [
-      "Shop Kanban plugin workflow:",
-      "- Treat Kanban cards as BB threads. Move your card between columns with shop_kanban_move_card as work progresses.",
-      "- For investigation work, produce theories, then call shop_kanban_create_theory_tasks so each theory gets an independent BB thread/agent. The board only shows top-level non-archived cards; child/sub-task threads are tracked but hidden from the board.",
+      `${PLUGIN_NAME} plugin workflow:`,
+      `- Treat Kanban cards as BB threads. Move your card between columns with ${TOOLS.moveCard} as work progresses.`,
+      `- For investigation work, produce theories, then call ${TOOLS.createTheoryTasks} so each theory gets an independent BB thread/agent. The board only shows top-level non-archived cards; child/sub-task threads are tracked but hidden from the board.`,
       "- A card title should describe the whole conversation goal, not the latest implementation step.",
       "- A card description/note should describe how far the work has gotten and what changed most recently.",
-      "- Look at the board holistically and group related tasks with a 1-2 word bracketed category prefix, for example [shop kanban]. The board also auto-adds this prefix for new tasks when missing.",
+      "- Look at the board holistically and group related tasks with a 1-2 word bracketed category prefix, for example [docs site]. The board also auto-adds this prefix for new tasks when missing.",
       "- When a BB session spawns another, the child title is parent > child. Keep each segment short (usually 2-5 words).",
-      "- The board columns are Queue, WIP, Blocked, and Done. When finished, call shop_kanban_mark_result with success or failure and a concise summary.",
+      `- The board columns are Queue, WIP, Blocked, and Done. When finished, call ${TOOLS.markResult} with success or failure and a concise summary.`,
     ].join("\n"),
   }));
-
 }
 
 export function registerCli(bb: any, { listBoard, spawnTask, updateTask, markTaskResult, removeTask }: BoardApi) {
+  const cli = `bb ${PLUGIN_SLUG}`;
+  const commands = [
+    { name: "list", summary: "List Kanban cards", usage: `${cli} list [--json]` },
+    { name: "add", summary: "Spawn a Kanban task thread", usage: `${cli} add <short-name> -- <prompt> [--json]` },
+    { name: "move", summary: "Move a card", usage: `${cli} move <thread-id> <column> [note] [--json]` },
+    { name: "success", summary: "Mark a card done", usage: `${cli} success <thread-id> <summary> [--json]` },
+    { name: "fail", summary: "Mark a card blocked", usage: `${cli} fail <thread-id> <summary> [--json]` },
+    { name: "children", summary: "Show or hide a parent's child cards", usage: `${cli} children <parent-thread-id> <show|hide> [--json]` },
+    { name: "remove", summary: "Archive/remove a card from the board", usage: `${cli} remove <thread-id> [--json]` },
+  ];
+  const usage = [
+    "Usage:",
+    ...commands.map((command) => `  ${command.usage.replace("<column>", `<${COLUMN_IDS.join("|")}>`)}`),
+  ].join("\n");
   bb.cli.register({
-    name: "shop-kanban",
+    name: PLUGIN_SLUG,
     summary: "Manage the Kanban board of BB thread cards",
-    commands: [
-      { name: "list", summary: "List Kanban cards", usage: "bb shop-kanban list [--json]" },
-      { name: "add", summary: "Spawn a Kanban task thread", usage: "bb shop-kanban add <short-name> -- <prompt> [--json]" },
-      { name: "move", summary: "Move a card", usage: "bb shop-kanban move <thread-id> <column> [note] [--json]" },
-      { name: "success", summary: "Mark a card done", usage: "bb shop-kanban success <thread-id> <summary> [--json]" },
-      { name: "fail", summary: "Mark a card blocked", usage: "bb shop-kanban fail <thread-id> <summary> [--json]" },
-      { name: "children", summary: "Show or hide a parent's child cards", usage: "bb shop-kanban children <parent-thread-id> <show|hide> [--json]" },
-      { name: "remove", summary: "Archive/remove a card from the board", usage: "bb shop-kanban remove <thread-id> [--json]" },
-    ],
+    commands,
     async run(argv: string[]) {
       const json = argv.includes("--json");
       const args = argv.filter((arg) => arg !== "--json");
       const [command] = args;
       const reply = (value: unknown, text: string) => ({ exitCode: 0, stdout: json ? JSON.stringify(value) : text });
-      const usage = [
-        "Usage:",
-        "  bb shop-kanban list [--json]",
-        "  bb shop-kanban add <short-name> -- <prompt> [--json]",
-        `  bb shop-kanban move <thread-id> <${COLUMN_IDS.join("|")}> [note] [--json]`,
-        "  bb shop-kanban success <thread-id> <summary> [--json]",
-        "  bb shop-kanban fail <thread-id> <summary> [--json]",
-        "  bb shop-kanban children <parent-thread-id> <show|hide> [--json]",
-        "  bb shop-kanban remove <thread-id> [--json]",
-      ].join("\n");
       try {
         if (command === "list") {
           const board = await listBoard();
@@ -252,5 +254,4 @@ export function registerCli(bb: any, { listBoard, spawnTask, updateTask, markTas
       }
     },
   });
-
 }

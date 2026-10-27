@@ -1,6 +1,5 @@
 import { oneLine } from "./text";
 
-export const LABEL_MODELS = ["anthropic/claude-haiku-5-5", "anthropic/claude-haiku-4-5"];
 export const LABEL_RETRY_MS = 10 * 60_000;
 export const LABEL_CONCURRENCY = 2;
 export const LABEL_PROMPT_VERSION = 5;
@@ -16,7 +15,7 @@ export function hashText(value: string): string {
   return `${value.length}:${(hash >>> 0).toString(36)}`;
 }
 
-export function clip(value: string | null | undefined, max: number): string {
+function clip(value: string | null | undefined, max: number): string {
   if (!value) return "";
   const text = value.replace(/```[\s\S]*?```/g, "[code]").trim();
   if (text.length <= max) return text;
@@ -24,7 +23,7 @@ export function clip(value: string | null | undefined, max: number): string {
   return `${text.slice(0, head)}\n…\n${text.slice(text.length - (max - head))}`;
 }
 
-export function userHistory(firstPrompt: string | null, prompts: string[]): string {
+function userHistory(firstPrompt: string | null, prompts: string[]): string {
   const list = prompts.length > 0 ? [...prompts] : firstPrompt ? [firstPrompt] : [];
   if (firstPrompt && list[0] !== firstPrompt) list.unshift(firstPrompt);
   const last = list.length - 1;
@@ -60,7 +59,7 @@ export function labelPrompt(input: {
       : `Agent's latest reply (it has finished):\n"""\n${clip(input.output, 3_500) || "(none)"}\n"""`,
     "",
     'Return JSON: {"category": string, "intent": string, "summary": string, "needsInput": boolean}',
-    '- category: 1-2 lowercase words naming the product, repo, plugin or tool the work is about, e.g. "shop kanban", "verdict casebook", "bb setup". Reuse a board category only if this thread is about that same thing; otherwise make a new one. Prefer names that appear in the request.',
+    '- category: 1-2 lowercase words naming the product, repo, plugin or tool the work is about, e.g. "checkout api", "docs site", "ci pipeline". Reuse a board category only if this thread is about that same thing; otherwise make a new one. Prefer names that appear in the request.',
     '- intent: the user\'s overall goal across the whole conversation in 2-5 words, lowercase imperative, keep acronyms and proper nouns, e.g. "refine UI", "fix flaky checkout test". It must describe what the whole conversation is about, not just the first or the latest message. Short follow-ups ("wait for them", "check on agents", "try again") do not change the goal. If later requests moved the work on (e.g. from writing docs to auditing coverage and running CI), the intent must name the broader goal. Keep the current card title only if it already describes the whole conversation; a title that names just the opening request after the work moved on is wrong.',
     input.running
       ? '- summary: one sentence, at most 18 words, saying what the agent is doing now for the latest user message, present progressive, e.g. "Making card clicks scroll to the latest message."'

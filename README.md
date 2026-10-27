@@ -1,64 +1,89 @@
-# shop-kanban
+# Shop Kanban
 
-Durable source checkout for the BB Shop Kanban plugin.
+A Kanban board for [bb](https://getbb.app) threads. It opens as an overlay at
+the bottom of the bb app and shows every non-archived top-level thread as a
+card. Child threads roll up into their parent card.
 
-The installed BB plugin id is `shop-kanban`.
+## Columns
 
-## Build
+Columns are derived from live thread state; you never drag cards around.
+
+- **Queue**: the thread has not started yet (pending, queued, or no output).
+- **WIP**: the thread or one of its descendants is running, including
+  background work.
+- **Blocked**: the thread is idle and needs you: a pending interaction, an
+  error, a failed result, or a last reply that asks a question.
+- **Done**: the thread is idle and its last reply reports completion. Unread
+  Done cards come first with a solid check; opening a card marks it read.
+
+## Cards
+
+- A `[category] intent` title, e.g. `[docs site] search page`. The title is
+  written back to the bb sidebar thread title unless you rename the thread
+  yourself.
+- A two-line summary of the latest exchange.
+- A relative "updated" time and an archive button.
+- Clicking a card opens the thread at its latest message. The Queue `+` button
+  starts a new task thread.
+
+## Model-written labels
+
+Titles, summaries, and the Blocked-vs-Done call for finished replies are
+written by a small model. The plugin runs a pi-compatible CLI
+(`-p --model --system-prompt`) on the thread's host. Labels are cached and
+refreshed only when a thread gets a new user message or a new final reply.
+
+| Setting          | Default                      | Meaning                                         |
+| ---------------- | ---------------------------- | ----------------------------------------------- |
+| `labelerCommand` | `pi`                         | CLI to run. Leave empty to turn model labels off. |
+| `labelerModels`  | `anthropic/claude-haiku-4-5` | Comma-separated models to try in order.         |
 
 ```sh
-bb plugin build .
+bb plugin config shop-kanban set labelerCommand pi
+bb plugin config shop-kanban set labelerModels anthropic/claude-haiku-4-5
 ```
 
-## Install / reload from this durable path
+With labels off, or when the CLI is unavailable, cards use heuristic titles
+and an excerpt of the latest message.
+
+## Agent tools
+
+Agents get four tools for tracking their own work on the board:
+
+- `shop_kanban_move_card`: move the current or a given card.
+- `shop_kanban_spawn_task`: spawn a child thread/card.
+- `shop_kanban_create_theory_tasks`: spawn one independent thread per theory.
+- `shop_kanban_mark_result`: mark a card done (success) or blocked (failure).
+
+The bundled `shop-kanban` skill explains when to use them.
+
+## CLI
 
 ```sh
-bb plugin install --yes .
-# or, after source-only edits:
+bb shop-kanban list [--json]
+bb shop-kanban add <short-name> -- <prompt> [--json]
+bb shop-kanban move <thread-id> <column> [note] [--json]
+bb shop-kanban success <thread-id> <summary> [--json]
+bb shop-kanban fail <thread-id> <summary> [--json]
+bb shop-kanban children <parent-thread-id> <show|hide> [--json]
+bb shop-kanban remove <thread-id> [--json]
+```
+
+## Install
+
+```sh
+bb plugin install <path-or-git-url> --yes
+```
+
+## Development
+
+```sh
+npm install
+npm run typecheck
+bb plugin build .
 bb plugin reload shop-kanban
 ```
 
-## Verify
+## Requirements
 
-```sh
-bb plugin source shop-kanban
-bb plugin run shop-kanban list --json
-```
-
-Board contents and status (derived from live thread state in `server.ts`):
-
-- Every non-archived, visible, top-level BB thread is a card; child threads
-  roll up into their parent.
-- **WIP**: the thread or any descendant is running (incl. background work).
-- **Blocked**: not running and needs the user: pending interaction, error,
-  reported failure, or the last message asks a question / requests input.
-- **Done**: not running and the last message reports completion. Unread done
-  cards (bb's unread state) show a solid green check and sit above read ones;
-  opening a card marks its thread read and drops it to the read group. Both
-  groups are in timestamp order.
-- **Queue**: not started yet (pending/queued, or no output).
-
-Expected UI surfaces:
-
-- Bottom Shop Kanban overlay registered via `experimental_appOverlay` (the only
-  surface; no nav-rail entry is registered).
-- Plugin icon: `ListTodo` (checklist).
-- Floating reopen pill when hidden (shows blocked/done counts).
-- Draggable/keyboard resizable top handle.
-- Uppercase, color-coded column headers with counts.
-- Compact cards titled `[category] user intent` (e.g. `[shop kanban] refine
-  UI`), a two-line summary of the most recent interaction, a relative
-  "updated" timestamp, and an archive button at the bottom right (archives the
-  BB thread). Clicking a card opens the thread scrolled to the latest message.
-
-Card labels are written by a small model: the `bb.host` entry (`host.ts`) runs
-`pi -p` with `anthropic/claude-haiku-5-5` (fallback `claude-haiku-4-5`). Labels
-are cached in plugin kv (`labels-v2`) and refreshed only when a thread gets a
-new user message or a new final reply. The title is re-derived from all of the
-user's messages, so it follows the overall intent as the conversation moves on.
-The board also writes the card title to the bb thread title (sidebar). If you
-rename a thread yourself, the board stops syncing it and shows your title. The model also decides whether a
-finished reply is actually waiting on the user (Blocked) or done. Until a label
-exists — or if `pi` is unavailable — the card falls back to the thread title
-and an excerpt of the latest message.
-- Queue `+` button opens an inline add-task form (Enter adds, Esc cancels).
+bb >= 0.47.

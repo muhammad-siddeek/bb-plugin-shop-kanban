@@ -1,4 +1,6 @@
-// Shared board types, constants, and pure helpers. Behavior contract: do not change signatures.
+import { PLUGIN_SLUG } from "../brand";
+
+// Shared board types, constants, and pure helpers.
 
 export type BoardColumn = "queue" | "wip" | "blocked" | "done";
 
@@ -43,53 +45,38 @@ export type BoardState = {
 export const PLUGIN_ICON = "ListTodo";
 export const BOARD_REFRESH_MS = 1000;
 export const CLOCK_TICK_MS = 15_000;
-export const BOTTOM_BOARD_OPEN_CLASS = "shop-kanban-bottom-open";
-export const BOTTOM_BOARD_HEIGHT_VAR = "--shop-kanban-bottom-height";
-export const DEFAULT_PANEL_MIN_HEIGHT = 320;
+export const BOTTOM_BOARD_OPEN_CLASS = `${PLUGIN_SLUG}-bottom-open`;
+export const BOTTOM_BOARD_HEIGHT_VAR = `--${PLUGIN_SLUG}-bottom-height`;
+const DEFAULT_PANEL_MIN_HEIGHT = 320;
 export const PANEL_MIN_HEIGHT = 240;
-export const PANEL_MAX_HEIGHT_RATIO = 0.9;
+const PANEL_MAX_HEIGHT_RATIO = 0.9;
 export const PANEL_KEYBOARD_STEP = 24;
 export const PANEL_KEYBOARD_LARGE_STEP = 96;
-export const COLUMNS: BoardColumn[] = ["queue", "wip", "blocked", "done"];
+const COLUMNS: BoardColumn[] = ["queue", "wip", "blocked", "done"];
 
 export const COLUMN_META: Record<BoardColumn, {
-  label: string;
   title: string;
-  dot: string;
   accent: string;
-  hover: string;
   badge: string;
 }> = {
   queue: {
-    label: "Queue",
     title: "text-sky-500",
-    dot: "bg-sky-500",
     accent: "bg-sky-500",
-    hover: "hover:bg-sky-500/10 hover:text-sky-500",
     badge: "bg-sky-500/15 text-sky-500",
   },
   wip: {
-    label: "WIP",
     title: "text-amber-500",
-    dot: "bg-amber-500",
     accent: "bg-amber-500",
-    hover: "hover:bg-amber-500/10 hover:text-amber-500",
     badge: "bg-amber-500/15 text-amber-500",
   },
   blocked: {
-    label: "Blocked",
     title: "text-rose-500",
-    dot: "bg-rose-500",
     accent: "bg-rose-500",
-    hover: "hover:bg-rose-500/10 hover:text-rose-500",
     badge: "bg-rose-500/15 text-rose-500",
   },
   done: {
-    label: "Done",
     title: "text-emerald-500",
-    dot: "bg-emerald-500",
     accent: "bg-emerald-500",
-    hover: "hover:bg-emerald-500/10 hover:text-emerald-500",
     badge: "bg-emerald-500/15 text-emerald-500",
   },
 };
@@ -117,12 +104,11 @@ export function shortNameFromPrompt(prompt: string): string {
   return firstLine.length <= 40 ? firstLine : `${firstLine.slice(0, 37).trimEnd()}…`;
 }
 
-export function stripCategory(value: string): string {
+function stripCategory(value: string): string {
   const match = value.match(/^\s*\[[^\]]+\]\s*(.*)$/u);
   return (match ? match[1] : value).trim();
 }
 
-/** Card title without the bracketed category tag; prefers the untruncated title chain. */
 /** Card title as "[category] intent"; the category comes from the first segment that has one. */
 export function taskCardTitle(task: BoardTask): { category: string | null; intent: string } {
   const segments = task.titleChain.split(" > ");
@@ -133,7 +119,7 @@ export function taskCardTitle(task: BoardTask): { category: string | null; inten
   return { category, intent };
 }
 
-export const SCROLL_TO_LATEST_SELECTOR = 'button[aria-label="Scroll to latest event"]';
+const SCROLL_TO_LATEST_SELECTOR = 'button[aria-label="Scroll to latest event"]';
 
 /**
  * After opening a thread, jump its timeline to the newest message. bb restores the last
@@ -171,7 +157,7 @@ export function scrollThreadToLatest(threadId: string) {
   window.requestAnimationFrame(tick);
 }
 
-export function parseTime(value: string | number | null | undefined): number | null {
+function parseTime(value: string | number | null | undefined): number | null {
   if (value === null || value === undefined) return null;
   const ms = typeof value === "number" ? value : Date.parse(value);
   return Number.isFinite(ms) ? ms : null;
@@ -185,7 +171,7 @@ export function taskActivityTime(task: BoardTask): number | null {
   return candidates.length ? Math.max(...candidates) : null;
 }
 
-export function plural(count: number, unit: string): string {
+function plural(count: number, unit: string): string {
   return `${count} ${unit}${count === 1 ? "" : "s"} ago`;
 }
 

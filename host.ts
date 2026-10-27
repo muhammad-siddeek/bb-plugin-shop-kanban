@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { experimental_defineHostEntry } from "@get-bb/plugin-sdk/host";
 import { hostContract } from "./contract";
 
-const PI_FLAGS = [
+const LABELER_FLAGS = [
   "-p",
   "--no-session",
   "--no-tools",
@@ -15,9 +15,9 @@ const PI_FLAGS = [
   "off",
 ];
 
-function runPi(args: string[], timeoutMs: number, signal: AbortSignal): Promise<{ code: number | null; stdout: string; stderr: string }> {
+function runLabeler(command: string, args: string[], timeoutMs: number, signal: AbortSignal): Promise<{ code: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
-    const child = spawn("pi", args, {
+    const child = spawn(command, args, {
       cwd: process.env.HOME || "/",
       env: process.env,
       stdio: ["ignore", "pipe", "pipe"],
@@ -49,13 +49,13 @@ function runPi(args: string[], timeoutMs: number, signal: AbortSignal): Promise<
 export default experimental_defineHostEntry({
   contract: hostContract,
   handlers: {
-    complete: async ({ system, prompt, models, timeoutMs }, context) => {
+    complete: async ({ command, system, prompt, models, timeoutMs }, context) => {
       let lastError: string | null = null;
       for (const model of models) {
-        const result = await runPi([...PI_FLAGS, "--model", model, "--system-prompt", system, prompt], timeoutMs, context.signal);
+        const result = await runLabeler(command, [...LABELER_FLAGS, "--model", model, "--system-prompt", system, prompt], timeoutMs, context.signal);
         const text = result.stdout.trim();
         if (result.code === 0 && text) return { text, model, error: null };
-        lastError = (result.stderr || result.stdout).trim().slice(-500) || `pi exited with ${result.code}`;
+        lastError = (result.stderr || result.stdout).trim().slice(-500) || `${command} exited with ${result.code}`;
         if (context.signal.aborted) break;
       }
       return { text: null, model: null, error: lastError };

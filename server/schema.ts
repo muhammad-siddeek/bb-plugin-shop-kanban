@@ -5,7 +5,7 @@ export type Column = (typeof COLUMN_IDS)[number];
 export type Result = "success" | "failed";
 
 export const columnSchema = z.enum(COLUMN_IDS);
-export const resultSchema = z.enum(["success", "failed"]);
+const resultSchema = z.enum(["success", "failed"]);
 
 export const COLUMNS: Record<Column, { id: Column; title: string; description: string }> = {
   queue: { id: "queue", title: "Queue", description: "Tasks waiting to be started." },
@@ -14,7 +14,7 @@ export const COLUMNS: Record<Column, { id: Column; title: string; description: s
   done: { id: "done", title: "Done", description: "Idle tasks whose last message reported completion." },
 };
 
-export const threadSummarySchema = z.object({
+const threadSummarySchema = z.object({
   id: z.string(),
   title: z.string().nullable(),
   titleFallback: z.string().nullable(),
@@ -25,7 +25,7 @@ export const threadSummarySchema = z.object({
   archivedAt: z.number().nullable(),
 });
 
-export const boardTaskSchema = z.object({
+const boardTaskSchema = z.object({
   threadId: z.string(),
   shortName: z.string(),
   titleChain: z.string(),
@@ -50,8 +50,8 @@ export const boardTaskSchema = z.object({
   thread: threadSummarySchema.nullable(),
 });
 
-export const boardColumnSchema = z.object({ id: columnSchema, title: z.string(), description: z.string() });
-export const boardStateSchema = z.object({ columns: z.array(boardColumnSchema), tasks: z.array(boardTaskSchema) });
+const boardColumnSchema = z.object({ id: columnSchema, title: z.string(), description: z.string() });
+const boardStateSchema = z.object({ columns: z.array(boardColumnSchema), tasks: z.array(boardTaskSchema) });
 
 export const rpcContract = {
   board_list: { input: z.null(), output: boardStateSchema },

@@ -1,6 +1,7 @@
 {
   "name": "bb-plugin-shop-kanban",
   "version": "0.3.0",
+  "description": "Kanban board of bb threads: live status columns, model-written titles, agent tools.",
   "type": "commonjs",
   "engines": {
     "bb": ">=0.47",
@@ -19,6 +20,19 @@
     "app": "./app.tsx",
     "host": "./host.ts"
   },
+  "files": [
+    "brand.ts",
+    "server.ts",
+    "server",
+    "host.ts",
+    "contract.ts",
+    "app.tsx",
+    "ui",
+    "skills",
+    "dist",
+    "README.md",
+    "CHANGELOG.md"
+  ],
   "dependencies": {
     "zod": "^4.6.7"
   },

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
+import { PLUGIN_SLUG } from "../brand";
 import { BOARD_REFRESH_MS, type BoardState } from "./model";
 
 // ---------------------------------------------------------------------------
@@ -48,11 +49,8 @@ export function useTaskStatusNotifications() {
     if (!payload || typeof payload !== "object") return;
     const data = payload as { column?: string; title?: string; note?: string };
     if (data.column !== "done" && data.column !== "blocked") return;
-    // Historical UI surfaced this as a toast. Keep the subscription so the overlay wakes/refetches
-    // even in BB builds where the toaster shim is not available to this reconstructed source.
-    console.info(`[shop-kanban] ${data.title ?? "Task"} moved to ${data.column}`, data.note ?? "");
+    console.info(`[${PLUGIN_SLUG}] ${data.title ?? "Task"} moved to ${data.column}`, data.note ?? "");
   });
 }
-
 
 export type BoardApi = ReturnType<typeof useBoard>;

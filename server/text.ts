@@ -8,8 +8,8 @@ export function oneLine(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
 
-export const SHORT_NAME_MAX = 40;
-export const SHORT_NAME_CUT = 37;
+const SHORT_NAME_MAX = 40;
+const SHORT_NAME_CUT = 37;
 export const ELLIPSIS = "…";
 
 export function cleanShortName(value: string): string {
@@ -48,41 +48,28 @@ export function normalizeColumn(value: unknown): Column {
   }
 }
 
-export const CATEGORY_STOPWORDS = new Set([
+const CATEGORY_STOPWORDS = new Set([
   "the", "and", "for", "with", "from", "into", "onto", "this", "that", "task", "tasks", "card", "cards",
   "make", "move", "change", "update", "fix", "add", "new", "user", "agent", "session", "thread", "work",
 ]);
 
-export function categoryParts(value: string): { category: string | null; rest: string } {
+function categoryParts(value: string): { category: string | null; rest: string } {
   const match = value.match(/^\[([^\]]{1,40})\]\s*(.*)$/u);
   return match
     ? { category: cleanShortName(match[1]).toLowerCase(), rest: match[2].trim() }
     : { category: null, rest: value.trim() };
 }
 
-export function categoryTokens(value: string): string[] {
+function categoryTokens(value: string): string[] {
   return Array.from(
     new Set(value.toLowerCase().replace(/\[[^\]]*\]/gu, " ").match(/[a-z0-9][a-z0-9-]{2,}/gu) ?? []),
   ).filter((token) => !CATEGORY_STOPWORDS.has(token));
 }
 
-export const KANBAN_CATEGORY = "kanban extension";
-export const KANBAN_SIGNALS = [
-  "kanban", "shop-kanban", "bb-plugin-shop-kanban", "board", "queue", "column", "columns", "form", "dialog",
-  "panel", "icon", "spinner", "archive", "layout", "title",
-];
-
-export function hasKanbanCategorySignal(value: string): boolean {
-  const tokens = new Set(categoryTokens(value));
-  return KANBAN_SIGNALS.some((signal) => tokens.has(signal));
-}
-
-export function inferCategory(title: string, context: string): string {
+function inferCategory(title: string, context: string): string {
   const { category } = categoryParts(title);
   if (category) return category;
-  const text = `${title} ${context}`;
-  if (hasKanbanCategorySignal(text)) return KANBAN_CATEGORY;
-  const tokens = categoryTokens(text).slice(0, 2);
+  const tokens = categoryTokens(`${title} ${context}`).slice(0, 2);
   return tokens.length === 0 ? "task" : tokens.join(" ").slice(0, 28).trim();
 }
 
@@ -90,9 +77,7 @@ export function categorizedTitle(value: string, context: string): string {
   const title = oneLine(value) || "Task";
   const { category, rest } = categoryParts(title);
   const body = rest || "Task";
-  return category && (category !== KANBAN_CATEGORY || hasKanbanCategorySignal(`${body} ${context}`))
-    ? `[${category}] ${body}`
-    : `[${inferCategory(body, context)}] ${body}`;
+  return `[${category || inferCategory(body, context)}] ${body}`;
 }
 
 export async function safe<T>(fn: () => Promise<T>): Promise<T | null> {

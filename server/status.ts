@@ -56,7 +56,7 @@ export function toLiveThread(raw: any): LiveThread | null {
   };
 }
 
-export const RUNNING_STATUSES = new Set(["starting", "active", "stopping", "provisioning"]);
+const RUNNING_STATUSES = new Set(["starting", "active", "stopping", "provisioning"]);
 
 export function isRunningSelf(thread: LiveThread): boolean {
   return (
@@ -68,7 +68,7 @@ export function isRunningSelf(thread: LiveThread): boolean {
 
 // Phrases that hand the decision back to the user. Only the tail of the message is
 // inspected so questions quoted earlier in a report do not count.
-export const INPUT_REQUEST_PATTERNS: RegExp[] = [
+const INPUT_REQUEST_PATTERNS: RegExp[] = [
   /\b(would|do) you (like|want|prefer)\b/i,
   /\bwant me to\b/i,
   /\b(should|shall|can|may) i\b[^.!\n]*\?/i,
@@ -82,7 +82,7 @@ export const INPUT_REQUEST_PATTERNS: RegExp[] = [
   /\b(cannot|can't|unable to) (proceed|continue) (without|until)\b/i,
 ];
 
-export function stripMarkdownNoise(text: string): string {
+function stripMarkdownNoise(text: string): string {
   return text
     .replace(/```[\s\S]*?```/g, " ")
     .replace(/`[^`\n]*`/g, "code")
@@ -90,7 +90,7 @@ export function stripMarkdownNoise(text: string): string {
     .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1");
 }
 
-export function lastParagraphs(text: string, count: number): string {
+function lastParagraphs(text: string, count: number): string {
   const paragraphs = text
     .split(/\n\s*\n/u)
     .map((part) => part.trim())
@@ -99,16 +99,15 @@ export function lastParagraphs(text: string, count: number): string {
 }
 
 /** Does the final assistant message ask the user something or wait on them? */
-export function asksForInput(output: string): boolean {
+function asksForInput(output: string): boolean {
   const cleaned = stripMarkdownNoise(output).trim();
   if (!cleaned) return false;
   const tail = lastParagraphs(cleaned, 2).slice(-800);
-  if (/\?["'”’)\]*_]*\s*$/u.test(lastParagraphs(cleaned, 1))) return true;
   if (/\?["'”’)\]*_]*(\s|$)/u.test(lastParagraphs(cleaned, 1))) return true;
   return INPUT_REQUEST_PATTERNS.some((pattern) => pattern.test(tail));
 }
 
-export function excerpt(text: string | null | undefined, max = 280): string | null {
+function excerpt(text: string | null | undefined, max = 280): string | null {
   if (!text) return null;
   const cleaned = oneLine(
     text
@@ -151,7 +150,7 @@ export type CardLabel = {
 
 export type LabelView = { title: string | null; summary: string | null; needsInput: boolean | null };
 
-export type Derived = { column: Column; reason: string; description: string | null; runningChildren: number };
+type Derived = { column: Column; reason: string; description: string | null; runningChildren: number };
 
 export function deriveStatus(
   thread: LiveThread,
