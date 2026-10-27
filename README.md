@@ -25,9 +25,10 @@ Columns are derived from live thread state; you never drag cards around.
 - The updated time and status on the left of the footer. On the right: what
   the session has spent when the harness reports cost, how full its context
   window is, and the icon of the harness the thread runs on (omp, Pi, Codex,
-  …; the same icon as the bb sidebar). Hover for the model, thinking level,
-  service tier, access mode, and exact token counts. Running threads refresh
-  these every 5 seconds, idle threads every minute.
+  …; the same icon as the bb sidebar). Hover any of them for a three-line
+  tooltip: model and thinking level, token counts and cost, then access mode,
+  service tier and model id. Running threads refresh these every 5 seconds,
+  idle threads every minute.
 - An archive button in the top-right corner, shown on hover or focus.
 - Clicking a card opens the thread at its latest message. The Queue `+` button
   starts a new task thread.

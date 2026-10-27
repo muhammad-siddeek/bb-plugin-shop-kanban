@@ -1,5 +1,5 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { experimental_ProviderIcon as ProviderIcon, type PluginProvidersState } from "@get-bb/plugin-sdk/app";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { experimental_Icon as Icon, experimental_ProviderIcon as ProviderIcon, type PluginProvidersState } from "@get-bb/plugin-sdk/app";
 import type { BoardSession } from "./model";
 
 /** An agent provider from bb's roster (`experimental_useProviders`), the same record the sidebar draws. */
@@ -25,9 +25,11 @@ function formatCost({ amount, currency }: { amount: number; currency: string }):
   return amount > 0 && amount < 0.01 ? `<${format(0.01)}` : format(amount);
 }
 
+const TOKENS = new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 });
+
 /**
- * Harness icon, session cost and context-window fill for a card's footer. Hovering or focusing the
- * group opens a tooltip with the harness, model, thinking level and the exact numbers.
+ * Harness icon, session cost and context-window fill for a card's footer. Hovering or focusing any of
+ * them opens a compact tooltip: harness, model and thinking level; tokens and cost; access, tier, model id.
  */
 export function HarnessMeta({ provider, session }: { provider: AgentProvider | null; session: BoardSession | null }) {
   const [open, setOpen] = useState(false);
@@ -68,35 +70,19 @@ export function HarnessMeta({ provider, session }: { provider: AgentProvider | n
   const percent = fill === null ? null : `${Math.round(fill * 100)}%`;
   if (!provider && cost === null && percent === null && !session?.model) return null;
 
-  const ringTone = fill === null || fill < CONTEXT_WARN ? "" : fill < CONTEXT_CRITICAL ? "text-amber-500" : "text-rose-500";
-  const barTone = fill === null || fill < CONTEXT_WARN ? "bg-muted-foreground/60" : fill < CONTEXT_CRITICAL ? "bg-amber-500" : "bg-rose-500";
-  const rows: Array<[string, ReactNode]> = [];
-  if (session?.model) {
-    rows.push([
-      "Model",
-      <>
-        {session.model}
-        {session.modelId && session.modelId !== session.model ? (
-          <span className="block break-words font-mono text-[10px] leading-[14px] text-muted-foreground">{session.modelId}</span>
-        ) : null}
-      </>,
-    ]);
-  }
-  if (session?.reasoning) rows.push(["Thinking", session.reasoning]);
-  if (session?.serviceTier) rows.push(["Tier", session.serviceTier]);
-  if (session?.access) rows.push(["Access", session.access]);
-  if (fill !== null && used !== null && capacity) {
-    rows.push([
-      "Context",
-      <>
-        {`${session?.estimated ? "~" : ""}${used.toLocaleString()} / ${capacity.toLocaleString()} tokens (${percent})`}
-        <span className="mt-1 block h-[3px] overflow-hidden rounded-full bg-muted" aria-hidden>
-          <span className={`block h-full rounded-full ${barTone}`} style={{ width: `${Math.min(fill, 1) * 100}%` }} />
-        </span>
-      </>,
-    ]);
-  }
-  if (cost !== null) rows.push(["Spent", <span className="font-medium">{cost}</span>]);
+  const tone = fill === null || fill < CONTEXT_WARN ? "" : fill < CONTEXT_CRITICAL ? "amber" : "rose";
+  const ringTone = tone === "amber" ? "text-amber-500" : tone === "rose" ? "text-rose-500" : "";
+  const barTone = tone === "amber" ? "bg-amber-500" : tone === "rose" ? "bg-rose-500" : "bg-muted-foreground/50";
+  const usage = [
+    used !== null && capacity ? `${session?.estimated ? "~" : ""}${TOKENS.format(used)} / ${TOKENS.format(capacity)} tokens · ${percent}` : null,
+    cost !== null ? `${cost} spent` : null,
+  ].filter(Boolean).join(" · ");
+  // Short facts first so only the long model id truncates.
+  const details = [
+    session?.access,
+    session?.serviceTier,
+    session?.modelId && session.modelId !== session.model ? session.modelId : null,
+  ].filter(Boolean).join(" · ");
 
   const hide = () => {
     window.clearTimeout(timer.current);
@@ -120,7 +106,7 @@ export function HarnessMeta({ provider, session }: { provider: AgentProvider | n
         onKeyDown={(event) => {
           if (event.key === "Escape") hide();
         }}
-        className="inline-flex h-4 shrink-0 items-center gap-2 whitespace-nowrap rounded-sm text-[10.5px] tabular-nums text-muted-foreground/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+        className="-mx-1 inline-flex h-5 shrink-0 items-center gap-2 whitespace-nowrap rounded-sm px-1 text-[10.5px] tabular-nums text-muted-foreground/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
       >
         {cost !== null ? <span>{cost}</span> : null}
         {fill !== null ? (
@@ -149,26 +135,35 @@ export function HarnessMeta({ provider, session }: { provider: AgentProvider | n
           role="tooltip"
           popover="manual"
           style={{ inset: "auto", margin: 0 }}
-          className="pointer-events-none w-max min-w-44 max-w-72 overflow-hidden rounded-lg border border-border bg-popover px-2.5 py-2 text-[11px] leading-4 text-popover-foreground shadow-lg"
+          className="pointer-events-none w-max max-w-80 overflow-hidden rounded-md border border-border bg-popover px-2 pb-1.5 pt-1 text-[11px] leading-4 text-popover-foreground shadow-lg"
         >
-          {provider ? (
-            <div className="-mx-2.5 mb-1.5 flex items-center gap-1.5 border-b border-border/60 px-2.5 pb-1.5 font-semibold">
-              <ProviderIcon providerKind="agent" provider={provider} className="size-3.5" aria-hidden />
-              {provider.displayName}
-            </div>
+          <div className="flex min-w-0 items-center gap-1.5 whitespace-nowrap">
+            {provider ? (
+              <>
+                <ProviderIcon providerKind="agent" provider={provider} className="size-3.5 shrink-0" aria-hidden />
+                <span className="font-semibold">{provider.displayName}</span>
+              </>
+            ) : null}
+            {session?.model ? (
+              <>
+                {provider ? <span className="text-muted-foreground/60" aria-hidden>·</span> : null}
+                <span className="min-w-0 truncate">{session.model}</span>
+              </>
+            ) : null}
+            {session?.reasoning ? (
+              <span className="inline-flex shrink-0 items-center gap-0.5 text-muted-foreground" aria-label={`${session.reasoning} thinking`}>
+                <span className="mr-1 text-muted-foreground/60" aria-hidden>·</span>
+                <Icon name="Brain" className="size-3" aria-hidden />
+                {session.reasoning}
+              </span>
+            ) : null}
+          </div>
+          <div className="whitespace-nowrap tabular-nums">{usage || <span className="text-muted-foreground">No session details yet</span>}</div>
+          {details ? <div className="truncate text-[10px] text-muted-foreground">{details}</div> : null}
+          {/* Context fill as a hairline along the bottom edge: no extra line of text. */}
+          {fill !== null ? (
+            <span className={`absolute bottom-0 left-0 h-[2px] ${barTone}`} style={{ width: `${Math.min(fill, 1) * 100}%` }} aria-hidden />
           ) : null}
-          {rows.length > 0 ? (
-            <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
-              {rows.map(([label, value]) => (
-                <div key={label} className="contents">
-                  <dt className="text-muted-foreground">{label}</dt>
-                  <dd className="min-w-0 tabular-nums text-popover-foreground">{value}</dd>
-                </div>
-              ))}
-            </dl>
-          ) : (
-            <p className="text-muted-foreground">No session details yet</p>
-          )}
         </div>
       ) : null}
     </>

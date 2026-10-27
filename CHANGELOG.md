@@ -6,9 +6,10 @@
   harness reports cost), a ring with the share of the context window in use
   (amber at 70%, red at 90%), and the icon of the harness the thread runs on
   (e.g. omp, Pi, Codex; the same artwork as the bb sidebar).
-- Hovering or focusing that group opens a tooltip with the harness, model,
-  thinking level, service tier, access mode, exact context tokens with a fill
-  bar, and cost.
+- Hovering or focusing the cost, the ring or the icon opens a compact
+  three-line tooltip: harness, model and thinking level; tokens used, context
+  share and cost; then access mode, service tier and the raw model id. A thin
+  bar along its bottom edge shows how full the context window is.
 - The archive button moved to the card's top-right corner and appears on
   hover or focus (always shown on touch devices). The footer keeps the
   updated time and status on the left.
