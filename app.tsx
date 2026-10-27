@@ -25,6 +25,8 @@ type BoardTask = {
   showChildren: boolean;
   childCount: number;
   hiddenChildCount: number;
+  runningChildCount?: number;
+  statusReason?: string | null;
   createdAt: string;
   updatedAt: string;
   lastUserInputAt: string | null;
@@ -178,10 +180,6 @@ function columnMeta(column: BoardColumn) {
   return COLUMN_META[column] ?? COLUMN_META.queue;
 }
 
-function columnLabel(board: BoardState | null, column: BoardColumn): string {
-  return board?.columns.find((entry) => entry.id === column)?.title ?? columnMeta(column).label;
-}
-
 // ---------------------------------------------------------------------------
 // Hooks
 // ---------------------------------------------------------------------------
@@ -287,26 +285,24 @@ function TaskStatusMark({ column }: { column: BoardColumn }) {
   );
 }
 
-function TaskCard({ task, now, labelFor, onMove, onArchive, onOpen }: {
+function TaskCard({ task, now, onArchive, onOpen }: {
   task: BoardTask;
   now: number;
-  labelFor: (column: BoardColumn) => string;
-  onMove: (threadId: string, column: BoardColumn) => void;
   onArchive: (threadId: string) => void;
   onOpen: (threadId: string) => void;
 }) {
   const title = taskCardTitle(task);
   const activity = taskActivityTime(task);
   const canOpen = !task.missingThread;
-  const canArchive = task.column === "done" || task.column === "blocked";
+  const reason = task.statusReason && task.column !== "done" && task.statusReason !== "Running" ? task.statusReason : null;
 
   return (
     <article
-      className={`@container group relative rounded-lg border bg-card px-3 py-2.5 shadow-xs transition-[border-color,box-shadow] hover:shadow-sm ${
+      className={`group relative rounded-lg border bg-card px-2.5 py-2 shadow-xs transition-[border-color,box-shadow] hover:shadow-sm ${
         task.column === "blocked" ? "border-rose-500/30 hover:border-rose-500/50" : "border-border/70 hover:border-border"
       }`}
     >
-      <div className="flex items-start gap-2.5">
+      <div className="flex items-start gap-2">
         <TaskStatusMark column={task.column} />
         <div className="min-w-0 flex-1">
           {canOpen ? (
@@ -314,20 +310,20 @@ function TaskCard({ task, now, labelFor, onMove, onArchive, onOpen }: {
               type="button"
               onClick={() => onOpen(task.threadId)}
               title={`Open thread · ${task.titleChain}`}
-              className="line-clamp-2 w-full rounded-sm text-left text-[13px] font-medium leading-snug text-foreground decoration-muted-foreground/50 underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="line-clamp-1 w-full rounded-sm text-left text-[13px] font-medium leading-snug text-foreground decoration-muted-foreground/50 underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               {title}
             </button>
           ) : (
-            <h3 className="line-clamp-2 text-[13px] font-medium leading-snug text-foreground" title={task.titleChain}>{title}</h3>
+            <h3 className="line-clamp-1 text-[13px] font-medium leading-snug text-foreground" title={task.titleChain}>{title}</h3>
           )}
           {task.note ? (
-            <p className="mt-1 line-clamp-3 text-xs leading-relaxed text-muted-foreground" title={task.note}>{task.note}</p>
+            <p className="mt-0.5 line-clamp-2 text-xs leading-snug text-muted-foreground" title={task.note}>{task.note}</p>
           ) : null}
         </div>
       </div>
 
-      <div className="mt-1.5 flex min-h-6 items-center gap-1 pl-6.5">
+      <div className="mt-1 flex h-5 items-center gap-1.5 pl-6">
         {activity !== null ? (
           <time
             dateTime={new Date(activity).toISOString()}
@@ -337,36 +333,21 @@ function TaskCard({ task, now, labelFor, onMove, onArchive, onOpen }: {
             {formatRelativeTime(activity, now)}
           </time>
         ) : null}
+        {reason ? (
+          <span className={`min-w-0 truncate text-[11px] ${columnMeta(task.column).title}`} title={reason}>· {reason}</span>
+        ) : null}
         {task.missingThread ? (
           <span className="min-w-0 truncate text-[11px] text-rose-500" title="The BB thread for this card no longer exists">· no thread</span>
         ) : null}
-
-        <div className="ml-auto flex shrink-0 items-center gap-0.5 transition-opacity [@media(hover:hover)]:opacity-0 group-hover:opacity-100 group-focus-within:opacity-100">
-          {COLUMNS.filter((column) => column !== task.column).map((column) => (
-            <button
-              key={column}
-              type="button"
-              title={`Move to ${labelFor(column)}`}
-              aria-label={`Move to ${labelFor(column)}`}
-              className={`inline-flex h-6 min-w-6 items-center justify-center gap-1 rounded-md px-1.5 text-[11px] text-muted-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${columnMeta(column).hover}`}
-              onClick={() => onMove(task.threadId, column)}
-            >
-              <span className={`size-2 rounded-full ${columnMeta(column).dot}`} aria-hidden />
-              <span className="hidden @[20rem]:inline">{labelFor(column)}</span>
-            </button>
-          ))}
-          {canArchive ? (
-            <button
-              type="button"
-              title="Archive"
-              aria-label="Archive"
-              className="ml-0.5 inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              onClick={() => onArchive(task.threadId)}
-            >
-              <Icon name="Archive" className="size-3.5" aria-hidden />
-            </button>
-          ) : null}
-        </div>
+        <button
+          type="button"
+          title="Archive thread"
+          aria-label="Archive thread"
+          className="ml-auto inline-flex size-5 shrink-0 items-center justify-center rounded-md text-muted-foreground/70 transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          onClick={() => onArchive(task.threadId)}
+        >
+          <Icon name="Archive" className="size-3.5" aria-hidden />
+        </button>
       </div>
     </article>
   );
@@ -447,13 +428,11 @@ function ColumnEmpty({ children }: { children: ReactNode }) {
   );
 }
 
-function BoardColumnView({ column, title, tasks, now, labelFor, onMove, onArchive, onOpen, adding, onStartAdding, addForm }: {
+function BoardColumnView({ column, title, tasks, now, onArchive, onOpen, adding, onStartAdding, addForm }: {
   column: BoardColumn;
   title: string;
   tasks: BoardTask[];
   now: number;
-  labelFor: (column: BoardColumn) => string;
-  onMove: (threadId: string, column: BoardColumn) => void;
   onArchive: (threadId: string) => void;
   onOpen: (threadId: string) => void;
   adding: boolean;
@@ -472,15 +451,13 @@ function BoardColumnView({ column, title, tasks, now, labelFor, onMove, onArchiv
           <IconButton icon="Plus" label="Add task" onClick={onStartAdding} small className="ml-auto" />
         ) : null}
       </header>
-      <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-2 pb-2">
+      <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto px-2 pb-2">
         {adding ? addForm : null}
         {tasks.map((task) => (
           <TaskCard
             key={task.threadId}
             task={task}
             now={now}
-            labelFor={labelFor}
-            onMove={onMove}
             onArchive={onArchive}
             onOpen={onOpen}
           />
@@ -511,12 +488,6 @@ function BoardView({ api }: { api: BoardApi }) {
   const grouped = useMemo(() => groupTasksByColumn(board), [board]);
   const now = useNow(CLOCK_TICK_MS);
   const [adding, setAdding] = useState(false);
-
-  const labelFor = useCallback((column: BoardColumn) => columnLabel(board, column), [board]);
-
-  const moveTask = useCallback((threadId: string, column: BoardColumn) => {
-    rpc.call("board_update_task", { threadId, column }).then(refetch, report);
-  }, [rpc, refetch, report]);
 
   const archiveTask = useCallback((threadId: string) => {
     rpc.call("board_remove_task", { threadId }).then(refetch, report);
@@ -564,8 +535,6 @@ function BoardView({ api }: { api: BoardApi }) {
               title={column.title}
               tasks={grouped.get(column.id) ?? []}
               now={now}
-              labelFor={labelFor}
-              onMove={moveTask}
               onArchive={archiveTask}
               onOpen={openTask}
               adding={column.id === "queue" && adding}

@@ -12,10 +12,13 @@
     "branding": {
       "icon": "ListTodo"
     },
-    "server": "./server.cjs",
+    "server": "./server.ts",
     "skills": [
       "skills"
     ],
     "app": "./app.tsx"
+  },
+  "dependencies": {
+    "zod": "^4.6.7"
   }
 }
