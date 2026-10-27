@@ -22,12 +22,13 @@ Columns are derived from live thread state; you never drag cards around.
   written back to the bb sidebar thread title unless you rename the thread
   yourself.
 - A two-line summary of the latest exchange.
-- A relative "updated" time and an archive button.
-- The harness the thread runs on (omp, Pi, Codex, …; the same icon as the bb
-  sidebar), what the session has spent when the harness reports cost, and how
-  full its context window is. Hover the icon for the model, thinking level,
+- The updated time and status on the left of the footer. On the right: what
+  the session has spent when the harness reports cost, how full its context
+  window is, and the icon of the harness the thread runs on (omp, Pi, Codex,
+  …; the same icon as the bb sidebar). Hover for the model, thinking level,
   service tier, access mode, and exact token counts. Running threads refresh
   these every 5 seconds, idle threads every minute.
+- An archive button in the top-right corner, shown on hover or focus.
 - Clicking a card opens the thread at its latest message. The Queue `+` button
   starts a new task thread.
 

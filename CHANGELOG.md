@@ -2,13 +2,16 @@
 
 ## Unreleased
 
-- Cards show the harness the thread runs on (e.g. omp, Pi, Codex) as an icon
-  right of the timestamp, using the same provider artwork as the bb sidebar.
-- Next to the harness icon: what the session has spent (when the harness
-  reports cost) and a ring with the share of the context window in use, which
-  turns amber at 70% and red at 90%.
-- Hovering or focusing the icon opens a tooltip with the harness, model,
-  thinking level, service tier, access mode, exact context tokens, and cost.
+- Cards show, flush right in the footer: what the session has spent (when the
+  harness reports cost), a ring with the share of the context window in use
+  (amber at 70%, red at 90%), and the icon of the harness the thread runs on
+  (e.g. omp, Pi, Codex; the same artwork as the bb sidebar).
+- Hovering or focusing that group opens a tooltip with the harness, model,
+  thinking level, service tier, access mode, exact context tokens with a fill
+  bar, and cost.
+- The archive button moved to the card's top-right corner and appears on
+  hover or focus (always shown on touch devices). The footer keeps the
+  updated time and status on the left.
 
 ## 0.5.0
 

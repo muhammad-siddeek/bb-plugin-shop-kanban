@@ -183,38 +183,47 @@ export function TaskCard({ task, now, unread, selected, invertedTheme, provider,
         </div>
       </div>
 
-      <div className="mt-1 flex h-5 items-center gap-1 pl-6">
-        {activity !== null ? (
-          <time
-            dateTime={new Date(activity).toISOString()}
-            title={`Updated ${new Date(activity).toLocaleString()}`}
-            className="shrink-0 whitespace-nowrap text-[10.5px] tabular-nums text-muted-foreground/70"
-          >
-            {formatRelativeTime(activity, now)}
-          </time>
-        ) : null}
-        <HarnessMeta provider={provider} session={task.session} />
-        {reason ? (
-          <span className={`min-w-0 truncate text-[10.5px] font-medium opacity-90 ${meta.title}`} title={reason}>
-            <span className="text-muted-foreground/50" aria-hidden>· </span>
-            {reason}
-          </span>
-        ) : null}
-        {task.missingThread ? (
-          <span className="min-w-0 truncate text-[10.5px] font-medium text-rose-500" title="The BB thread for this card no longer exists">
-            <span className="text-muted-foreground/50" aria-hidden>· </span>
-            no thread
-          </span>
-        ) : null}
+      {/* Archive: overlays the end of the title line (no reflow); a card-colored backdrop with a short
+          leftward fade hides the truncated title underneath. Revealed on hover/focus, always on touch. */}
+      <span className="absolute right-1.5 top-[7px] flex bg-card opacity-0 transition-opacity duration-150 before:pointer-events-none before:absolute before:inset-y-0 before:right-full before:w-3 before:bg-linear-to-l before:from-card before:to-transparent before:content-[''] group-hover:opacity-100 group-focus-within:opacity-100 has-[:focus-visible]:opacity-100 [@media(hover:none)]:opacity-100">
         <button
           type="button"
           title="Archive thread"
           aria-label="Archive thread"
-          className="-mr-1 ml-auto inline-flex size-5 shrink-0 items-center justify-center rounded-md text-muted-foreground/60 transition-[color,background-color,opacity] duration-150 hover:bg-destructive/10 hover:text-destructive focus-visible:bg-destructive/10 focus-visible:text-destructive focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 [@media(hover:hover)]:opacity-50 group-hover:opacity-100"
+          className="inline-flex size-5 items-center justify-center rounded-md text-muted-foreground/70 transition-[color,background-color] duration-150 hover:bg-destructive/10 hover:text-destructive focus-visible:bg-destructive/10 focus-visible:text-destructive focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
           onClick={() => onArchive(task.threadId)}
         >
           <Icon name="Archive" className="size-3.5" aria-hidden />
         </button>
+      </span>
+
+      <div className="mt-1 flex h-5 items-center gap-2 pl-6">
+        <div className="flex min-w-0 flex-1 items-center gap-1">
+          {activity !== null ? (
+            <time
+              dateTime={new Date(activity).toISOString()}
+              title={`Updated ${new Date(activity).toLocaleString()}`}
+              className="shrink-0 whitespace-nowrap text-[10.5px] tabular-nums text-muted-foreground/70"
+            >
+              {formatRelativeTime(activity, now)}
+            </time>
+          ) : null}
+          {reason ? (
+            <span className={`min-w-0 truncate text-[10.5px] font-medium opacity-90 ${meta.title}`} title={reason}>
+              <span className="text-muted-foreground/50" aria-hidden>· </span>
+              {reason}
+            </span>
+          ) : null}
+          {task.missingThread ? (
+            <span className="min-w-0 truncate text-[10.5px] font-medium text-rose-500" title="The BB thread for this card no longer exists">
+              <span className="text-muted-foreground/50" aria-hidden>· </span>
+              no thread
+            </span>
+          ) : null}
+        </div>
+        <div className="flex shrink-0 items-center">
+          <HarnessMeta provider={provider} session={task.session} />
+        </div>
       </div>
     </article>
   );
