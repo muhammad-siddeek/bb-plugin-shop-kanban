@@ -16,7 +16,8 @@
     "skills": [
       "skills"
     ],
-    "app": "./app.tsx"
+    "app": "./app.tsx",
+    "host": "./host.ts"
   },
   "dependencies": {
     "zod": "^4.6.7"

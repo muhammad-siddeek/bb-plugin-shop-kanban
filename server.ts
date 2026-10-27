@@ -11,6 +11,7 @@
 //   Queue    not started yet (pending, queued work waiting, or no turn finished)
 
 import { z } from "zod";
+import { hostContract } from "./contract";
 
 // ---------------------------------------------------------------------------
 // Contract
@@ -101,6 +102,7 @@ export const rpcContract = {
 const BOARD_CHANGED = "board-changed";
 const BOARD_TASK_STATUS = "board-task-status";
 const TASKS_KEY = "tasks-v1";
+const LABELS_KEY = "labels-v2";
 
 // ---------------------------------------------------------------------------
 // Stored task records (cards spawned or moved through the plugin)
@@ -279,6 +281,7 @@ type LiveThread = {
   providerId: string | null;
   projectId: string | null;
   parentThreadId: string | null;
+  hostId: string | null;
   visibility: string | null;
   archivedAt: number | null;
   createdAt: number | null;
@@ -306,6 +309,7 @@ function toLiveThread(raw: any): LiveThread | null {
     providerId: typeof raw.providerId === "string" ? raw.providerId : null,
     projectId: typeof raw.projectId === "string" ? raw.projectId : null,
     parentThreadId: typeof raw.parentThreadId === "string" ? raw.parentThreadId : null,
+    hostId: typeof raw.environmentHostId === "string" ? raw.environmentHostId : null,
     visibility: typeof raw.visibility === "string" ? raw.visibility : null,
     archivedAt: typeof raw.archivedAt === "number" ? raw.archivedAt : null,
     createdAt: typeof raw.createdAt === "number" ? raw.createdAt : null,
@@ -332,7 +336,6 @@ function isRunningSelf(thread: LiveThread): boolean {
 // Phrases that hand the decision back to the user. Only the tail of the message is
 // inspected so questions quoted earlier in a report do not count.
 const INPUT_REQUEST_PATTERNS: RegExp[] = [
-  /\blet me know\b/i,
   /\b(would|do) you (like|want|prefer)\b/i,
   /\bwant me to\b/i,
   /\b(should|shall|can|may) i\b[^.!\n]*\?/i,
@@ -391,7 +394,21 @@ type ThreadDetails = {
   output: string | null;
   lastUserInputAt: number | null;
   lastUserPrompt: string | null;
+  firstUserPrompt: string | null;
 };
+
+/** Model-written card label: "[category] intent" title plus a summary of the latest interaction. */
+type CardLabel = {
+  titleSig: string;
+  category: string;
+  intent: string;
+  summarySig: string;
+  summary: string | null;
+  needsInput: boolean | null;
+  failedAt?: number;
+};
+
+type LabelView = { title: string | null; summary: string | null; needsInput: boolean | null };
 
 type Derived = { column: Column; reason: string; description: string | null; runningChildren: number };
 
@@ -400,10 +417,11 @@ function deriveStatus(
   details: ThreadDetails,
   stored: StoredTask | undefined,
   descendants: LiveThread[],
+  label: LabelView,
 ): Derived {
   const runningChildren = descendants.filter(isRunningSelf).length;
-  const promptText = excerpt(details.lastUserPrompt);
-  const outputText = excerpt(details.output);
+  const promptText = label.summary ?? excerpt(details.lastUserPrompt);
+  const outputText = label.summary ?? excerpt(details.output);
   const storedFresh =
     stored?.note && (details.lastUserInputAt === null || Date.parse(stored.updatedAt) >= details.lastUserInputAt);
 
@@ -415,11 +433,11 @@ function deriveStatus(
     const reason = isRunningSelf(thread)
       ? "Running"
       : `${runningChildren} child task${runningChildren === 1 ? "" : "s"} running`;
-    return { column: "wip", reason, description: (storedFresh ? stored?.note : null) ?? promptText ?? stored?.note ?? null, runningChildren };
+    return { column: "wip", reason, description: label.summary ?? (storedFresh ? stored?.note : null) ?? promptText ?? stored?.note ?? null, runningChildren };
   }
 
   if (thread.status === "error" || thread.displayStatus === "error" || thread.queuedWork === "failed") {
-    return { column: "blocked", reason: "Errored", description: stored?.note ?? outputText ?? promptText, runningChildren };
+    return { column: "blocked", reason: "Errored", description: label.summary ?? stored?.note ?? outputText ?? promptText, runningChildren };
   }
 
   if (thread.status === "pending" || thread.queuedWork === "waiting") {
@@ -435,14 +453,94 @@ function deriveStatus(
   }
 
   if (storedFresh && stored?.result === "failed") {
-    return { column: "blocked", reason: "Reported failure", description: stored.note ?? outputText, runningChildren };
+    return { column: "blocked", reason: "Reported failure", description: label.summary ?? stored.note ?? outputText, runningChildren };
   }
 
-  if (asksForInput(details.output)) {
+  if (label.needsInput ?? asksForInput(details.output)) {
     return { column: "blocked", reason: "Asked a question", description: outputText, runningChildren };
   }
 
   return { column: "done", reason: "Completed", description: outputText, runningChildren };
+}
+
+// ---------------------------------------------------------------------------
+// Card labels (written by a small model on the host)
+// ---------------------------------------------------------------------------
+
+const LABEL_MODELS = ["anthropic/claude-haiku-5-5", "anthropic/claude-haiku-4-5"];
+const LABEL_RETRY_MS = 10 * 60_000;
+const LABEL_CONCURRENCY = 2;
+const LABEL_PROMPT_VERSION = 3;
+
+const LABEL_SYSTEM = [
+  "You label cards on a Kanban board where each card is a coding-agent conversation thread.",
+  "Reply with only one JSON object and nothing else.",
+].join(" ");
+
+function hashText(value: string): string {
+  let hash = 5381;
+  for (let index = 0; index < value.length; index += 1) hash = ((hash << 5) + hash + value.charCodeAt(index)) | 0;
+  return `${value.length}:${(hash >>> 0).toString(36)}`;
+}
+
+function clip(value: string | null | undefined, max: number): string {
+  if (!value) return "";
+  const text = value.replace(/```[\s\S]*?```/g, "[code]").trim();
+  if (text.length <= max) return text;
+  const head = Math.floor(max * 0.7);
+  return `${text.slice(0, head)}\n…\n${text.slice(text.length - (max - head))}`;
+}
+
+function labelPrompt(input: {
+  title: string | null;
+  firstPrompt: string | null;
+  lastPrompt: string | null;
+  output: string | null;
+  running: boolean;
+  categories: string[];
+}): string {
+  const sameRequest = !input.lastPrompt || input.lastPrompt === input.firstPrompt;
+  return [
+    input.categories.length
+      ? `Categories already on the board: ${input.categories.join(", ")}`
+      : "No categories on the board yet.",
+    `Thread title: ${input.title ?? "(none)"}`,
+    `First user request:\n"""\n${clip(input.firstPrompt, 1_500) || "(none)"}\n"""`,
+    sameRequest ? "" : `Latest user message:\n"""\n${clip(input.lastPrompt, 1_500)}\n"""`,
+    input.running
+      ? "The agent is still working on the latest user message."
+      : `Agent's latest reply (it has finished):\n"""\n${clip(input.output, 3_500) || "(none)"}\n"""`,
+    "",
+    'Return JSON: {"category": string, "intent": string, "summary": string, "needsInput": boolean}',
+    '- category: 1-2 lowercase words naming the product, repo, plugin or tool the work is about, e.g. "shop kanban", "verdict casebook", "bb setup". Reuse a board category only if this thread is about that same thing; otherwise make a new one. Prefer names that appear in the request.',
+    '- intent: what the user wants from the whole thread in 2-5 words, lowercase imperative, keep acronyms and proper nouns, e.g. "refine UI", "fix flaky checkout test".',
+    input.running
+      ? '- summary: one sentence, at most 18 words, saying what the agent is doing now for the latest user message, present progressive, e.g. "Making card clicks scroll to the latest message."'
+      : '- summary: one sentence, at most 18 words, saying what happened in the latest exchange, past tense, no "I", e.g. "Made cards smaller, synced cards with bb threads, and added a blocked reason." Only if it stopped to ask the user something, end with what it needs, e.g. "…; asks whether to merge duplicates."',
+    "- needsInput: true only if the reply directly asks the user a question (or says it is waiting on them) and the agent cannot continue the task until they answer. False when the task is finished, even if the reply lists suggested next steps, recommendations, decisions for later, things to review or verify, or optional offers (\"I can also…\", \"let me know if you want…\").",
+  ]
+    .filter((line) => line !== "")
+    .join("\n");
+}
+
+function parseLabel(text: string): { category: string; intent: string; summary: string; needsInput: boolean } | null {
+  const match = text.match(/\{[\s\S]*\}/u);
+  if (!match) return null;
+  let raw: any;
+  try {
+    raw = JSON.parse(match[0]);
+  } catch {
+    return null;
+  }
+  const words = (value: unknown, maxWords: number, maxChars: number) =>
+    typeof value === "string"
+      ? oneLine(value.replace(/[\[\]"]/g, "")).split(" ").slice(0, maxWords).join(" ").slice(0, maxChars).trim()
+      : "";
+  const category = words(raw?.category, 2, 24).toLowerCase();
+  const intent = words(raw?.intent, 6, 40).replace(/[.!]+$/u, "");
+  const summary = typeof raw?.summary === "string" ? oneLine(raw.summary).slice(0, 220) : "";
+  if (!category || !intent || !summary) return null;
+  return { category, intent, summary, needsInput: raw?.needsInput === true };
 }
 
 // ---------------------------------------------------------------------------
@@ -453,6 +551,131 @@ export default async function plugin(bb: any) {
   bb.log.info("loaded");
 
   const detailsCache = new Map<string, ThreadDetails>();
+  const firstPromptCache = new Map<string, string | null>();
+  const host = bb.hosts.experimental_client({ contract: hostContract });
+  let labels: Record<string, CardLabel> | null = null;
+  let labelsWrite: Promise<void> = Promise.resolve();
+  const labelQueue: Array<() => Promise<void>> = [];
+  const labelInFlight = new Set<string>();
+  let labelActive = 0;
+  let changedTimer: ReturnType<typeof setTimeout> | null = null;
+  let fallbackHostId: string | null = null;
+
+  async function loadLabels(): Promise<Record<string, CardLabel>> {
+    if (labels) return labels;
+    const raw = await safe(async () => bb.storage.kv.get(LABELS_KEY));
+    labels = raw && typeof raw === "object" ? (raw as Record<string, CardLabel>) : {};
+    return labels;
+  }
+
+  function persistLabels() {
+    labelsWrite = labelsWrite.then(async () => {
+      await safe(async () => bb.storage.kv.set(LABELS_KEY, labels ?? {}));
+    });
+  }
+
+  function publishBoardChangedSoon() {
+    if (changedTimer) return;
+    changedTimer = setTimeout(() => {
+      changedTimer = null;
+      publishBoardChanged();
+    }, 400);
+  }
+
+  async function resolveHostId(thread: LiveThread): Promise<string | null> {
+    if (thread.hostId) return thread.hostId;
+    if (fallbackHostId) return fallbackHostId;
+    const hosts = await safe(async () => bb.sdk.hosts.list());
+    const list: any[] = Array.isArray(hosts) ? hosts : Array.isArray(hosts?.hosts) ? hosts.hosts : [];
+    fallbackHostId = list.find((entry) => entry?.status === "connected")?.id ?? list[0]?.id ?? null;
+    return fallbackHostId;
+  }
+
+  function pumpLabels() {
+    while (labelActive < LABEL_CONCURRENCY && labelQueue.length > 0) {
+      const job = labelQueue.shift()!;
+      labelActive += 1;
+      void job().finally(() => {
+        labelActive -= 1;
+        pumpLabels();
+      });
+    }
+  }
+
+  /** Returns the current (possibly stale) label and schedules a refresh when the thread moved on. */
+  function labelView(
+    thread: LiveThread,
+    details: ThreadDetails,
+    running: boolean,
+    all: Record<string, CardLabel>,
+  ): LabelView {
+    const current = all[thread.id];
+    const titleSig = hashText(details.firstUserPrompt ?? thread.title ?? thread.id);
+    const summarySig = running
+      ? `v${LABEL_PROMPT_VERSION}:run:${details.lastUserInputAt ?? 0}`
+      : `v${LABEL_PROMPT_VERSION}:idle:${details.lastUserInputAt ?? 0}:${hashText(details.output ?? "")}`;
+    const hasTitle = current !== undefined && current.titleSig === titleSig;
+    const fresh = hasTitle && current.summarySig === summarySig;
+    const backingOff = current?.failedAt !== undefined && Date.now() - current.failedAt < LABEL_RETRY_MS && current.summarySig === summarySig;
+    const worthLabeling = running || Boolean(details.output?.trim()) || Boolean(details.lastUserPrompt);
+
+    if (!fresh && !backingOff && worthLabeling && !labelInFlight.has(thread.id)) {
+      labelInFlight.add(thread.id);
+      labelQueue.push(async () => {
+        try {
+          const hostId = await resolveHostId(thread);
+          if (!hostId) throw new Error("No connected host to run the labeler.");
+          const categories = Array.from(new Set(Object.values(all).map((entry) => entry.category).filter(Boolean))).slice(0, 30);
+          const result = await host.call(
+            "complete",
+            {
+              system: LABEL_SYSTEM,
+              prompt: labelPrompt({
+                title: thread.title,
+                firstPrompt: details.firstUserPrompt,
+                lastPrompt: details.lastUserPrompt,
+                output: details.output,
+                running,
+                categories,
+              }),
+              models: LABEL_MODELS,
+              timeoutMs: 12_000,
+            },
+            { hostId },
+          );
+          const parsed = result?.text ? parseLabel(result.text) : null;
+          if (!parsed) throw new Error(result?.error ?? "Labeler returned no usable JSON.");
+          const previous = all[thread.id];
+          const keepTitle = previous !== undefined && previous.titleSig === titleSig;
+          all[thread.id] = {
+            titleSig,
+            category: keepTitle ? previous.category : parsed.category,
+            intent: keepTitle ? previous.intent : parsed.intent,
+            summarySig,
+            summary: parsed.summary,
+            needsInput: running ? null : parsed.needsInput,
+          };
+        } catch (error) {
+          bb.log.info(`label failed for ${thread.id}: ${error instanceof Error ? error.message : String(error)}`);
+          const previous = all[thread.id];
+          all[thread.id] = previous
+            ? { ...previous, summarySig, failedAt: Date.now() }
+            : { titleSig: "", category: "", intent: "", summarySig, summary: null, needsInput: null, failedAt: Date.now() };
+        } finally {
+          labelInFlight.delete(thread.id);
+          persistLabels();
+          publishBoardChangedSoon();
+        }
+      });
+      pumpLabels();
+    }
+
+    return {
+      title: hasTitle && current.category && current.intent ? `[${current.category}] ${current.intent}` : null,
+      summary: fresh ? current.summary : null,
+      needsInput: fresh && !running ? current.needsInput : null,
+    };
+  }
 
   async function readTasks(): Promise<Record<string, StoredTask>> {
     const raw = await bb.storage.kv.get(TASKS_KEY);
@@ -525,12 +748,31 @@ export default async function plugin(bb: any) {
     return { at: typeof event?.createdAt === "number" ? event.createdAt : null, prompt: prompt || null };
   }
 
+  /** The thread's opening user request (cached; it never changes). */
+  async function firstUserPrompt(threadId: string): Promise<string | null> {
+    if (firstPromptCache.has(threadId)) return firstPromptCache.get(threadId) ?? null;
+    const result = await safe(async () =>
+      await bb.sdk.threads.events.list({ threadId, order: "asc", limit: 10, types: ["client/turn/requested"] }),
+    );
+    if (result === null) return null;
+    const events: any[] = Array.isArray(result) ? result : Array.isArray(result?.events) ? result.events : [];
+    const event = events.find((entry) => entry?.data?.initiator === "user") ?? events[0];
+    const prompt = Array.isArray(event?.data?.input)
+      ? event.data.input
+          .filter((part: any) => part?.type === "text" && typeof part.text === "string")
+          .map((part: any) => part.text)
+          .join("\n") || null
+      : null;
+    firstPromptCache.set(threadId, prompt);
+    return prompt;
+  }
+
   /** Last assistant output + last user turn, cached per thread until the thread changes. */
   async function threadDetails(thread: LiveThread, needOutput: boolean): Promise<ThreadDetails> {
     const key = thread.updatedAt;
     const cached = detailsCache.get(thread.id);
     if (cached && cached.key === key && (cached.output !== null || !needOutput)) return cached;
-    const [turn, output] = await Promise.all([
+    const [turn, output, firstPrompt] = await Promise.all([
       lastUserTurn(thread.id),
       needOutput
         ? safe(async () => {
@@ -538,8 +780,15 @@ export default async function plugin(bb: any) {
             return typeof result === "string" ? result : typeof result?.output === "string" ? result.output : null;
           })
         : Promise.resolve(cached?.output ?? null),
+      firstUserPrompt(thread.id),
     ]);
-    const details: ThreadDetails = { key, output: output ?? null, lastUserInputAt: turn.at, lastUserPrompt: turn.prompt };
+    const details: ThreadDetails = {
+      key,
+      output: output ?? null,
+      lastUserInputAt: turn.at,
+      lastUserPrompt: turn.prompt,
+      firstUserPrompt: firstPrompt,
+    };
     detailsCache.set(thread.id, details);
     return details;
   }
@@ -579,8 +828,10 @@ export default async function plugin(bb: any) {
     return new Date(ms ?? Date.now()).toISOString();
   }
 
+  /** Fallback title until the labeler has run: "[category] thread title". */
   function threadTitle(thread: LiveThread, stored: StoredTask | undefined): string {
-    return stored?.titleChain || thread.title || (thread.titleFallback ? compactTitle(thread.titleFallback) : null) || thread.id;
+    const base = stored?.titleChain || thread.title || (thread.titleFallback ? compactTitle(thread.titleFallback) : null) || thread.id;
+    return categorizedTitle(base, thread.titleFallback ?? "");
   }
 
   async function materialize(
@@ -590,9 +841,10 @@ export default async function plugin(bb: any) {
     childCount: number,
   ): Promise<BoardTask> {
     const running = isRunningSelf(thread) || descendants.some(isRunningSelf);
-    const details = await threadDetails(thread, !running);
-    const derived = deriveStatus(thread, details, stored, descendants);
-    const title = threadTitle(thread, stored);
+    const [details, all] = await Promise.all([threadDetails(thread, !running), loadLabels()]);
+    const label = labelView(thread, details, running, all);
+    const derived = deriveStatus(thread, details, stored, descendants, label);
+    const title = label.title ?? threadTitle(thread, stored);
     return {
       threadId: thread.id,
       shortName: stored?.shortName ?? cleanShortName(title),
@@ -1009,6 +1261,12 @@ export default async function plugin(bb: any) {
 
   bb.events.on("thread.deleted", async ({ thread }: any) => {
     detailsCache.delete(thread.id);
+    firstPromptCache.delete(thread.id);
+    const all = await loadLabels();
+    if (thread.id in all) {
+      delete all[thread.id];
+      persistLabels();
+    }
     await removeTask(thread.id);
     publishBoardChanged();
   });
@@ -1096,6 +1354,8 @@ export default async function plugin(bb: any) {
   });
 
   bb.onDispose(() => {
+    if (changedTimer) clearTimeout(changedTimer);
+    labelQueue.length = 0;
     bb.log.info("disposed");
   });
 }

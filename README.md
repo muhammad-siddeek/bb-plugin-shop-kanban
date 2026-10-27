@@ -43,7 +43,16 @@ Expected UI surfaces:
 - Floating reopen pill when hidden (shows WIP/blocked counts).
 - Draggable/keyboard resizable top handle.
 - Uppercase, color-coded column headers with counts.
-- Compact cards: one-line title (click to open the thread), two-line
-  description, relative "updated" timestamp, and an archive button at the
-  bottom right (archives the BB thread).
+- Compact cards titled `[category] user intent` (e.g. `[shop kanban] refine
+  UI`), a two-line summary of the most recent interaction, a relative
+  "updated" timestamp, and an archive button at the bottom right (archives the
+  BB thread). Clicking a card opens the thread scrolled to the latest message.
+
+Card labels are written by a small model: the `bb.host` entry (`host.ts`) runs
+`pi -p` with `anthropic/claude-haiku-5-5` (fallback `claude-haiku-4-5`). Labels
+are cached in plugin kv (`labels-v2`) and refreshed only when a thread gets a
+new user message or a new final reply. The model also decides whether a
+finished reply is actually waiting on the user (Blocked) or done. Until a label
+exists — or if `pi` is unavailable — the card falls back to the thread title
+and an excerpt of the latest message.
 - Queue `+` button opens an inline add-task form (Enter adds, Esc cancels).

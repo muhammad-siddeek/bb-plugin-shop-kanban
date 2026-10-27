@@ -133,10 +133,52 @@ function stripCategory(value: string): string {
 }
 
 /** Card title without the bracketed category tag; prefers the untruncated title chain. */
-function taskCardTitle(task: BoardTask): string {
+/** Card title as "[category] intent"; the category comes from the first segment that has one. */
+function taskCardTitle(task: BoardTask): { category: string | null; intent: string } {
   const segments = task.titleChain.split(" > ");
-  const current = stripCategory(segments[segments.length - 1] ?? "");
-  return current || stripCategory(task.shortName) || task.shortName || task.threadId;
+  const last = segments[segments.length - 1] ?? "";
+  const category =
+    [last, ...segments, task.shortName].map((segment) => segment.match(/^\s*\[([^\]]+)\]/u)?.[1]?.trim()).find(Boolean) ?? null;
+  const intent = stripCategory(last) || stripCategory(task.shortName) || task.threadId;
+  return { category, intent };
+}
+
+const SCROLL_TO_LATEST_SELECTOR = 'button[aria-label="Scroll to latest event"]';
+
+/**
+ * After opening a thread, jump its timeline to the newest message. bb restores the last
+ * scroll position per thread, so keep nudging for a moment while it mounts and restores,
+ * and stop as soon as the user scrolls themselves.
+ */
+function scrollThreadToLatest(threadId: string) {
+  if (typeof window === "undefined") return;
+  const startedAt = Date.now();
+  let cancelled = false;
+  const cancel = () => {
+    cancelled = true;
+  };
+  const events = ["wheel", "touchstart", "keydown", "pointerdown"] as const;
+  for (const name of events) window.addEventListener(name, cancel, { capture: true, passive: true, once: true });
+  const cleanup = () => {
+    for (const name of events) window.removeEventListener(name, cancel, { capture: true });
+  };
+  const tick = () => {
+    if (cancelled) return cleanup();
+    const onThread = window.location.pathname.includes(`/threads/${threadId}`);
+    if (onThread || Date.now() - startedAt > 400) {
+      const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>(SCROLL_TO_LATEST_SELECTOR));
+      if (buttons.length > 0) {
+        for (const button of buttons) button.click();
+      } else {
+        for (const viewport of Array.from(document.querySelectorAll<HTMLElement>("[data-thread-window] [data-page-scroll-viewport]"))) {
+          viewport.scrollTop = viewport.scrollHeight;
+        }
+      }
+    }
+    if (Date.now() - startedAt < 1_800) window.setTimeout(tick, 150);
+    else cleanup();
+  };
+  window.requestAnimationFrame(tick);
 }
 
 function parseTime(value: string | number | null | undefined): number | null {
@@ -291,14 +333,25 @@ function TaskCard({ task, now, onArchive, onOpen }: {
   onArchive: (threadId: string) => void;
   onOpen: (threadId: string) => void;
 }) {
-  const title = taskCardTitle(task);
+  const { category, intent } = taskCardTitle(task);
+  const titleText = category ? `[${category}] ${intent}` : intent;
+  const titleNode = (
+    <>
+      {category ? <span className="font-normal text-muted-foreground">[{category}] </span> : null}
+      {intent}
+    </>
+  );
   const activity = taskActivityTime(task);
   const canOpen = !task.missingThread;
   const reason = task.statusReason && task.column !== "done" && task.statusReason !== "Running" ? task.statusReason : null;
 
   return (
     <article
-      className={`group relative rounded-lg border bg-card px-2.5 py-2 shadow-xs transition-[border-color,box-shadow] hover:shadow-sm ${
+      onClick={(event) => {
+        if (!canOpen || (event.target as HTMLElement).closest("button, a, [role='button']")) return;
+        onOpen(task.threadId);
+      }}
+      className={`group relative rounded-lg border bg-card px-2.5 py-2 shadow-xs transition-[border-color,box-shadow] hover:shadow-sm ${canOpen ? "cursor-pointer" : ""} ${
         task.column === "blocked" ? "border-rose-500/30 hover:border-rose-500/50" : "border-border/70 hover:border-border"
       }`}
     >
@@ -309,13 +362,13 @@ function TaskCard({ task, now, onArchive, onOpen }: {
             <button
               type="button"
               onClick={() => onOpen(task.threadId)}
-              title={`Open thread · ${task.titleChain}`}
+              title={`Open thread · ${titleText}`}
               className="line-clamp-1 w-full rounded-sm text-left text-[13px] font-medium leading-snug text-foreground decoration-muted-foreground/50 underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
-              {title}
+              {titleNode}
             </button>
           ) : (
-            <h3 className="line-clamp-1 text-[13px] font-medium leading-snug text-foreground" title={task.titleChain}>{title}</h3>
+            <h3 className="line-clamp-1 text-[13px] font-medium leading-snug text-foreground" title={titleText}>{titleNode}</h3>
           )}
           {task.note ? (
             <p className="mt-0.5 line-clamp-2 text-xs leading-snug text-muted-foreground" title={task.note}>{task.note}</p>
@@ -496,6 +549,7 @@ function BoardView({ api }: { api: BoardApi }) {
   const openTask = useCallback((threadId: string) => {
     try {
       navigate?.toThread?.(threadId);
+      scrollThreadToLatest(threadId);
     } catch (cause) {
       report(cause);
     }
