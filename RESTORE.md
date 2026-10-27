@@ -1,15 +1,11 @@
 # Restore notes
 
-This source was moved out of BB's thread workspace storage to avoid losing it
-when an old thread workspace is archived or destroyed.
-
 Stable source path:
 
 `~/world/bb-plugins/shop-kanban`
 
-The plugin package name remains `bb-plugin-kanban-board`, producing plugin id
-`kanban-board`. Do not rename the package unless you intentionally want a new
-plugin id and are prepared to migrate storage/metadata and tool names.
+The plugin package name is `bb-plugin-shop-kanban`, producing plugin id
+`shop-kanban`.
 
 To restore after accidental changes:
 

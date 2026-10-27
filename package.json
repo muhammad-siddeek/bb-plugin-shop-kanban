@@ -1,5 +1,5 @@
 {
-  "name": "bb-plugin-kanban-board",
+  "name": "bb-plugin-shop-kanban",
   "version": "0.1.0",
   "type": "commonjs",
   "engines": {
@@ -7,8 +7,8 @@
     "bbPluginSdk": ">=0.6.79"
   },
   "bb": {
-    "name": "Kanban Board",
-    "description": "Kanban board of BB thread cards.",
+    "name": "Shop Kanban",
+    "description": "Shop Kanban board of BB thread cards.",
     "branding": {
       "icon": "Columns"
     },

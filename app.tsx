@@ -40,8 +40,8 @@ type BoardState = {
 };
 
 const BOARD_REFRESH_MS = 1000;
-const BOTTOM_BOARD_OPEN_CLASS = "kanban-board-bottom-open";
-const BOTTOM_BOARD_HEIGHT_VAR = "--kanban-board-bottom-height";
+const BOTTOM_BOARD_OPEN_CLASS = "shop-kanban-bottom-open";
+const BOTTOM_BOARD_HEIGHT_VAR = "--shop-kanban-bottom-height";
 const DEFAULT_PANEL_MIN_HEIGHT = 320;
 const PANEL_MIN_HEIGHT = 240;
 const PANEL_MAX_HEIGHT_RATIO = 0.9;
@@ -231,7 +231,7 @@ function AddTaskForm({ onAdd }: { onAdd: (prompt: string) => Promise<void> }) {
       <textarea
         value={prompt}
         onChange={(event) => setPrompt(event.target.value)}
-        placeholder="Add a new top-level Kanban task…"
+        placeholder="Add a new top-level Shop Kanban task…"
         className="min-h-16 w-full resize-none rounded border border-input bg-background px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring"
       />
       <div className="mt-2 flex justify-end">
@@ -275,7 +275,7 @@ function BoardPage({ embedded = false }: { embedded?: boolean }) {
         {embedded ? null : (
           <div className="mb-4 flex items-start justify-between gap-3">
             <div>
-              <h1 className="text-base font-semibold text-foreground">Kanban Board</h1>
+              <h1 className="text-base font-semibold text-foreground">Shop Kanban</h1>
               <p className="mt-1 text-sm text-muted-foreground">BB thread cards grouped by progress.</p>
             </div>
             <button type="button" className="rounded border border-border px-3 py-1.5 text-sm hover:bg-accent" onClick={refetch}>Refresh</button>
@@ -283,7 +283,7 @@ function BoardPage({ embedded = false }: { embedded?: boolean }) {
         )}
         {error ? <p className="mb-3 rounded border border-destructive/30 bg-destructive/10 p-2 text-sm text-destructive">{error}</p> : null}
         {board === null ? (
-          <EmptyState>Loading Kanban board…</EmptyState>
+          <EmptyState>Loading Shop Kanban board…</EmptyState>
         ) : (
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
             {board.columns.map((column) => {
@@ -321,7 +321,7 @@ function useTaskStatusNotifications() {
     if (data.column !== "done" && data.column !== "blocked") return;
     // Historical UI surfaced this as a toast. Keep the subscription so the overlay wakes/refetches
     // even in BB builds where the toaster shim is not available to this reconstructed source.
-    console.info(`[kanban-board] ${data.title ?? "Task"} moved to ${data.column}`, data.note ?? "");
+    console.info(`[shop-kanban] ${data.title ?? "Task"} moved to ${data.column}`, data.note ?? "");
   });
 }
 
@@ -428,10 +428,10 @@ function BottomBoardOverlay() {
         type="button"
         className="fixed bottom-3 right-4 z-50 inline-flex items-center gap-2 rounded-full border border-border bg-card px-3 py-2 text-sm font-medium text-foreground shadow-lg hover:bg-accent"
         onClick={() => setOpen(true)}
-        aria-label="Open Kanban board"
+        aria-label="Open Shop Kanban board"
       >
         <span aria-hidden>▦</span>
-        Kanban{blockedTasks > 0 ? ` · ${blockedTasks} blocked` : ""}
+        Shop Kanban{blockedTasks > 0 ? ` · ${blockedTasks} blocked` : ""}
       </button>
     );
   }
@@ -444,7 +444,7 @@ function BottomBoardOverlay() {
       <div
         role="separator"
         aria-orientation="horizontal"
-        aria-label="Resize Kanban board panel"
+        aria-label="Resize Shop Kanban board panel"
         tabIndex={0}
         className="group flex h-3 shrink-0 cursor-row-resize touch-none items-center justify-center border-b border-border/60 focus:outline-none focus:ring-2 focus:ring-ring"
         onPointerDown={startResize}
@@ -456,7 +456,7 @@ function BottomBoardOverlay() {
       <div className="flex h-11 shrink-0 items-center justify-between border-b border-border px-4">
         <div className="flex min-w-0 items-center gap-2">
           <span className="text-muted-foreground" aria-hidden>▦</span>
-          <span className="font-medium text-foreground">Kanban Board</span>
+          <span className="font-medium text-foreground">Shop Kanban</span>
           {blockedTasks > 0 ? (
             <span className="rounded-full bg-destructive/10 px-2 py-0.5 text-xs font-medium text-destructive">
               {blockedTasks} blocked
@@ -502,7 +502,7 @@ export default definePluginApp((app) => {
 
   app.slots.navPanel({
     id: "board",
-    title: "Kanban Board",
+    title: "Shop Kanban",
     icon: "Columns",
     path: "board",
     component: BoardPage,
