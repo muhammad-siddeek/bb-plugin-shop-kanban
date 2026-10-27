@@ -1,0 +1,21 @@
+{
+  "name": "bb-plugin-kanban-board",
+  "version": "0.1.0",
+  "type": "commonjs",
+  "engines": {
+    "bb": ">=0.47",
+    "bbPluginSdk": ">=0.6.79"
+  },
+  "bb": {
+    "name": "Kanban Board",
+    "description": "Kanban board of BB thread cards.",
+    "branding": {
+      "icon": "Columns"
+    },
+    "server": "./server.cjs",
+    "skills": [
+      "skills"
+    ],
+    "app": "./app.tsx"
+  }
+}
