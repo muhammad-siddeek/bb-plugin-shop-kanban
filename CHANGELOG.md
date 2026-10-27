@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.6.0
 
 - Cards show, flush right in the footer: what the session has spent (when the
   harness reports cost), a ring with the share of the context window in use
