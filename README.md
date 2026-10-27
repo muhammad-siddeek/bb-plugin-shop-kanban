@@ -32,7 +32,10 @@ Board contents and status (derived from live thread state in `server.ts`):
 - **WIP**: the thread or any descendant is running (incl. background work).
 - **Blocked**: not running and needs the user: pending interaction, error,
   reported failure, or the last message asks a question / requests input.
-- **Done**: not running and the last message reports completion.
+- **Done**: not running and the last message reports completion. Unread done
+  cards (bb's unread state) show a solid green check and sit above read ones;
+  opening a card marks its thread read and drops it to the read group. Both
+  groups are in timestamp order.
 - **Queue**: not started yet (pending/queued, or no output).
 
 Expected UI surfaces:

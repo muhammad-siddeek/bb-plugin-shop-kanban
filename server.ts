@@ -58,6 +58,8 @@ const boardTaskSchema = z.object({
   hiddenChildCount: z.number(),
   runningChildCount: z.number(),
   statusReason: z.string().nullable(),
+  /** bb's unread state: new activity since the user last opened the thread. */
+  unread: z.boolean(),
   createdAt: z.string(),
   updatedAt: z.string(),
   lastUserInputAt: z.string().nullable(),
@@ -96,6 +98,10 @@ export const rpcContract = {
   board_remove_task: {
     input: z.object({ threadId: z.string() }),
     output: z.object({ removed: z.boolean() }),
+  },
+  board_mark_read: {
+    input: z.object({ threadId: z.string() }),
+    output: z.object({ ok: z.boolean() }),
   },
 };
 
@@ -289,6 +295,8 @@ type LiveThread = {
   hasPendingInteraction: boolean;
   queuedWork: string | null;
   backgroundWork: number;
+  lastReadAt: number | null;
+  latestAttentionAt: number | null;
 };
 
 function toLiveThread(raw: any): LiveThread | null {
@@ -315,6 +323,8 @@ function toLiveThread(raw: any): LiveThread | null {
     createdAt: typeof raw.createdAt === "number" ? raw.createdAt : null,
     updatedAt: typeof raw.updatedAt === "number" ? raw.updatedAt : null,
     hasPendingInteraction: raw.hasPendingInteraction === true,
+    lastReadAt: typeof raw.lastReadAt === "number" ? raw.lastReadAt : null,
+    latestAttentionAt: typeof raw.latestAttentionAt === "number" ? raw.latestAttentionAt : null,
     queuedWork: typeof raw.queuedWork === "string" ? raw.queuedWork : null,
     backgroundWork:
       count(activity.activeBackgroundAgentCount) +
@@ -932,6 +942,7 @@ export default async function plugin(bb: any) {
       hiddenChildCount: 0,
       runningChildCount: derived.runningChildren,
       statusReason: derived.reason,
+      unread: thread.latestAttentionAt !== null && (thread.lastReadAt === null || thread.latestAttentionAt > thread.lastReadAt),
       createdAt: stored?.createdAt ?? iso(thread.createdAt),
       updatedAt: iso(Math.max(thread.updatedAt ?? 0, stored ? Date.parse(stored.updatedAt) || 0 : 0) || null),
       lastUserInputAt: details.lastUserInputAt === null ? null : iso(details.lastUserInputAt),
@@ -950,6 +961,7 @@ export default async function plugin(bb: any) {
         hiddenChildCount: 0,
         runningChildCount: 0,
         statusReason: null,
+        unread: false,
         lastUserInputAt: null,
         missingThread: true,
         thread: null,
@@ -1167,6 +1179,11 @@ export default async function plugin(bb: any) {
     board_remove_task: async ({ threadId }: { threadId: string }) => ({
       removed: await removeTask(threadId, { archiveThread: true }),
     }),
+    board_mark_read: async ({ threadId }: { threadId: string }) => {
+      const ok = (await safe(() => bb.sdk.threads.markRead({ threadId }))) !== null;
+      publishBoardChanged();
+      return { ok };
+    },
   });
 
   bb.agents.registerTool({

@@ -27,6 +27,7 @@ type BoardTask = {
   hiddenChildCount: number;
   runningChildCount?: number;
   statusReason?: string | null;
+  unread?: boolean;
   createdAt: string;
   updatedAt: string;
   lastUserInputAt: string | null;
@@ -212,9 +213,20 @@ function formatRelativeTime(ms: number, now: number): string {
   return new Date(ms).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
 }
 
-function groupTasksByColumn(board: BoardState | null): Map<BoardColumn, BoardTask[]> {
+/** Unread unless bb says it was read, or the user just opened it from the board. */
+function isUnread(task: BoardTask, readLocally: ReadonlySet<string>): boolean {
+  return task.unread === true && !readLocally.has(task.threadId);
+}
+
+function groupTasksByColumn(board: BoardState | null, readLocally: ReadonlySet<string>): Map<BoardColumn, BoardTask[]> {
   const grouped = new Map<BoardColumn, BoardTask[]>(COLUMNS.map((column) => [column, []]));
   for (const task of board?.tasks ?? []) grouped.get(task.column)?.push(task);
+  // Done: unread cards first, then read ones; each group keeps the server's timestamp order.
+  const done = grouped.get("done") ?? [];
+  grouped.set("done", [
+    ...done.filter((task) => isUnread(task, readLocally)),
+    ...done.filter((task) => !isUnread(task, readLocally)),
+  ]);
   return grouped;
 }
 
@@ -298,7 +310,7 @@ function IconButton({ icon, label, onClick, small = false, className = "" }: {
   );
 }
 
-function TaskStatusMark({ column }: { column: BoardColumn }) {
+function TaskStatusMark({ column, unread = false }: { column: BoardColumn; unread?: boolean }) {
   if (column === "wip") {
     return (
       <span aria-label="In progress" title="In progress" className="mt-px inline-flex size-4 shrink-0 items-center justify-center">
@@ -308,7 +320,13 @@ function TaskStatusMark({ column }: { column: BoardColumn }) {
   }
   if (column === "done") {
     return (
-      <span aria-label="Done" title="Done" className={`mt-px inline-flex size-4 shrink-0 items-center justify-center rounded-full ${COLUMN_META.done.badge}`}>
+      <span
+        aria-label={unread ? "Done · unread" : "Done"}
+        title={unread ? "Done · unread" : "Done"}
+        className={`mt-px inline-flex size-4 shrink-0 items-center justify-center rounded-full transition-colors ${
+          unread ? "bg-emerald-500 text-white" : COLUMN_META.done.badge
+        }`}
+      >
         <Icon name="Check" className="size-3" aria-hidden />
       </span>
     );
@@ -327,9 +345,10 @@ function TaskStatusMark({ column }: { column: BoardColumn }) {
   );
 }
 
-function TaskCard({ task, now, onArchive, onOpen }: {
+function TaskCard({ task, now, unread, onArchive, onOpen }: {
   task: BoardTask;
   now: number;
+  unread: boolean;
   onArchive: (threadId: string) => void;
   onOpen: (threadId: string) => void;
 }) {
@@ -360,7 +379,7 @@ function TaskCard({ task, now, onArchive, onOpen }: {
       }`}
     >
       <div className="flex items-start gap-2">
-        <TaskStatusMark column={task.column} />
+        <TaskStatusMark column={task.column} unread={unread} />
         <div className="min-w-0 flex-1">
           {canOpen ? (
             <button
@@ -485,10 +504,11 @@ function ColumnEmpty({ children }: { children: ReactNode }) {
   );
 }
 
-function BoardColumnView({ column, title, tasks, now, onArchive, onOpen, adding, onStartAdding, addForm }: {
+function BoardColumnView({ column, title, tasks, now, readLocally, onArchive, onOpen, adding, onStartAdding, addForm }: {
   column: BoardColumn;
   title: string;
   tasks: BoardTask[];
+  readLocally: ReadonlySet<string>;
   now: number;
   onArchive: (threadId: string) => void;
   onOpen: (threadId: string) => void;
@@ -514,6 +534,7 @@ function BoardColumnView({ column, title, tasks, now, onArchive, onOpen, adding,
             key={task.threadId}
             task={task}
             now={now}
+            unread={task.column === "done" && isUnread(task, readLocally)}
             onArchive={onArchive}
             onOpen={onOpen}
           />
@@ -541,7 +562,16 @@ function BoardView({ api }: { api: BoardApi }) {
   const context = useBbContext();
   const navigate = useBbNavigate() as { toThread?: (threadId: string) => unknown } | null;
   const { rpc, board, error, report, refetch } = api;
-  const grouped = useMemo(() => groupTasksByColumn(board), [board]);
+  // Cards opened from the board count as read right away, before bb's read state round-trips.
+  const [readLocally, setReadLocally] = useState<ReadonlySet<string>>(() => new Set());
+  const grouped = useMemo(() => groupTasksByColumn(board, readLocally), [board, readLocally]);
+  useEffect(() => {
+    // Drop local overrides once the server agrees, so later activity can mark the card unread again.
+    if (!board || readLocally.size === 0) return;
+    const stillUnread = new Set(board.tasks.filter((task) => task.unread).map((task) => task.threadId));
+    const next = new Set([...readLocally].filter((id) => stillUnread.has(id)));
+    if (next.size !== readLocally.size) setReadLocally(next);
+  }, [board, readLocally]);
   const now = useNow(CLOCK_TICK_MS);
   const [adding, setAdding] = useState(false);
 
@@ -550,13 +580,15 @@ function BoardView({ api }: { api: BoardApi }) {
   }, [rpc, refetch, report]);
 
   const openTask = useCallback((threadId: string) => {
+    setReadLocally((current) => (current.has(threadId) ? current : new Set([...current, threadId])));
+    rpc.call("board_mark_read", { threadId }).then(refetch, () => refetch());
     try {
       navigate?.toThread?.(threadId);
       scrollThreadToLatest(threadId);
     } catch (cause) {
       report(cause);
     }
-  }, [navigate, report]);
+  }, [navigate, report, rpc, refetch]);
 
   const addTask = useCallback(async (prompt: string) => {
     await rpc.call("board_spawn_task", {
@@ -592,6 +624,7 @@ function BoardView({ api }: { api: BoardApi }) {
               title={column.title}
               tasks={grouped.get(column.id) ?? []}
               now={now}
+              readLocally={readLocally}
               onArchive={archiveTask}
               onOpen={openTask}
               adding={column.id === "queue" && adding}
