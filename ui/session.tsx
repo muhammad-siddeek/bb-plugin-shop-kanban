@@ -11,18 +11,22 @@ const ANCHOR_GAP = 6;
 /** Context fill (0-1) where the ring turns amber, then red. */
 const CONTEXT_WARN = 0.7;
 const CONTEXT_CRITICAL = 0.9;
+const WARN_TONE = { ring: "text-amber-500", bar: "bg-amber-500" };
+const CRITICAL_TONE = { ring: "text-rose-500", bar: "bg-rose-500" };
 const RING_RADIUS = 4.5;
 const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
 
 function formatCost({ amount, currency }: { amount: number; currency: string }): string {
-  let format: (value: number) => string;
+  const tiny = amount > 0 && amount < 0.01;
+  const value = tiny ? 0.01 : amount;
+  let text: string;
   try {
     const formatter = new Intl.NumberFormat(undefined, { style: "currency", currency, minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    format = (value) => formatter.format(value);
+    text = formatter.format(value);
   } catch {
-    format = (value) => `${value.toFixed(2)} ${currency}`;
+    text = `${value.toFixed(2)} ${currency}`;
   }
-  return amount > 0 && amount < 0.01 ? `<${format(0.01)}` : format(amount);
+  return tiny ? `<${text}` : text;
 }
 
 const TOKENS = new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 });
@@ -70,9 +74,9 @@ export function HarnessMeta({ provider, session }: { provider: AgentProvider | n
   const percent = fill === null ? null : `${Math.round(fill * 100)}%`;
   if (!provider && cost === null && percent === null && !session?.model) return null;
 
-  const tone = fill === null || fill < CONTEXT_WARN ? "" : fill < CONTEXT_CRITICAL ? "amber" : "rose";
-  const ringTone = tone === "amber" ? "text-amber-500" : tone === "rose" ? "text-rose-500" : "";
-  const barTone = tone === "amber" ? "bg-amber-500" : tone === "rose" ? "bg-rose-500" : "bg-muted-foreground/50";
+  const tone = fill === null || fill < CONTEXT_WARN ? null : fill < CONTEXT_CRITICAL ? WARN_TONE : CRITICAL_TONE;
+  const ringTone = tone?.ring ?? "";
+  const barTone = tone?.bar ?? "bg-muted-foreground/50";
   const usage = [
     used !== null && capacity ? `${session?.estimated ? "~" : ""}${TOKENS.format(used)} / ${TOKENS.format(capacity)} tokens · ${percent}` : null,
     cost !== null ? `${cost} spent` : null,

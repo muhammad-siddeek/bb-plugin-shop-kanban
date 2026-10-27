@@ -3,10 +3,6 @@ import { useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
 import { PLUGIN_SLUG } from "../brand";
 import { BOARD_REFRESH_MS, type BoardState } from "./model";
 
-// ---------------------------------------------------------------------------
-// Hooks
-// ---------------------------------------------------------------------------
-
 export function useBoard() {
   const rpc = useRpc<any>();
   const [board, setBoard] = useState<BoardState | null>(null);

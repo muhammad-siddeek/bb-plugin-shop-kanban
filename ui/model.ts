@@ -1,6 +1,10 @@
 import { PLUGIN_SLUG } from "../brand";
+import type { BoardSession } from "../server/schema";
 
 // Shared board types, constants, and pure helpers.
+
+// Type-only re-export of the server's schema type; keeps zod out of the browser bundle.
+export type { BoardSession };
 
 export type BoardColumn = "queue" | "wip" | "blocked" | "done";
 
@@ -36,19 +40,6 @@ export type BoardTask = {
     archivedAt: number | null;
   } | null;
   session: BoardSession | null;
-};
-
-/** The thread's harness session, labels resolved server-side (see server/schema.ts). */
-export type BoardSession = {
-  modelId: string | null;
-  model: string | null;
-  reasoning: string | null;
-  serviceTier: string | null;
-  access: string | null;
-  cost: { amount: number; currency: string } | null;
-  usedTokens: number | null;
-  contextWindow: number | null;
-  estimated: boolean;
 };
 
 export type BoardState = {
@@ -100,10 +91,6 @@ export const COLUMN_META: Record<BoardColumn, {
   },
 };
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 export function maxPanelHeight(): number {
   if (typeof window === "undefined") return DEFAULT_PANEL_MIN_HEIGHT;
   return Math.max(PANEL_MIN_HEIGHT, Math.round(window.innerHeight * PANEL_MAX_HEIGHT_RATIO));
@@ -131,9 +118,9 @@ function stripCategory(value: string): string {
 /** Card title as "[category] intent"; the category comes from the first segment that has one. */
 export function taskCardTitle(task: BoardTask): { category: string | null; intent: string } {
   const segments = task.titleChain.split(" > ");
-  const last = segments[segments.length - 1] ?? "";
+  const last = segments[segments.length - 1];
   const category =
-    [last, ...segments, task.shortName].map((segment) => segment.match(/^\s*\[([^\]]+)\]/u)?.[1]?.trim()).find(Boolean) ?? null;
+    [last, ...segments, task.shortName].map((segment) => segment.match(/^\s*\[([^\]]+)\]/u)?.[1].trim()).find(Boolean) ?? null;
   const intent = stripCategory(last) || stripCategory(task.shortName) || task.threadId;
   return { category, intent };
 }
@@ -161,11 +148,11 @@ export function scrollThreadToLatest(threadId: string) {
     if (cancelled) return cleanup();
     const onThread = window.location.pathname.includes(`/threads/${threadId}`);
     if (onThread || Date.now() - startedAt > 400) {
-      const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>(SCROLL_TO_LATEST_SELECTOR));
+      const buttons = document.querySelectorAll<HTMLButtonElement>(SCROLL_TO_LATEST_SELECTOR);
       if (buttons.length > 0) {
         for (const button of buttons) button.click();
       } else {
-        for (const viewport of Array.from(document.querySelectorAll<HTMLElement>("[data-thread-window] [data-page-scroll-viewport]"))) {
+        for (const viewport of document.querySelectorAll<HTMLElement>("[data-thread-window] [data-page-scroll-viewport]")) {
           viewport.scrollTop = viewport.scrollHeight;
         }
       }

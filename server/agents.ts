@@ -2,7 +2,7 @@ import { z } from "zod";
 import { PLUGIN_NAME, PLUGIN_SLUG, TOOL_PREFIX } from "../brand";
 import { COLUMN_IDS, COLUMNS, columnSchema, type BoardTask, type Column, type Result } from "./schema";
 
-export type BoardApi = {
+type BoardApi = {
   listBoard(): Promise<{ columns: unknown[]; tasks: BoardTask[] }>;
   spawnTask(input: { shortName: string; prompt: string; projectId?: string; parentThreadId?: string; column?: Column; showOnBoard?: boolean }): Promise<BoardTask>;
   updateTask(input: { threadId: string; column?: Column; shortName?: string; note?: string; result?: Result | null; showOnBoard?: boolean; showChildren?: boolean }): Promise<BoardTask>;
@@ -16,6 +16,8 @@ const TOOLS = {
   createTheoryTasks: `${TOOL_PREFIX}_create_theory_tasks`,
   markResult: `${TOOL_PREFIX}_mark_result`,
 };
+
+const NO_THREAD_ID = "No current thread id was available; pass threadId explicitly.";
 
 export function toolHelp(titleChain: string): string {
   return [
@@ -53,7 +55,7 @@ export function registerAgentTools(bb: any, { spawnTask, updateTask, markTaskRes
     }),
     async execute(args: any, context: any) {
       const threadId = args.threadId ?? context.threadId;
-      if (!threadId) return "No current thread id was available; pass threadId explicitly.";
+      if (!threadId) return NO_THREAD_ID;
       const task = await updateTask({
         threadId,
         column: args.column,
@@ -158,7 +160,7 @@ export function registerAgentTools(bb: any, { spawnTask, updateTask, markTaskRes
     }),
     async execute(args: any, context: any) {
       const threadId = args.threadId ?? context.threadId;
-      if (!threadId) return "No current thread id was available; pass threadId explicitly.";
+      if (!threadId) return NO_THREAD_ID;
       const { task, result } = await markTaskResult(threadId, args.success, args.summary);
       return `Marked ${task.titleChain} as ${result}: ${args.summary}`;
     },
@@ -204,6 +206,7 @@ export function registerCli(bb: any, { listBoard, spawnTask, updateTask, markTas
       const args = argv.filter((arg) => arg !== "--json");
       const [command] = args;
       const reply = (value: unknown, text: string) => ({ exitCode: 0, stdout: json ? JSON.stringify(value) : text });
+      const usageError = { exitCode: 1, stderr: usage };
       try {
         if (command === "list") {
           const board = await listBoard();
@@ -215,40 +218,38 @@ export function registerCli(bb: any, { listBoard, spawnTask, updateTask, markTas
         }
         if (command === "add") {
           const separator = args.indexOf("--");
-          if (separator <= 1) return { exitCode: 1, stderr: usage };
+          if (separator <= 1) return usageError;
           const shortName = args.slice(1, separator).join(" ");
           const prompt = args.slice(separator + 1).join(" ");
-          if (!prompt.trim()) return { exitCode: 1, stderr: usage };
+          if (!prompt.trim()) return usageError;
           const task = await spawnTask({ shortName, prompt });
           return reply(task, `Spawned ${task.titleChain} as ${task.threadId}`);
         }
         if (command === "move") {
           const [, threadId, column, ...note] = args;
-          if (!threadId || !(COLUMN_IDS as readonly string[]).includes(column)) return { exitCode: 1, stderr: usage };
+          if (!threadId || !(COLUMN_IDS as readonly string[]).includes(column)) return usageError;
           const task = await updateTask({ threadId, column: column as Column, note: note.join(" ") || undefined });
           return reply(task, `Moved ${task.titleChain} to ${task.column}`);
         }
         if (command === "success" || command === "fail") {
           const [, threadId, ...rest] = args;
           const summary = rest.join(" ").trim();
-          if (!threadId || !summary) return { exitCode: 1, stderr: usage };
+          if (!threadId || !summary) return usageError;
           const { task, result } = await markTaskResult(threadId, command === "success", summary);
           return reply(task, `Marked ${task.titleChain} ${result}`);
         }
         if (command === "children") {
           const [, threadId, mode] = args;
-          if (!threadId || (mode !== "show" && mode !== "hide")) return { exitCode: 1, stderr: usage };
+          if (!threadId || (mode !== "show" && mode !== "hide")) return usageError;
           const task = await updateTask({ threadId, showChildren: mode === "show" });
           return reply(task, `${mode === "show" ? "Showing" : "Hiding"} child cards for ${task.titleChain}`);
         }
         if (command === "remove") {
-          const threadId = args[1];
-          if (!threadId) return { exitCode: 1, stderr: usage };
+          const [, threadId] = args;
+          if (!threadId) return usageError;
           return reply({ removed: await removeTask(threadId, { archiveThread: true }) }, `Archived ${threadId} from the board`);
         }
-        return command === undefined || command === "help" || command === "--help"
-          ? { exitCode: 0, stdout: usage }
-          : { exitCode: 1, stderr: usage };
+        return command === undefined || command === "help" || command === "--help" ? { exitCode: 0, stdout: usage } : usageError;
       } catch (error) {
         return { exitCode: 1, stderr: error instanceof Error ? error.message : String(error) };
       }

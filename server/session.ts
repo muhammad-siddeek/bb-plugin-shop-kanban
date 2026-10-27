@@ -44,19 +44,15 @@ export function createSessionInfo(bb: BbPluginApi) {
     fetch: () => Promise<T | null>,
     wait: boolean,
   ): Promise<T | null> {
-    let entry = store.get(id);
-    if (!entry) {
-      entry = { key, at: 0, value: null, pending: null };
-      store.set(id, entry);
-    }
+    const entry: Entry<T> = store.get(id) ?? { key, at: 0, value: null, pending: null };
+    store.set(id, entry);
     const stale = entry.key !== key || Date.now() - entry.at > maxAgeMs;
     if (stale && !entry.pending) {
-      const target = entry;
-      target.key = key;
-      target.pending = fetch().then((value) => {
-        target.value = value;
-        target.at = Date.now();
-        target.pending = null;
+      entry.key = key;
+      entry.pending = fetch().then((value) => {
+        entry.value = value;
+        entry.at = Date.now();
+        entry.pending = null;
         return value;
       });
     }
@@ -111,7 +107,7 @@ export function createSessionInfo(bb: BbPluginApi) {
   async function sessionFor(thread: LiveThread, running: boolean): Promise<BoardSession | null> {
     const [raw, catalog] = await Promise.all([
       cached(threads, thread.id, thread.updatedAt, running ? RUNNING_REFRESH_MS : IDLE_REFRESH_MS, () => fetchRaw(thread.id), true),
-      thread.providerId ? catalogFor(thread.providerId, thread.hostId) : Promise.resolve(null),
+      thread.providerId ? catalogFor(thread.providerId, thread.hostId) : null,
     ]);
     if (!raw || (!raw.options && !raw.usage)) return null;
     const { options, usage } = raw;

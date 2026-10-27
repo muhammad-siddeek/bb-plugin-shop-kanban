@@ -20,10 +20,9 @@ export function cleanShortName(value: string): string {
 export function compactTitle(value: unknown): string {
   const words = cleanShortName(typeof value === "string" && value.trim() ? value : "Task")
     .split(/\s+/u)
-    .filter(Boolean)
     .slice(0, 5)
     .join(" ");
-  return words.length > 0 ? words : "Task";
+  return words || "Task";
 }
 
 export function normalizeColumn(value: unknown): Column {
@@ -69,8 +68,8 @@ function categoryTokens(value: string): string[] {
 function inferCategory(title: string, context: string): string {
   const { category } = categoryParts(title);
   if (category) return category;
-  const tokens = categoryTokens(`${title} ${context}`).slice(0, 2);
-  return tokens.length === 0 ? "task" : tokens.join(" ").slice(0, 28).trim();
+  // Tokens are 3+ non-space chars, so the result is empty only when there are none.
+  return categoryTokens(`${title} ${context}`).slice(0, 2).join(" ").slice(0, 28).trim() || "task";
 }
 
 export function categorizedTitle(value: string, context: string): string {

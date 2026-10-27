@@ -24,7 +24,7 @@ function clip(value: string | null | undefined, max: number): string {
 }
 
 function userHistory(firstPrompt: string | null, prompts: string[]): string {
-  const list = prompts.length > 0 ? [...prompts] : firstPrompt ? [firstPrompt] : [];
+  const list = [...prompts];
   if (firstPrompt && list[0] !== firstPrompt) list.unshift(firstPrompt);
   const last = list.length - 1;
   // Opening and latest messages carry the most intent; middle ones are trimmed hard.
@@ -83,10 +83,10 @@ export function parseLabel(text: string): { category: string; intent: string; su
     typeof value === "string"
       ? oneLine(value.replace(/[\[\]"]/g, "")).split(" ").slice(0, maxWords).join(" ").slice(0, maxChars).trim()
       : "";
-  const category = words(raw?.category, 2, 24).toLowerCase();
-  const intent = words(raw?.intent, 6, 40).replace(/[.!]+$/u, "");
-  const summary = typeof raw?.summary === "string" ? oneLine(raw.summary).slice(0, 220) : "";
+  const category = words(raw.category, 2, 24).toLowerCase();
+  const intent = words(raw.intent, 6, 40).replace(/[.!]+$/u, "");
+  const summary = typeof raw.summary === "string" ? oneLine(raw.summary).slice(0, 220) : "";
   if (!category || !intent || !summary) return null;
-  return { category, intent, summary, needsInput: raw?.needsInput === true };
+  return { category, intent, summary, needsInput: raw.needsInput === true };
 }
 

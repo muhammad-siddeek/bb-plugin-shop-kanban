@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import type { FormEvent, KeyboardEvent, ReactNode } from "react";
+import { useEffect, useMemo, useState } from "react";
+import type { FormEvent, KeyboardEvent, ReactElement, ReactNode } from "react";
 import { experimental_Icon as Icon, experimental_useCodeTheme, experimental_useProviders, useBbContext, useBbNavigate } from "@get-bb/plugin-sdk/app";
 import { CLOCK_TICK_MS, columnMeta, groupTasksByColumn, isUnread, scrollThreadToLatest, shortNameFromPrompt, type BoardColumn, type BoardTask } from "./model";
 import { useNow, type BoardApi } from "./hooks";
@@ -22,7 +22,6 @@ function AddTaskForm({ onAdd, onCancel, onError }: {
     setPending(true);
     try {
       await onAdd(next);
-      setPrompt("");
       onCancel();
     } catch (cause) {
       onError(cause);
@@ -78,9 +77,11 @@ function AddTaskForm({ onAdd, onCancel, onError }: {
           className="inline-flex h-6 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md bg-primary px-2.5 text-xs font-medium text-primary-foreground shadow-xs transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-card disabled:cursor-not-allowed disabled:opacity-50"
         >
           {pending ? (
-            <span className="inline-flex size-2.5 animate-spin rounded-full border-[1.5px] border-primary-foreground/30 border-t-primary-foreground" aria-hidden />
-          ) : null}
-          {pending ? "Adding…" : "Add task"}
+            <>
+              <span className="inline-flex size-2.5 animate-spin rounded-full border-[1.5px] border-primary-foreground/30 border-t-primary-foreground" aria-hidden />
+              Adding…
+            </>
+          ) : "Add task"}
         </button>
       </div>
     </form>
@@ -95,7 +96,7 @@ function ColumnEmpty({ children }: { children: ReactNode }) {
   );
 }
 
-function BoardColumnView({ column, title, tasks, now, readLocally, selectedThreadId, invertedTheme, providersById, onArchive, onOpen, adding, onStartAdding, addForm }: {
+function BoardColumnView({ column, title, tasks, now, readLocally, selectedThreadId, invertedTheme, providersById, onArchive, onOpen, onStartAdding, addForm }: {
   column: BoardColumn;
   title: string;
   tasks: BoardTask[];
@@ -106,11 +107,12 @@ function BoardColumnView({ column, title, tasks, now, readLocally, selectedThrea
   providersById: ReadonlyMap<string, AgentProvider>;
   onArchive: (threadId: string) => void;
   onOpen: (threadId: string) => void;
-  adding: boolean;
   onStartAdding: (() => void) | null;
-  addForm: ReactNode;
+  /** The new-task form; non-null only while it is open. */
+  addForm: ReactElement | null;
 }) {
   const meta = columnMeta(column);
+  const adding = addForm !== null;
   return (
     <section
       aria-label={title}
@@ -125,7 +127,7 @@ function BoardColumnView({ column, title, tasks, now, readLocally, selectedThrea
         ) : null}
       </header>
       <div data-board-column-scroll="" className="min-h-0 flex-1 space-y-1.5 overflow-y-auto overscroll-contain p-2 [scrollbar-width:thin]">
-        {adding ? addForm : null}
+        {addForm}
         {tasks.map((task) => (
           <TaskCard
             key={task.threadId}
@@ -166,7 +168,7 @@ export function BoardView({ api }: { api: BoardApi }) {
   // Same roster and lookup as bb's sidebar: a thread's harness icon is its agent provider's artwork.
   const { providers } = experimental_useProviders();
   const providersById = useMemo(() => new Map(providers.map((provider) => [provider.id, provider])), [providers]);
-  const navigate = useBbNavigate() as { toThread?: (threadId: string) => unknown } | null;
+  const navigate = useBbNavigate();
   const { rpc, board, error, report, refetch } = api;
   // Cards opened from the board count as read right away, before bb's read state round-trips.
   const [readLocally, setReadLocally] = useState<ReadonlySet<string>>(() => new Set());
@@ -181,32 +183,29 @@ export function BoardView({ api }: { api: BoardApi }) {
   const now = useNow(CLOCK_TICK_MS);
   const [adding, setAdding] = useState(false);
 
-  const archiveTask = useCallback((threadId: string) => {
+  const archiveTask = (threadId: string) => {
     rpc.call("board_remove_task", { threadId }).then(refetch, report);
-  }, [rpc, refetch, report]);
+  };
 
-  const openTask = useCallback((threadId: string) => {
+  const openTask = (threadId: string) => {
     setReadLocally((current) => (current.has(threadId) ? current : new Set([...current, threadId])));
-    rpc.call("board_mark_read", { threadId }).then(refetch, () => refetch());
+    rpc.call("board_mark_read", { threadId }).then(refetch, refetch);
     try {
       navigate?.toThread?.(threadId);
       scrollThreadToLatest(threadId);
     } catch (cause) {
       report(cause);
     }
-  }, [navigate, report, rpc, refetch]);
+  };
 
-  const addTask = useCallback(async (prompt: string) => {
+  const addTask = async (prompt: string) => {
     await rpc.call("board_spawn_task", {
       shortName: shortNameFromPrompt(prompt),
       prompt,
-      projectId: (context as any)?.projectId,
+      projectId: context?.projectId,
     });
     refetch();
-  }, [context, rpc, refetch]);
-
-  const startAdding = useCallback(() => setAdding(true), []);
-  const stopAdding = useCallback(() => setAdding(false), []);
+  };
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -236,9 +235,8 @@ export function BoardView({ api }: { api: BoardApi }) {
               providersById={providersById}
               onArchive={archiveTask}
               onOpen={openTask}
-              adding={column.id === "queue" && adding}
-              onStartAdding={column.id === "queue" ? startAdding : null}
-              addForm={<AddTaskForm onAdd={addTask} onCancel={stopAdding} onError={report} />}
+              onStartAdding={column.id === "queue" ? () => setAdding(true) : null}
+              addForm={column.id === "queue" && adding ? <AddTaskForm onAdd={addTask} onCancel={() => setAdding(false)} onError={report} /> : null}
             />
           ))}
         </div>

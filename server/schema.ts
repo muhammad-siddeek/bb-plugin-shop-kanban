@@ -2,12 +2,14 @@ import { z } from "zod";
 
 export const COLUMN_IDS = ["queue", "wip", "blocked", "done"] as const;
 export type Column = (typeof COLUMN_IDS)[number];
-export type Result = "success" | "failed";
 
 export const columnSchema = z.enum(COLUMN_IDS);
 const resultSchema = z.enum(["success", "failed"]);
+export type Result = z.infer<typeof resultSchema>;
 
-export const COLUMNS: Record<Column, { id: Column; title: string; description: string }> = {
+const boardColumnSchema = z.object({ id: columnSchema, title: z.string(), description: z.string() });
+
+export const COLUMNS: Record<Column, z.infer<typeof boardColumnSchema>> = {
   queue: { id: "queue", title: "Queue", description: "Tasks waiting to be started." },
   wip: { id: "wip", title: "WIP", description: "Tasks currently running, or with running children." },
   blocked: { id: "blocked", title: "Blocked", description: "Idle tasks that need user input or asked a question." },
@@ -68,14 +70,16 @@ const boardTaskSchema = z.object({
   session: boardSessionSchema.nullable(),
 });
 
-const boardColumnSchema = z.object({ id: columnSchema, title: z.string(), description: z.string() });
 const boardStateSchema = z.object({ columns: z.array(boardColumnSchema), tasks: z.array(boardTaskSchema) });
+
+const shortNameInput = z.string().trim().min(1).max(40);
+const threadRefSchema = z.object({ threadId: z.string() });
 
 export const rpcContract = {
   board_list: { input: z.null(), output: boardStateSchema },
   board_spawn_task: {
     input: z.object({
-      shortName: z.string().trim().min(1).max(40),
+      shortName: shortNameInput,
       prompt: z.string().trim().min(1).max(12_000),
       projectId: z.string().optional(),
       parentThreadId: z.string().optional(),
@@ -88,7 +92,7 @@ export const rpcContract = {
     input: z.object({
       threadId: z.string(),
       column: columnSchema.optional(),
-      shortName: z.string().trim().min(1).max(40).optional(),
+      shortName: shortNameInput.optional(),
       note: z.string().trim().max(2_000).optional(),
       result: resultSchema.nullable().optional(),
       showOnBoard: z.boolean().optional(),
@@ -96,14 +100,8 @@ export const rpcContract = {
     }),
     output: boardTaskSchema,
   },
-  board_remove_task: {
-    input: z.object({ threadId: z.string() }),
-    output: z.object({ removed: z.boolean() }),
-  },
-  board_mark_read: {
-    input: z.object({ threadId: z.string() }),
-    output: z.object({ ok: z.boolean() }),
-  },
+  board_remove_task: { input: threadRefSchema, output: z.object({ removed: z.boolean() }) },
+  board_mark_read: { input: threadRefSchema, output: z.object({ ok: z.boolean() }) },
 };
 
 export type StoredTask = {

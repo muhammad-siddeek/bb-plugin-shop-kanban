@@ -21,7 +21,7 @@ const BLOCKED_STRIPE =
 /** Theme class that re-scopes bb's color tokens for a subtree (`.light` / `.dark`). */
 export type ThemeScope = "light" | "dark";
 
-function TaskStatusMark({ column, unread = false }: { column: BoardColumn; unread?: boolean }) {
+function TaskStatusMark({ column, unread }: { column: BoardColumn; unread: boolean }) {
   if (column === "wip") {
     return (
       <span aria-label="In progress" title="In progress" className={MARK_FRAME}>
@@ -30,10 +30,11 @@ function TaskStatusMark({ column, unread = false }: { column: BoardColumn; unrea
     );
   }
   if (column === "done") {
+    const label = unread ? "Done · unread" : "Done";
     return (
       <span
-        aria-label={unread ? "Done · unread" : "Done"}
-        title={unread ? "Done · unread" : "Done"}
+        aria-label={label}
+        title={label}
         className={`${MARK_FRAME} rounded-full transition-colors ${
           unread ? "bg-emerald-500 text-white" : COLUMN_META.done.badge
         }`}
@@ -86,8 +87,9 @@ export function TaskCard({ task, now, unread, selected, invertedTheme, provider,
     state.frame = requestAnimationFrame(() => {
       state.frame = 0;
       const card = ref.current;
-      const layout = card ? boardCardLayoutKey(card) : null;
-      if (!card || (!state.force && layout === state.layout)) return;
+      if (!card) return;
+      const layout = boardCardLayoutKey(card);
+      if (!state.force && layout === state.layout) return;
       state.force = false;
       state.layout = layout;
       revealBoardCard(card);

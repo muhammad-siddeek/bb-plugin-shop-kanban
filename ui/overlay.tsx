@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { KeyboardEvent, PointerEvent } from "react";
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
 import { PLUGIN_NAME } from "../brand";
@@ -18,9 +18,34 @@ import { useBoard, useTaskStatusNotifications } from "./hooks";
 import { IconButton } from "./primitives";
 import { BoardView } from "./column";
 
-// ---------------------------------------------------------------------------
-// Bottom overlay
-// ---------------------------------------------------------------------------
+/** Height updater for a resize-handle key, or null when the key does not resize the panel. */
+function keyboardResize(key: string): ((height: number) => number) | null {
+  switch (key) {
+    case "ArrowUp":
+      return (height) => clampPanelHeight(height + PANEL_KEYBOARD_STEP);
+    case "ArrowDown":
+      return (height) => clampPanelHeight(height - PANEL_KEYBOARD_STEP);
+    case "PageUp":
+      return (height) => clampPanelHeight(height + PANEL_KEYBOARD_LARGE_STEP);
+    case "PageDown":
+      return (height) => clampPanelHeight(height - PANEL_KEYBOARD_LARGE_STEP);
+    case "Home":
+      return () => PANEL_MIN_HEIGHT;
+    case "End":
+      return () => maxPanelHeight();
+    default:
+      return null;
+  }
+}
+
+function CountBadge({ column, count }: { column: "blocked" | "done"; count: number }) {
+  if (count === 0) return null;
+  return (
+    <span className={`inline-flex h-5 items-center rounded-full px-2 text-[10px] font-semibold uppercase tracking-wide tabular-nums ${COLUMN_META[column].badge}`}>
+      {count} {column}
+    </span>
+  );
+}
 
 export function BottomBoardOverlay() {
   const [open, setOpen] = useState(true);
@@ -34,22 +59,14 @@ export function BottomBoardOverlay() {
   const [refreshing, setRefreshing] = useState(false);
   const refreshTimerRef = useRef<number | undefined>(undefined);
 
-  const handleRefresh = useCallback(() => {
+  const handleRefresh = () => {
     refetch();
     setRefreshing(true);
     window.clearTimeout(refreshTimerRef.current);
     refreshTimerRef.current = window.setTimeout(() => setRefreshing(false), 1000);
-  }, [refetch]);
+  };
 
-  useEffect(() => {
-    return () => window.clearTimeout(refreshTimerRef.current);
-  }, []);
-
-  const resizeBy = useCallback((delta: number) => {
-    setPanelHeight((height) => clampPanelHeight(height + delta));
-  }, []);
-
-  const startResize = useCallback((event: PointerEvent<HTMLDivElement>) => {
+  const startResize = (event: PointerEvent<HTMLDivElement>) => {
     event.preventDefault();
     resizeCleanupRef.current();
 
@@ -75,41 +92,22 @@ export function BottomBoardOverlay() {
 
     resizeCleanupRef.current = stopResize;
     window.addEventListener("pointermove", handlePointerMove);
-    window.addEventListener("pointerup", stopResize, { once: true });
-    window.addEventListener("pointercancel", stopResize, { once: true });
-  }, [panelHeight]);
+    window.addEventListener("pointerup", stopResize);
+    window.addEventListener("pointercancel", stopResize);
+  };
 
-  const handleResizeKeyDown = useCallback((event: KeyboardEvent<HTMLDivElement>) => {
-    switch (event.key) {
-      case "ArrowUp":
-        event.preventDefault();
-        resizeBy(PANEL_KEYBOARD_STEP);
-        break;
-      case "ArrowDown":
-        event.preventDefault();
-        resizeBy(-PANEL_KEYBOARD_STEP);
-        break;
-      case "PageUp":
-        event.preventDefault();
-        resizeBy(PANEL_KEYBOARD_LARGE_STEP);
-        break;
-      case "PageDown":
-        event.preventDefault();
-        resizeBy(-PANEL_KEYBOARD_LARGE_STEP);
-        break;
-      case "Home":
-        event.preventDefault();
-        setPanelHeight(PANEL_MIN_HEIGHT);
-        break;
-      case "End":
-        event.preventDefault();
-        setPanelHeight(maxPanelHeight());
-        break;
-    }
-  }, [resizeBy]);
+  const handleResizeKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    const resize = keyboardResize(event.key);
+    if (!resize) return;
+    event.preventDefault();
+    setPanelHeight(resize);
+  };
 
   useEffect(() => {
-    return () => resizeCleanupRef.current();
+    return () => {
+      window.clearTimeout(refreshTimerRef.current);
+      resizeCleanupRef.current();
+    };
   }, []);
 
   useEffect(() => {
@@ -119,18 +117,16 @@ export function BottomBoardOverlay() {
   }, []);
 
   useEffect(() => {
+    if (!open) return;
     const root = document.documentElement;
-    root.classList.toggle(BOTTOM_BOARD_OPEN_CLASS, open);
+    root.classList.add(BOTTOM_BOARD_OPEN_CLASS);
     return () => root.classList.remove(BOTTOM_BOARD_OPEN_CLASS);
   }, [open]);
 
   useEffect(() => {
+    if (!open) return;
     const root = document.documentElement;
-    if (open) {
-      root.style.setProperty(BOTTOM_BOARD_HEIGHT_VAR, `${panelHeight}px`);
-    } else {
-      root.style.removeProperty(BOTTOM_BOARD_HEIGHT_VAR);
-    }
+    root.style.setProperty(BOTTOM_BOARD_HEIGHT_VAR, `${panelHeight}px`);
     return () => {
       root.style.removeProperty(BOTTOM_BOARD_HEIGHT_VAR);
     };
@@ -149,12 +145,8 @@ export function BottomBoardOverlay() {
           <Icon name={PLUGIN_ICON} className="size-3.5" aria-hidden />
         </span>
         <span className="tracking-tight">{PLUGIN_NAME}</span>
-        {blockedTasks > 0 ? (
-          <span className={`inline-flex h-5 items-center rounded-full px-2 text-[10px] font-semibold uppercase tracking-wide tabular-nums ${COLUMN_META.blocked.badge}`}>{blockedTasks} blocked</span>
-        ) : null}
-        {doneTasks > 0 ? (
-          <span className={`inline-flex h-5 items-center rounded-full px-2 text-[10px] font-semibold uppercase tracking-wide tabular-nums ${COLUMN_META.done.badge}`}>{doneTasks} done</span>
-        ) : null}
+        <CountBadge column="blocked" count={blockedTasks} />
+        <CountBadge column="done" count={doneTasks} />
         <Icon name="ChevronUp" className="size-3.5 text-muted-foreground transition-transform duration-150 group-hover:-translate-y-px group-hover:text-foreground" aria-hidden />
       </button>
     );
@@ -195,11 +187,7 @@ export function BottomBoardOverlay() {
             {board.tasks.length} task{board.tasks.length === 1 ? "" : "s"}
           </span>
         ) : null}
-        {blockedTasks > 0 ? (
-          <span className={`inline-flex h-5 items-center rounded-full px-2 text-[10px] font-semibold uppercase tracking-wide tabular-nums ${COLUMN_META.blocked.badge}`}>
-            {blockedTasks} blocked
-          </span>
-        ) : null}
+        <CountBadge column="blocked" count={blockedTasks} />
         <div className="ml-auto flex items-center gap-1">
           <IconButton
             icon="ArrowReloadHorizontal"

@@ -22,37 +22,35 @@ export type LiveThread = {
   latestAttentionAt: number | null;
 };
 
+const str = (value: unknown) => (typeof value === "string" ? value : null);
+const num = (value: unknown) => (typeof value === "number" ? value : null);
+const positive = (value: unknown) => (typeof value === "number" && value > 0 ? value : 0);
+
 export function toLiveThread(raw: any): LiveThread | null {
   if (!raw || typeof raw !== "object" || raw.id == null) return null;
   const activity = raw.activity && typeof raw.activity === "object" ? raw.activity : {};
-  const count = (value: unknown) => (typeof value === "number" && value > 0 ? value : 0);
   return {
     id: String(raw.id),
-    title: typeof raw.title === "string" ? raw.title : null,
-    titleFallback: typeof raw.titleFallback === "string" ? raw.titleFallback : null,
-    status: typeof raw.status === "string" ? raw.status : null,
-    displayStatus:
-      typeof raw.runtime?.displayStatus === "string"
-        ? raw.runtime.displayStatus
-        : typeof raw.runtimeStatus === "string"
-          ? raw.runtimeStatus
-          : null,
-    providerId: typeof raw.providerId === "string" ? raw.providerId : null,
-    projectId: typeof raw.projectId === "string" ? raw.projectId : null,
-    parentThreadId: typeof raw.parentThreadId === "string" ? raw.parentThreadId : null,
-    hostId: typeof raw.environmentHostId === "string" ? raw.environmentHostId : null,
-    visibility: typeof raw.visibility === "string" ? raw.visibility : null,
-    archivedAt: typeof raw.archivedAt === "number" ? raw.archivedAt : null,
-    createdAt: typeof raw.createdAt === "number" ? raw.createdAt : null,
-    updatedAt: typeof raw.updatedAt === "number" ? raw.updatedAt : null,
+    title: str(raw.title),
+    titleFallback: str(raw.titleFallback),
+    status: str(raw.status),
+    displayStatus: str(raw.runtime?.displayStatus) ?? str(raw.runtimeStatus),
+    providerId: str(raw.providerId),
+    projectId: str(raw.projectId),
+    parentThreadId: str(raw.parentThreadId),
+    hostId: str(raw.environmentHostId),
+    visibility: str(raw.visibility),
+    archivedAt: num(raw.archivedAt),
+    createdAt: num(raw.createdAt),
+    updatedAt: num(raw.updatedAt),
     hasPendingInteraction: raw.hasPendingInteraction === true,
-    lastReadAt: typeof raw.lastReadAt === "number" ? raw.lastReadAt : null,
-    latestAttentionAt: typeof raw.latestAttentionAt === "number" ? raw.latestAttentionAt : null,
-    queuedWork: typeof raw.queuedWork === "string" ? raw.queuedWork : null,
+    lastReadAt: num(raw.lastReadAt),
+    latestAttentionAt: num(raw.latestAttentionAt),
+    queuedWork: str(raw.queuedWork),
     backgroundWork:
-      count(activity.activeBackgroundAgentCount) +
-      count(activity.activeBackgroundCommandCount) +
-      count(activity.activeWorkflowCount),
+      positive(activity.activeBackgroundAgentCount) +
+      positive(activity.activeBackgroundCommandCount) +
+      positive(activity.activeWorkflowCount),
   };
 }
 
@@ -102,8 +100,8 @@ function lastParagraphs(text: string, count: number): string {
 function asksForInput(output: string): boolean {
   const cleaned = stripMarkdownNoise(output).trim();
   if (!cleaned) return false;
-  const tail = lastParagraphs(cleaned, 2).slice(-800);
   if (/\?["'”’)\]*_]*(\s|$)/u.test(lastParagraphs(cleaned, 1))) return true;
+  const tail = lastParagraphs(cleaned, 2).slice(-800);
   return INPUT_REQUEST_PATTERNS.some((pattern) => pattern.test(tail));
 }
 
@@ -159,6 +157,7 @@ export function deriveStatus(
   descendants: LiveThread[],
   label: LabelView,
 ): Derived {
+  const runningSelf = isRunningSelf(thread);
   const runningChildren = descendants.filter(isRunningSelf).length;
   const promptText = label.summary ?? excerpt(details.lastUserPrompt);
   const outputText = label.summary ?? excerpt(details.output);
@@ -169,10 +168,8 @@ export function deriveStatus(
     return { column: "blocked", reason: "Waiting for your response", description: outputText ?? stored?.note ?? promptText, runningChildren };
   }
 
-  if (isRunningSelf(thread) || runningChildren > 0) {
-    const reason = isRunningSelf(thread)
-      ? "Running"
-      : `${runningChildren} child task${runningChildren === 1 ? "" : "s"} running`;
+  if (runningSelf || runningChildren > 0) {
+    const reason = runningSelf ? "Running" : `${runningChildren} child task${runningChildren === 1 ? "" : "s"} running`;
     return { column: "wip", reason, description: label.summary ?? (storedFresh ? stored?.note : null) ?? promptText ?? stored?.note ?? null, runningChildren };
   }
 
@@ -188,7 +185,7 @@ export function deriveStatus(
     return { column: "blocked", reason: "A child task is waiting for your response", description: outputText ?? stored?.note ?? promptText, runningChildren };
   }
 
-  if (!details.output || !details.output.trim()) {
+  if (!details.output?.trim()) {
     return { column: "queue", reason: "Not started", description: promptText ?? stored?.note ?? null, runningChildren };
   }
 
