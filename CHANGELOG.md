@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.9.0
 
 - A Reviews section at the top of the Queue column lists open pull requests
   waiting on your review. A Me | Team toggle in its header switches between
