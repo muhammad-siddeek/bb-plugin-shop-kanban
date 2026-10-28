@@ -65,7 +65,7 @@ function usePolledRead<T>(read: () => Promise<T>, intervalMs: number, channel: s
   }, [refetch, intervalMs]);
   useRealtime(channel, refetch);
 
-  return { value, error, receive, report, refetch };
+  return { value, error, report, refetch };
 }
 
 export function useBoard() {
@@ -92,8 +92,6 @@ export type ReviewsApi = {
   state: ReviewState | null;
   /** Why the last list read failed. */
   error: string | null;
-  /** Re-run the searches now. */
-  refresh(): void;
   /** Marks read; resolves to the prompt that seeds a thread explaining the pull request. */
   draft(id: string): Promise<string>;
   markRead(id: string): Promise<void>;
@@ -104,20 +102,17 @@ export type ReviewsApi = {
 export function useReviews(): ReviewsApi {
   const rpc = useRpc<typeof rpcContract>();
   const read = useCallback(() => rpc.call("reviews_list", null), [rpc]);
-  const { value: state, error, receive, report } = usePolledRead(read, REVIEWS_POLL_MS, "reviews-changed");
+  const { value: state, error } = usePolledRead(read, REVIEWS_POLL_MS, "reviews-changed");
 
   return useMemo(
     () => ({
       state,
       error,
-      refresh: () => {
-        rpc.call("reviews_refresh", null).then(receive, report);
-      },
       draft: async (id: string) => (await rpc.call("reviews_draft", { id })).prompt,
       markRead: (id: string) => rpc.call("reviews_mark_read", { id }).then(() => {}),
       archive: (id: string) => rpc.call("reviews_archive", { id }).then(() => {}),
       submit: (id: string, verdict: ReviewVerdict, body: string) => rpc.call("reviews_submit", { id, verdict, body }).then(() => {}),
     }),
-    [rpc, state, error, receive, report],
+    [rpc, state, error],
   );
 }

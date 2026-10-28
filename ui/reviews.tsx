@@ -5,7 +5,7 @@ import { PLUGIN_SLUG } from "../brand";
 import { errorMessage, formatShortAge, type ReviewCard, type ReviewScope } from "./model";
 import type { ReviewVerdict, ReviewsApi } from "./hooks";
 
-// Review queue at the top of the Queue column: a two-line card per pull request waiting on the user, toggled
+// Review queue near the top of the Queue column: a two-line card per pull request waiting on the user, toggled
 // between requests of the user by name (Me, where the board always opens) and of their teams (Team). The title
 // opens a new-thread draft asking for what changed, why, and how risky it is; the second line opens the pull
 // request (marking it read), approves after a confirming second click, or requests changes with a reason.
@@ -25,8 +25,10 @@ const RISK_CHIP = {
 } as const;
 // Same 16px mark frame as thread cards, so both kinds of card line up in the column.
 const MARK_FRAME = "mt-px inline-flex size-4 shrink-0 items-center justify-center";
+// 20px actions; 28px on touch screens.
 const ACTION =
-  "inline-flex h-5 shrink-0 items-center justify-center rounded-md text-muted-foreground/70 transition-[color,background-color] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:pointer-events-none disabled:opacity-50";
+  "inline-flex h-5 shrink-0 items-center justify-center rounded-md text-muted-foreground/70 transition-[color,background-color] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:pointer-events-none disabled:opacity-50 pointer-coarse:h-7";
+const ICON_ACTION = `${ACTION} w-5 pointer-coarse:w-7`;
 
 function Spinner() {
   return <span aria-hidden className="inline-flex size-3 animate-spin rounded-full border-[1.5px] border-muted-foreground/25 border-t-muted-foreground" />;
@@ -132,7 +134,7 @@ function ReviewRow({ review, now, unread, actions }: { review: ReviewCard; now: 
             <RiskChip review={review} />
             <span className="min-w-0 truncate">{review.title}</span>
           </button>
-          <div className="mt-0.5 flex h-5 items-center gap-0.5">
+          <div className="mt-0.5 flex h-5 items-center gap-0.5 pointer-coarse:h-7">
             <span className="mr-1 min-w-0 flex-1 truncate text-[10.5px] tabular-nums text-muted-foreground/70" title={metaHint}>
               {Number.isFinite(updated) ? `${formatShortAge(updated, now)} · ` : ""}
               {review.rereview ? <span className="font-medium text-sky-500">re-review · </span> : null}
@@ -157,7 +159,7 @@ function ReviewRow({ review, now, unread, actions }: { review: ReviewCard; now: 
               className={
                 confirming
                   ? `${ACTION} bg-emerald-500 px-1.5 text-[10px] font-semibold text-white hover:bg-emerald-600`
-                  : `${ACTION} w-5 hover:bg-emerald-500/10 hover:text-emerald-500`
+                  : `${ICON_ACTION} hover:bg-emerald-500/10 hover:text-emerald-500`
               }
             >
               {pending === "approve" ? <Spinner /> : confirming ? "Approve?" : <Icon name="Check" className="size-3.5" aria-hidden />}
@@ -169,7 +171,7 @@ function ReviewRow({ review, now, unread, actions }: { review: ReviewCard; now: 
               title="Request changes"
               disabled={pending !== null}
               onClick={() => setDeclining((open) => !open)}
-              className={`${ACTION} w-5 hover:bg-rose-500/10 hover:text-rose-500 ${declining ? "bg-rose-500/10 text-rose-500" : ""}`}
+              className={`${ICON_ACTION} hover:bg-rose-500/10 hover:text-rose-500 ${declining ? "bg-rose-500/10 text-rose-500" : ""}`}
             >
               <Icon name="X" className="size-3.5" aria-hidden />
             </button>
@@ -188,13 +190,13 @@ function ReviewRow({ review, now, unread, actions }: { review: ReviewCard; now: 
                 placeholder="What needs to change?"
                 aria-label="What needs to change"
                 disabled={pending !== null}
-                className="h-6 min-w-0 flex-1 rounded-md border border-border/70 bg-transparent px-1.5 text-xs text-foreground outline-none placeholder:text-muted-foreground/60 focus:border-rose-500/60 disabled:opacity-60"
+                className="h-6 min-w-0 flex-1 rounded-md border border-border/70 bg-transparent px-1.5 text-xs text-foreground outline-none placeholder:text-muted-foreground/60 focus:border-rose-500/60 disabled:opacity-60 pointer-coarse:h-9 pointer-coarse:text-base"
               />
               <button
                 type="submit"
                 disabled={pending !== null || !reason.trim()}
                 title="Request changes with this reason"
-                className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md bg-rose-500 px-2 text-[11px] font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md bg-rose-500 px-2 text-[11px] font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 pointer-coarse:h-9 pointer-coarse:px-3 pointer-coarse:text-sm"
               >
                 {pending === "request_changes" ? <Spinner /> : null}
                 Send
@@ -210,12 +212,12 @@ function ReviewRow({ review, now, unread, actions }: { review: ReviewCard; now: 
       </div>
 
       {/* Archive: same hover overlay as thread cards, over the end of the title line. */}
-      <span className="absolute right-1.5 top-[5px] flex bg-card opacity-0 transition-opacity duration-150 before:pointer-events-none before:absolute before:inset-y-0 before:right-full before:w-3 before:bg-linear-to-l before:from-card before:to-transparent before:content-[''] group-hover:opacity-100 group-focus-within:opacity-100 has-[:focus-visible]:opacity-100 [@media(hover:none)]:opacity-100">
+      <span className="absolute right-1.5 top-[5px] flex bg-card opacity-0 transition-opacity duration-150 before:pointer-events-none before:absolute before:inset-y-0 before:right-full before:w-3 before:bg-linear-to-l before:from-card before:to-transparent before:content-[''] group-hover:opacity-100 group-focus-within:opacity-100 has-[:focus-visible]:opacity-100 [@media(hover:none)]:opacity-100 pointer-coarse:right-1 pointer-coarse:top-px">
         <button
           type="button"
           title="Archive: hide this pull request from the queue"
           aria-label="Archive pull request"
-          className="inline-flex size-5 items-center justify-center rounded-md text-muted-foreground/70 transition-[color,background-color] duration-150 hover:bg-destructive/10 hover:text-destructive focus-visible:bg-destructive/10 focus-visible:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+          className="inline-flex size-5 items-center justify-center rounded-md text-muted-foreground/70 transition-[color,background-color] duration-150 hover:bg-destructive/10 hover:text-destructive focus-visible:bg-destructive/10 focus-visible:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 pointer-coarse:size-7"
           onClick={() => void attempt(() => actions.onArchive(review))}
         >
           <Icon name="Archive" className="size-3.5" aria-hidden />
@@ -233,7 +235,7 @@ function ScopeToggle({ scopes, active, counts, unread, onSelect }: {
   onSelect: (scope: ReviewScope) => void;
 }) {
   return (
-    <div role="group" aria-label="Whose review requests" className="inline-flex h-[18px] shrink-0 items-center rounded-md bg-muted/70 p-px">
+    <div role="group" aria-label="Whose review requests" className="inline-flex h-[18px] shrink-0 items-center rounded-md bg-muted/70 p-px pointer-coarse:h-7">
       {scopes.map((scope) => {
         const selected = scope === active;
         const fresh = !selected && unread[scope] > 0;
@@ -244,7 +246,7 @@ function ScopeToggle({ scopes, active, counts, unread, onSelect }: {
             aria-pressed={selected}
             title={`${SCOPE[scope].hint}${unread[scope] > 0 ? ` · ${unread[scope]} new` : ""}`}
             onClick={() => onSelect(scope)}
-            className={`relative inline-flex h-4 items-center gap-1 rounded-[5px] px-1.5 text-[10px] font-medium leading-none transition-[color,background-color,box-shadow] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 ${
+            className={`relative inline-flex h-4 items-center gap-1 rounded-[5px] px-1.5 text-[10px] font-medium leading-none transition-[color,background-color,box-shadow] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 pointer-coarse:h-6 pointer-coarse:px-2.5 pointer-coarse:text-[11px] ${
               selected ? "bg-background text-foreground shadow-xs" : "text-muted-foreground hover:text-foreground"
             }`}
           >
@@ -364,13 +366,13 @@ export function ReviewSection({ reviews, now }: { reviews: ReviewsApi; now: numb
 
   return (
     <div className="space-y-1.5 border-b border-border/40 pb-2">
-      <div className="flex h-5 items-center gap-1.5 px-0.5">
+      <div className="flex h-5 items-center gap-1.5 px-0.5 pointer-coarse:h-7">
         <button
           type="button"
           onClick={() => setCollapsedStored(!collapsed)}
           aria-expanded={!collapsed}
           title={skipped.length > 0 ? ["Not read:", ...skipped].join("\n") : undefined}
-          className="flex min-w-0 items-center gap-1 rounded-sm text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+          className="flex min-w-0 items-center gap-1 self-stretch rounded-sm text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
         >
           <Icon name={collapsed ? "ChevronRight" : "ChevronDown"} className="size-3" aria-hidden />
           Reviews
@@ -403,7 +405,7 @@ export function ReviewSection({ reviews, now }: { reviews: ReviewsApi; now: numb
             <button
               type="button"
               onClick={() => setShowAll((all) => !all)}
-              className="w-full rounded-md py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+              className="w-full rounded-md py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 pointer-coarse:py-2.5"
             >
               {showAll ? "Show fewer" : `Show ${scoped.length - SHOWN_MAX} more`}
             </button>

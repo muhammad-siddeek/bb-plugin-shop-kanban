@@ -1,12 +1,15 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
 import { COLUMN_META, formatRelativeTime, taskActivityTime, taskCardTitle, type BoardColumn, type BoardTask } from "./model";
-import { HarnessMeta, type AgentProvider } from "./session";
+import { CardTooltip, HarnessMeta, type AgentProvider } from "./session";
 
 // All marks share one 16px frame so they line up with the 18px title line (mt-px centers them).
 const MARK_FRAME = "mt-px inline-flex size-4 shrink-0 items-center justify-center";
 const BLOCKED_STRIPE =
   "before:absolute before:inset-y-2 before:left-0 before:w-[2px] before:rounded-r-full before:bg-rose-500/70 before:content-['']";
+
+/** Resting on a card this long opens its tooltip; quick passes across the board don't. */
+const TOOLTIP_DELAY_MS = 350;
 
 // Reveal margins: the column list's p-2 (covers the selected card's 4px outline) and the grid's p-3.
 const REVEAL_MARGIN_Y = 8;
@@ -76,7 +79,7 @@ export type ThemeScope = "light" | "dark";
 function TaskStatusMark({ column, unread }: { column: BoardColumn; unread: boolean }) {
   if (column === "wip") {
     return (
-      <span aria-label="In progress" title="In progress" className={MARK_FRAME}>
+      <span role="img" aria-label="In progress" className={MARK_FRAME}>
         <span className="block size-3.5 animate-spin rounded-full border-[1.5px] border-amber-500/20 border-t-amber-500 [animation-duration:900ms]" />
       </span>
     );
@@ -85,8 +88,8 @@ function TaskStatusMark({ column, unread }: { column: BoardColumn; unread: boole
     const label = unread ? "Done · unread" : "Done";
     return (
       <span
+        role="img"
         aria-label={label}
-        title={label}
         className={`${MARK_FRAME} rounded-full transition-colors ${
           unread ? "bg-emerald-500 text-white" : COLUMN_META.done.badge
         }`}
@@ -98,8 +101,8 @@ function TaskStatusMark({ column, unread }: { column: BoardColumn; unread: boole
   if (column === "blocked") {
     return (
       <span
+        role="img"
         aria-label="Blocked"
-        title="Blocked"
         className={`${MARK_FRAME} rounded-full bg-rose-500 text-[10.5px] font-bold leading-none text-white`}
       >
         !
@@ -107,16 +110,16 @@ function TaskStatusMark({ column, unread }: { column: BoardColumn; unread: boole
     );
   }
   return (
-    <span aria-label="Queued" title="Queued" className={MARK_FRAME}>
+    <span role="img" aria-label="Queued" className={MARK_FRAME}>
       <span className="block size-3.5 rounded-full border-[1.5px] border-dashed border-sky-500/70" />
     </span>
   );
 }
 
 /** A "· text" fact after the footer's time. */
-function FooterNote({ tone, title, text }: { tone: string; title: string; text: string }) {
+function FooterNote({ tone, text }: { tone: string; text: string }) {
   return (
-    <span className={`min-w-0 truncate text-[10.5px] font-medium ${tone}`} title={title}>
+    <span className={`min-w-0 truncate text-[10.5px] font-medium ${tone}`}>
       <span className="text-muted-foreground/50" aria-hidden>· </span>
       {text}
     </span>
@@ -126,7 +129,7 @@ function FooterNote({ tone, title, text }: { tone: string; title: string; text: 
 export function TaskCard({ task, now, unread, selected, invertedTheme, provider, onArchive, onOpen }: {
   task: BoardTask;
   now: number;
-  /** Done and not yet read: the title bolds and the check fills. */
+  /** Done and not yet read: the title goes from semibold to bold and the check fills. */
   unread: boolean;
   /** Card belongs to the thread currently open in bb. */
   selected: boolean;
@@ -179,25 +182,68 @@ export function TaskCard({ task, now, unread, selected, invertedTheme, provider,
     onOpen(task.threadId);
     scheduleReveal(true);
   };
+  const tooltipId = useId();
+  const [tooltipOpen, setTooltipOpen] = useState(false);
+  const tooltipTimer = useRef(0);
+  const textRef = useRef<HTMLSpanElement>(null);
+  // The card shows the whole summary unless the line clamp cut it; then the tooltip repeats it in full.
+  const [summaryCut, setSummaryCut] = useState(false);
+  const showTooltip = () => {
+    const text = textRef.current;
+    setSummaryCut(text !== null && text.scrollHeight > text.clientHeight + 1);
+    setTooltipOpen(true);
+  };
+  const hideTooltip = () => {
+    window.clearTimeout(tooltipTimer.current);
+    setTooltipOpen(false);
+  };
+  useEffect(() => () => window.clearTimeout(tooltipTimer.current), []);
+  // Scrolling the board moves the card out from under the fixed tooltip: close rather than chase it.
+  // Other scrollers (a streaming thread timeline) don't contain the card and are ignored.
+  useEffect(() => {
+    const card = ref.current;
+    if (!tooltipOpen || !card) return;
+    const close = (event: Event) => {
+      if (event.target instanceof Node && event.target.contains(card)) setTooltipOpen(false);
+    };
+    window.addEventListener("scroll", close, true);
+    return () => window.removeEventListener("scroll", close, true);
+  }, [tooltipOpen]);
   const { category, intent } = taskCardTitle(task);
-  const titleText = category ? `[${category}] ${intent}` : intent;
-  const titleNode = (
-    <>
+  // Lines 1-2: "[tag] title — summary" as one run of text. Hovering the card hands it the footer's line
+  // too; the footer's facts move to the card's tooltip.
+  // The 18px lines come from the 12px strut; the 13px title is leading-none so it can't grow a line.
+  const text = (
+    <span ref={textRef} className="line-clamp-2 text-[12px] leading-[18px] group-hover:line-clamp-3">
       {category ? (
-        <span className="inline-flex h-4 max-w-[45%] shrink-0 items-center rounded-[4px] bg-muted px-1 text-[9px] font-semibold uppercase leading-none tracking-[0.06em] text-muted-foreground">
+        <span className="mr-1.5 mt-px inline-flex h-4 max-w-[45%] items-center rounded-[4px] bg-muted px-1 align-top text-[9px] font-semibold uppercase leading-none tracking-[0.06em] text-muted-foreground">
           <span className="truncate">{category}</span>
         </span>
       ) : null}
-      <span className="min-w-0 truncate">{intent}</span>
-    </>
+      <span
+        className={`text-[13px] leading-none text-foreground decoration-muted-foreground/40 underline-offset-2 group-hover/open:underline ${
+          unread ? "font-bold" : "font-semibold"
+        }`}
+      >
+        {intent}
+      </span>
+      {task.note ? (
+        <>
+          <span className="text-muted-foreground/50" aria-hidden> — </span>
+          <span className="text-muted-foreground">{task.note}</span>
+        </>
+      ) : null}
+    </span>
   );
-  const titleClass = `flex h-[18px] min-w-0 items-center gap-1.5 text-[13px] leading-[18px] text-foreground ${
-    unread ? "font-semibold" : "font-medium"
-  }`;
   const meta = COLUMN_META[task.column];
   const activity = taskActivityTime(task);
   const canOpen = !task.missingThread;
   const reason = task.statusReason && task.column !== "done" && task.statusReason !== "Running" ? task.statusReason : null;
+  const status = [
+    activity !== null ? `Updated ${formatRelativeTime(activity, now)}` : null,
+    reason,
+    task.missingThread ? "This BB thread no longer exists" : null,
+  ].filter(Boolean).join(" · ") || null;
 
   // Selection wins over the column/unread border; the blocked stripe stays either way.
   const borderClass = selected
@@ -221,64 +267,85 @@ export function TaskCard({ task, now, unread, selected, invertedTheme, provider,
         if (!canOpen || (event.target as HTMLElement).closest("button, a, [role='button']")) return;
         open();
       }}
+      onPointerEnter={(event) => {
+        // Mouse only: touch has no hover, and a tap opens the thread.
+        if (event.pointerType !== "mouse") return;
+        window.clearTimeout(tooltipTimer.current);
+        tooltipTimer.current = window.setTimeout(showTooltip, TOOLTIP_DELAY_MS);
+      }}
+      onPointerLeave={hideTooltip}
+      onFocus={(event) => {
+        if (event.target.matches(":focus-visible")) showTooltip();
+      }}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) hideTooltip();
+      }}
+      onKeyDown={(event) => {
+        if (event.key === "Escape") hideTooltip();
+      }}
       className={`group relative rounded-lg border bg-card px-2.5 pb-1.5 pt-2 transition-[border-color,box-shadow,background-color] duration-150 has-[[data-card-open]:focus-visible]:ring-2 has-[[data-card-open]:focus-visible]:ring-ring/60 ${
         canOpen ? "cursor-pointer" : ""
       } ${stateClass} ${surfaceClass}`}
     >
       <div className="flex items-start gap-2">
         <TaskStatusMark column={task.column} unread={unread} />
-        <div className="min-w-0 flex-1">
-          {canOpen ? (
-            <button
-              type="button"
-              data-card-open=""
-              onClick={open}
-              title={`Open thread · ${titleText}`}
-              className={`${titleClass} w-full rounded-sm text-left decoration-muted-foreground/40 underline-offset-2 hover:underline focus-visible:outline-none`}
-            >
-              {titleNode}
-            </button>
-          ) : (
-            <h3 className={titleClass} title={titleText}>{titleNode}</h3>
-          )}
-          {task.note ? (
-            <p className="mt-0.5 line-clamp-2 text-xs leading-[16px] text-muted-foreground" title={task.note}>{task.note}</p>
-          ) : null}
-        </div>
+        {/* Always two lines tall, so the hover's third line overlays the footer instead of resizing the card. */}
+        {canOpen ? (
+          <button
+            type="button"
+            data-card-open=""
+            onClick={open}
+            aria-describedby={tooltipOpen ? tooltipId : undefined}
+            className="group/open block h-9 min-w-0 flex-1 rounded-sm text-left focus-visible:outline-none"
+          >
+            {text}
+          </button>
+        ) : (
+          <div className="h-9 min-w-0 flex-1">{text}</div>
+        )}
       </div>
 
       {/* Archive: overlays the end of the title line (no reflow); a card-colored backdrop with a short
           leftward fade hides the truncated title underneath. Revealed on hover/focus, always on touch. */}
-      <span className="absolute right-1.5 top-[7px] flex bg-card opacity-0 transition-opacity duration-150 before:pointer-events-none before:absolute before:inset-y-0 before:right-full before:w-3 before:bg-linear-to-l before:from-card before:to-transparent before:content-[''] group-hover:opacity-100 group-focus-within:opacity-100 has-[:focus-visible]:opacity-100 [@media(hover:none)]:opacity-100">
+      <span className="absolute right-1.5 top-[7px] flex bg-card opacity-0 transition-opacity duration-150 before:pointer-events-none before:absolute before:inset-y-0 before:right-full before:w-3 before:bg-linear-to-l before:from-card before:to-transparent before:content-[''] group-hover:opacity-100 group-focus-within:opacity-100 has-[:focus-visible]:opacity-100 [@media(hover:none)]:opacity-100 pointer-coarse:right-1 pointer-coarse:top-[3px]">
         <button
           type="button"
-          title="Archive thread"
           aria-label="Archive thread"
-          className="inline-flex size-5 items-center justify-center rounded-md text-muted-foreground/70 transition-[color,background-color] duration-150 hover:bg-destructive/10 hover:text-destructive focus-visible:bg-destructive/10 focus-visible:text-destructive focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+          className="inline-flex size-5 items-center justify-center rounded-md text-muted-foreground/70 transition-[color,background-color] duration-150 hover:bg-destructive/10 hover:text-destructive focus-visible:bg-destructive/10 focus-visible:text-destructive focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 pointer-coarse:size-7"
           onClick={() => onArchive(task.threadId)}
         >
           <Icon name="Archive" className="size-3.5" aria-hidden />
         </button>
       </span>
 
-      <div className="mt-1 flex h-5 items-center gap-2 pl-6">
+      {/* Hidden while the card is hovered: the summary takes the line, and the tooltip has these facts. */}
+      <div className="mt-1 flex h-5 items-center gap-2 pl-6 group-hover:pointer-events-none group-hover:opacity-0">
         <div className="flex min-w-0 flex-1 items-center gap-1">
           {activity !== null ? (
             <time
               dateTime={new Date(activity).toISOString()}
-              title={`Updated ${new Date(activity).toLocaleString()}`}
               className="shrink-0 whitespace-nowrap text-[10.5px] tabular-nums text-muted-foreground/70"
             >
               {formatRelativeTime(activity, now)}
             </time>
           ) : null}
-          {reason ? <FooterNote tone={`opacity-90 ${meta.title}`} title={reason} text={reason} /> : null}
-          {task.missingThread ? <FooterNote tone="text-rose-500" title="This BB thread no longer exists" text="no thread" /> : null}
+          {reason ? <FooterNote tone={`opacity-90 ${meta.title}`} text={reason} /> : null}
+          {task.missingThread ? <FooterNote tone="text-rose-500" text="no thread" /> : null}
         </div>
         <div className="flex shrink-0 items-center">
           <HarnessMeta provider={provider} session={task.session} />
         </div>
       </div>
+      {tooltipOpen ? (
+        <CardTooltip
+          id={tooltipId}
+          anchor={ref}
+          summary={summaryCut ? task.note : null}
+          provider={provider}
+          session={task.session}
+          status={status}
+        />
+      ) : null}
     </article>
   );
 }

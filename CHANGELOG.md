@@ -1,5 +1,33 @@
 # Changelog
 
+## Unreleased
+
+- The title bar's refresh button is gone; the board already updates live,
+  and the review searches still re-run every 5 minutes and when their
+  settings change. The hide button is wider, and larger still on touch.
+- Phones (below 640px): each column fills the screen with the next one
+  peeking in, and swipes snap column by column. The title bar gives its room
+  to search, and search results span the bar instead of running off screen.
+  The hidden board is a full-width bottom bar in its own strip; the floating
+  pill used to cover bb's agent options and permission mode buttons.
+- Touch screens: larger hide, new-thread, archive, review action and Me |
+  Team buttons; 16px text in the search, new-thread and request-changes
+  fields so iOS doesn't zoom in.
+- One tooltip per card instead of one per footer item: resting the pointer
+  anywhere on a card (or tabbing to it) opens it beside the card, never over
+  it, and scrolling the board closes it. It adds the full summary when the
+  card cut it off, and the footer's time and status. Native hover titles on
+  cards are gone.
+- Hovering a card gives its summary the footer's line, so three lines show.
+  Summaries are written longer to use it (about 24 words, up from 18), and
+  existing cards are re-summarized once; titles are kept.
+- The new-thread form and the empty Queue's New thread button sit above
+  Reviews. What you type is saved as you type and comes back after a reload
+  or crash; starting the thread or cancelling clears it.
+- The board keeps clear of the iPhone home indicator.
+- The omp mark is drawn in omp's pink (`#f84fcc`) instead of the
+  surrounding text color, on cards and in bb's sidebar and pickers.
+
 ## 0.9.0
 
 - A Reviews section at the top of the Queue column lists open pull requests

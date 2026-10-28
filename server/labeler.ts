@@ -1,7 +1,7 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { hostContract } from "../contract";
-import { LABEL_PROMPT_VERSION, LABEL_SYSTEM, hashText, labelPrompt, parseLabel } from "./labels";
+import { LABEL_PROMPT_VERSION, LABEL_SYSTEM, SUMMARY_PROMPT_VERSION, hashText, labelPrompt, parseLabel } from "./labels";
 import type { LabelView, LiveThread, ThreadDetails } from "./status";
 import { commandMissing, connectedHostId } from "./hosts";
 import { safe } from "./text";
@@ -241,9 +241,10 @@ export function createLabeler(bb: BbPluginApi, onChange: () => void) {
    */
   function view(thread: LiveThread, details: ThreadDetails, running: boolean, all: Labels): LabelView {
     const titleSig = `v${LABEL_PROMPT_VERSION}:${details.userPrompts.length}:${details.lastUserInputAt ?? 0}:${hashText(details.firstUserPrompt ?? thread.title ?? thread.id)}`;
+    const summaryVersion = `v${LABEL_PROMPT_VERSION}.${SUMMARY_PROMPT_VERSION}`;
     const summarySig = running
-      ? `v${LABEL_PROMPT_VERSION}:run:${details.lastUserInputAt ?? 0}`
-      : `v${LABEL_PROMPT_VERSION}:idle:${details.lastUserInputAt ?? 0}:${hashText(details.output ?? "")}`;
+      ? `${summaryVersion}:run:${details.lastUserInputAt ?? 0}`
+      : `${summaryVersion}:idle:${details.lastUserInputAt ?? 0}:${hashText(details.output ?? "")}`;
     const current = all[thread.id];
     const labeled = current?.category && current.intent ? current : undefined;
     const title = labeled ? `[${labeled.category}] ${labeled.intent}` : null;

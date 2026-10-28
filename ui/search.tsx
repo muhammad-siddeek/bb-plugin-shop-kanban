@@ -100,8 +100,9 @@ export function ThreadSearch({ maxListHeight }: { maxListHeight: number }) {
   const activeResult = open ? results[active] : undefined;
 
   return (
-    <div ref={rootRef} className="relative min-w-0">
-      <div className="flex h-7 w-56 items-center gap-1.5 rounded-lg border border-border/70 bg-muted/40 pl-2 pr-1 transition-[border-color,box-shadow,background-color] focus-within:border-ring/60 focus-within:bg-background focus-within:ring-2 focus-within:ring-ring/20 md:w-72">
+    // Phones: `static`, so the dropdown spans the whole title bar (the overlay's positioned row) and stays on screen.
+    <div ref={rootRef} className="relative min-w-0 max-sm:static">
+      <div className="flex h-7 w-56 items-center gap-1.5 rounded-lg border border-border/70 bg-muted/40 pl-2 pr-1 transition-[border-color,box-shadow,background-color] focus-within:border-ring/60 focus-within:bg-background focus-within:ring-2 focus-within:ring-ring/20 md:w-72 max-sm:w-full pointer-coarse:h-9">
         <Icon name="Search" className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
         <input
           ref={inputRef}
@@ -122,7 +123,8 @@ export function ThreadSearch({ maxListHeight }: { maxListHeight: number }) {
           placeholder="Search threads…"
           spellCheck={false}
           autoComplete="off"
-          className="h-full min-w-0 flex-1 bg-transparent text-[12px] text-foreground outline-none placeholder:text-muted-foreground/60 [&::-webkit-search-cancel-button]:hidden"
+          // 16px on touch: iOS zooms the page into any smaller input that takes focus.
+          className="h-full min-w-0 flex-1 bg-transparent text-[12px] text-foreground outline-none placeholder:text-muted-foreground/60 [&::-webkit-search-cancel-button]:hidden pointer-coarse:text-base"
         />
         {pending ? (
           <span className="inline-flex size-3 shrink-0 animate-spin rounded-full border-[1.5px] border-muted-foreground/25 border-t-muted-foreground/80" aria-hidden />
@@ -136,7 +138,7 @@ export function ThreadSearch({ maxListHeight }: { maxListHeight: number }) {
               changeQuery("");
               inputRef.current?.focus();
             }}
-            className="inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:size-7"
           >
             <Icon name="X" className="size-3" aria-hidden />
           </button>
@@ -145,7 +147,7 @@ export function ThreadSearch({ maxListHeight }: { maxListHeight: number }) {
 
       {open && trimmed ? (
         <div
-          className="absolute left-0 top-full z-30 mt-1.5 flex w-[min(30rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-xl border border-border bg-popover text-popover-foreground shadow-[0_12px_32px_-12px_rgba(0,0,0,0.35)] ring-1 ring-black/5"
+          className="absolute left-0 top-full z-30 mt-1.5 flex w-[min(30rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-xl border border-border bg-popover text-popover-foreground shadow-[0_12px_32px_-12px_rgba(0,0,0,0.35)] ring-1 ring-black/5 max-sm:inset-x-2 max-sm:w-auto"
           style={{ maxHeight: `${Math.max(maxListHeight, 120)}px` }}
         >
           {results.length > 0 ? (

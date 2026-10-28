@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { KeyboardEvent, PointerEvent } from "react";
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
 import { PLUGIN_NAME } from "../brand";
-import { BOTTOM_BOARD_HEIGHT_VAR, BOTTOM_BOARD_OPEN_CLASS, COLUMN_META, type BoardColumn } from "./model";
+import { BOTTOM_BOARD_COLLAPSED_CLASS, BOTTOM_BOARD_HEIGHT_VAR, BOTTOM_BOARD_OPEN_CLASS, COLUMN_META, type BoardColumn } from "./model";
 import { useBoard, useReviews } from "./hooks";
 import { IconButton } from "./primitives";
 import { BoardView } from "./column";
@@ -46,18 +46,8 @@ export function BottomBoardOverlay() {
   const resizeCleanupRef = useRef<() => void>(() => {});
   const api = useBoard();
   const reviews = useReviews();
-  const { board, refetch } = api;
+  const { board } = api;
   const count = (column: BoardColumn) => board?.tasks.filter((task) => task.column === column).length ?? 0;
-  const [refreshing, setRefreshing] = useState(false);
-  const refreshTimerRef = useRef<number | undefined>(undefined);
-
-  const handleRefresh = () => {
-    refetch();
-    reviews.refresh();
-    setRefreshing(true);
-    window.clearTimeout(refreshTimerRef.current);
-    refreshTimerRef.current = window.setTimeout(() => setRefreshing(false), 1000);
-  };
 
   const startResize = (event: PointerEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -96,12 +86,7 @@ export function BottomBoardOverlay() {
     setPanelHeight((height) => clampPanelHeight(height + step));
   };
 
-  useEffect(() => {
-    return () => {
-      window.clearTimeout(refreshTimerRef.current);
-      resizeCleanupRef.current();
-    };
-  }, []);
+  useEffect(() => () => resizeCleanupRef.current(), []);
 
   useEffect(() => {
     const handleResize = () => setPanelHeight((height) => clampPanelHeight(height));
@@ -109,10 +94,13 @@ export function BottomBoardOverlay() {
     return () => window.removeEventListener("resize", handleResize);
   }, []);
 
-  // Pads bb's page (see app.tsx) so the panel never covers its bottom.
+  // Pads bb's page (see app.tsx) so the panel, or the phone's hidden-board bar, never covers its bottom.
   useEffect(() => {
-    if (!open) return;
     const root = document.documentElement;
+    if (!open) {
+      root.classList.add(BOTTOM_BOARD_COLLAPSED_CLASS);
+      return () => root.classList.remove(BOTTOM_BOARD_COLLAPSED_CLASS);
+    }
     root.classList.add(BOTTOM_BOARD_OPEN_CLASS);
     root.style.setProperty(BOTTOM_BOARD_HEIGHT_VAR, `${panelHeight}px`);
     return () => {
@@ -122,10 +110,12 @@ export function BottomBoardOverlay() {
   }, [open, panelHeight]);
 
   if (!open) {
+    // A floating pill; on phones a full-width bottom bar instead, in a strip app.tsx reserves, so it never
+    // sits on bb's composer controls.
     return (
       <button
         type="button"
-        className="group fixed bottom-4 right-4 z-50 inline-flex h-9 cursor-pointer select-none items-center gap-2 rounded-full border border-border bg-card/90 pl-2 pr-2.5 text-[13px] font-medium text-foreground shadow-[0_8px_24px_-8px_rgba(0,0,0,0.35),0_2px_6px_-2px_rgba(0,0,0,0.15)] ring-1 ring-black/5 backdrop-blur-md transition-[transform,background-color,box-shadow] duration-150 ease-out hover:-translate-y-0.5 hover:bg-card hover:shadow-[0_12px_28px_-8px_rgba(0,0,0,0.4),0_2px_6px_-2px_rgba(0,0,0,0.15)] active:translate-y-0 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="group fixed bottom-4 right-4 z-50 inline-flex h-9 cursor-pointer select-none items-center gap-2 rounded-full border border-border bg-card/90 pl-2 pr-2.5 text-[13px] font-medium text-foreground shadow-[0_8px_24px_-8px_rgba(0,0,0,0.35),0_2px_6px_-2px_rgba(0,0,0,0.15)] ring-1 ring-black/5 backdrop-blur-md transition-[transform,background-color,box-shadow] duration-150 ease-out hover:-translate-y-0.5 hover:bg-card hover:shadow-[0_12px_28px_-8px_rgba(0,0,0,0.4),0_2px_6px_-2px_rgba(0,0,0,0.15)] active:translate-y-0 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring max-sm:inset-x-0 max-sm:bottom-0 max-sm:h-[calc(2.75rem+env(safe-area-inset-bottom))] max-sm:rounded-none max-sm:border-x-0 max-sm:border-b-0 max-sm:pb-[env(safe-area-inset-bottom)] max-sm:pl-3.5 max-sm:pr-4 max-sm:shadow-[0_-8px_24px_-12px_rgba(0,0,0,0.35)] max-sm:hover:translate-y-0 max-sm:active:scale-100"
         onClick={() => setOpen(true)}
         aria-label={`Open ${PLUGIN_NAME} board`}
         title={`Open ${PLUGIN_NAME} board`}
@@ -136,14 +126,14 @@ export function BottomBoardOverlay() {
         <span className="tracking-tight">{PLUGIN_NAME}</span>
         <CountBadge column="blocked" count={count("blocked")} />
         <CountBadge column="done" count={count("done")} />
-        <Icon name="ChevronUp" className="size-3.5 text-muted-foreground transition-transform duration-150 group-hover:-translate-y-px group-hover:text-foreground" aria-hidden />
+        <Icon name="ChevronUp" className="size-3.5 text-muted-foreground transition-transform duration-150 group-hover:-translate-y-px group-hover:text-foreground max-sm:ml-auto max-sm:size-5" aria-hidden />
       </button>
     );
   }
 
   return (
     <div
-      className="fixed inset-x-0 bottom-0 z-50 flex flex-col border-t border-border bg-background/95 shadow-[0_-12px_32px_-16px_rgba(0,0,0,0.35),0_-1px_0_0_rgba(0,0,0,0.04)] backdrop-blur-md"
+      className="fixed inset-x-0 bottom-0 z-50 flex flex-col border-t border-border bg-background/95 pb-[env(safe-area-inset-bottom)] shadow-[0_-12px_32px_-16px_rgba(0,0,0,0.35),0_-1px_0_0_rgba(0,0,0,0.04)] backdrop-blur-md"
       style={{ height: `${panelHeight}px` }}
     >
       <div
@@ -154,7 +144,7 @@ export function BottomBoardOverlay() {
         aria-valuemax={maxPanelHeight()}
         aria-valuenow={panelHeight}
         tabIndex={0}
-        className="group absolute inset-x-0 -top-2 z-10 flex h-4 cursor-row-resize touch-none items-center justify-center focus:outline-none"
+        className="group absolute inset-x-0 -top-2 z-10 flex h-4 cursor-row-resize touch-none items-center justify-center focus:outline-none pointer-coarse:-top-3 pointer-coarse:h-6"
         onPointerDown={startResize}
         onKeyDown={handleResizeKeyDown}
         title="Drag to resize"
@@ -163,12 +153,14 @@ export function BottomBoardOverlay() {
         <span aria-hidden className="relative h-1 w-9 rounded-full bg-muted-foreground/30 transition-all duration-150 ease-out group-hover:w-14 group-hover:bg-primary/60 group-active:w-16 group-active:bg-primary group-focus-visible:w-14 group-focus-visible:bg-primary/70 group-focus-visible:ring-2 group-focus-visible:ring-ring group-focus-visible:ring-offset-1 group-focus-visible:ring-offset-background" />
       </div>
 
-      <div className="flex h-10 shrink-0 items-center gap-2.5 border-b border-border/60 pl-3.5 pr-2">
+      {/* `relative`: on phones the search dropdown spans this bar instead of hanging off the search box. */}
+      <div className="relative flex h-10 shrink-0 items-center gap-2.5 border-b border-border/60 pl-3.5 pr-2 pointer-coarse:h-12 pointer-coarse:pr-1">
         <div className="flex min-w-0 items-center gap-2">
           <span className="inline-flex size-6 shrink-0 items-center justify-center rounded-md bg-muted text-foreground">
             <Icon name={PLUGIN_ICON} className="size-3.5" aria-hidden />
           </span>
-          <span className="truncate text-[13px] font-semibold tracking-tight text-foreground">{PLUGIN_NAME}</span>
+          {/* Phones give the name's room to search; the icon stays. */}
+          <span className="truncate text-[13px] font-semibold tracking-tight text-foreground max-sm:sr-only">{PLUGIN_NAME}</span>
         </div>
         {board ? (
           <span className="hidden items-center gap-2.5 text-xs tabular-nums text-muted-foreground sm:inline-flex">
@@ -177,19 +169,11 @@ export function BottomBoardOverlay() {
           </span>
         ) : null}
         <CountBadge column="blocked" count={count("blocked")} />
-        <div className="ml-3 min-w-0">
-          {/* Header (40px) plus a little breathing room below the list. */}
+        <div className="ml-3 min-w-0 max-sm:ml-0 max-sm:flex-1">
+          {/* Header (40px, 48px on touch) plus a little breathing room below the list. */}
           <ThreadSearch maxListHeight={panelHeight - 56} />
         </div>
-        <div className="ml-auto flex items-center gap-1">
-          <IconButton
-            icon="ArrowReloadHorizontal"
-            label="Refresh board"
-            onClick={handleRefresh}
-            className={refreshing ? "text-foreground [&_svg]:animate-spin" : ""}
-          />
-          <IconButton icon="ChevronDown" label="Hide board" onClick={() => setOpen(false)} />
-        </div>
+        <IconButton icon="ChevronDown" label="Hide board" onClick={() => setOpen(false)} className="ml-auto" />
       </div>
 
       <div className="min-h-0 flex-1">

@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, KeyboardEvent, ReactElement } from "react";
 import { experimental_Icon as Icon, experimental_useCodeTheme, experimental_useProviders, useBbContext, useBbNavigate } from "@get-bb/plugin-sdk/app";
+import { PLUGIN_SLUG } from "../brand";
 import { CLOCK_TICK_MS, COLUMN_META, groupTasksByColumn, isUnread, shortNameFromPrompt, type BoardColumn, type BoardTask } from "./model";
 import { useNow, type BoardApi, type ReviewsApi } from "./hooks";
 import { IconButton } from "./primitives";
@@ -9,6 +10,25 @@ import { ReviewSection } from "./reviews";
 import type { AgentProvider } from "./session";
 
 const SCROLL_TO_LATEST_SELECTOR = 'button[aria-label="Scroll to latest event"]';
+/** The new-thread form's text, written on every keystroke so a crash or reload doesn't lose it. */
+const DRAFT_KEY = `${PLUGIN_SLUG}:new-thread-draft`;
+
+function readDraft(): string {
+  try {
+    return window.localStorage.getItem(DRAFT_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function writeDraft(text: string) {
+  try {
+    if (text) window.localStorage.setItem(DRAFT_KEY, text);
+    else window.localStorage.removeItem(DRAFT_KEY);
+  } catch {
+    // Storage off: the draft lives only as long as the form.
+  }
+}
 
 /**
  * After opening a thread, jump its timeline to the newest message. bb restores the last
@@ -45,14 +65,37 @@ function scrollThreadToLatest(threadId: string) {
   window.requestAnimationFrame(tick);
 }
 
-function AddTaskForm({ onAdd, onCancel, onError }: {
+/**
+ * `focus` is false when the form reopens on its own with a saved draft (after a reload or crash), so it
+ * doesn't take focus from bb's composer.
+ */
+function AddTaskForm({ focus, onAdd, onCancel, onError }: {
+  focus: boolean;
   onAdd: (prompt: string) => Promise<void>;
   onCancel: () => void;
   onError: (cause: unknown) => void;
 }) {
-  const [prompt, setPrompt] = useState("");
+  const [prompt, setPrompt] = useState(readDraft);
   const [pending, setPending] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
+  // Caret after a restored draft, ready to keep typing.
+  useLayoutEffect(() => {
+    const textarea = textareaRef.current;
+    if (!focus || !textarea) return;
+    textarea.focus();
+    textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+  }, [focus]);
+
+  const edit = (text: string) => {
+    setPrompt(text);
+    writeDraft(text);
+  };
+  // Cancel means discard; only an open form keeps a draft.
+  const cancel = () => {
+    writeDraft("");
+    onCancel();
+  };
   const submit = async (event?: FormEvent<HTMLFormElement>) => {
     event?.preventDefault();
     const next = prompt.trim();
@@ -60,7 +103,7 @@ function AddTaskForm({ onAdd, onCancel, onError }: {
     setPending(true);
     try {
       await onAdd(next);
-      onCancel();
+      cancel();
     } catch (cause) {
       onError(cause);
     } finally {
@@ -75,7 +118,7 @@ function AddTaskForm({ onAdd, onCancel, onError }: {
       void submit();
     } else if (event.key === "Escape") {
       event.preventDefault();
-      onCancel();
+      cancel();
     }
   };
 
@@ -86,17 +129,17 @@ function AddTaskForm({ onAdd, onCancel, onError }: {
       className="shrink-0 rounded-lg border border-sky-500/40 bg-card p-2 shadow-sm ring-1 ring-sky-500/10 transition-[box-shadow,border-color] focus-within:border-sky-500/60 focus-within:ring-2 focus-within:ring-sky-500/20"
     >
       <textarea
-        autoFocus
+        ref={textareaRef}
         value={prompt}
-        onChange={(event) => setPrompt(event.target.value)}
+        onChange={(event) => edit(event.target.value)}
         onKeyDown={handleKeyDown}
         placeholder="What should the new thread do?"
         disabled={pending}
         rows={3}
-        className="block min-h-16 w-full resize-none bg-transparent px-1 py-0.5 text-[13px] leading-snug text-foreground outline-none placeholder:text-muted-foreground/60 disabled:cursor-wait disabled:opacity-60"
+        className="block min-h-16 w-full resize-none bg-transparent px-1 py-0.5 text-[13px] leading-snug text-foreground outline-none placeholder:text-muted-foreground/60 disabled:cursor-wait disabled:opacity-60 pointer-coarse:text-base"
       />
       <div className="mt-1.5 flex items-center gap-1.5 border-t border-border/50 pt-1.5">
-        <span className="flex min-w-0 items-center gap-1 truncate text-[10px] text-muted-foreground/70" title="Enter to start · Shift+Enter for a new line · Esc to cancel">
+        <span className="flex min-w-0 items-center gap-1 truncate text-[10px] text-muted-foreground/70 pointer-coarse:hidden" title="Enter to start · Shift+Enter for a new line · Esc to cancel">
           <kbd className="rounded border border-border/70 bg-muted/60 px-1 font-sans text-[9px] leading-[14px] text-muted-foreground">↵</kbd>
           <span>start</span>
           <kbd className="ml-1 rounded border border-border/70 bg-muted/60 px-1 font-sans text-[9px] leading-[14px] text-muted-foreground">esc</kbd>
@@ -104,15 +147,15 @@ function AddTaskForm({ onAdd, onCancel, onError }: {
         </span>
         <button
           type="button"
-          onClick={onCancel}
-          className="ml-auto h-6 shrink-0 whitespace-nowrap rounded-md px-2 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          onClick={cancel}
+          className="ml-auto h-6 shrink-0 whitespace-nowrap rounded-md px-2 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:h-9 pointer-coarse:px-3 pointer-coarse:text-sm"
         >
           Cancel
         </button>
         <button
           type="submit"
           disabled={pending || !prompt.trim()}
-          className="inline-flex h-6 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md bg-primary px-2.5 text-xs font-medium text-primary-foreground shadow-xs transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-card disabled:cursor-not-allowed disabled:opacity-50"
+          className="inline-flex h-6 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md bg-primary px-2.5 text-xs font-medium text-primary-foreground shadow-xs transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-card disabled:cursor-not-allowed disabled:opacity-50 pointer-coarse:h-9 pointer-coarse:px-3.5 pointer-coarse:text-sm"
         >
           {pending ? (
             <>
@@ -138,9 +181,9 @@ function BoardColumnView({ column, title, tasks, now, readLocally, selectedThrea
   onArchive: (threadId: string) => void;
   onOpen: (threadId: string) => void;
   onStartAdding: (() => void) | null;
-  /** Rendered above the column's cards: the review queue in Queue. */
+  /** Rendered above the column's cards, below the new-thread form or button: the review queue in Queue. */
   lead: ReactElement | null;
-  /** The new-task form; non-null only while it is open. */
+  /** The new-thread form; non-null only while it is open. */
   addForm: ReactElement | null;
 }) {
   const meta = COLUMN_META[column];
@@ -148,7 +191,7 @@ function BoardColumnView({ column, title, tasks, now, readLocally, selectedThrea
   return (
     <section
       aria-label={title}
-      className="relative flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-border/60 bg-muted/35 shadow-xs"
+      className="relative flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-border/60 bg-muted/35 shadow-xs max-sm:snap-start"
     >
       <span className={`pointer-events-none absolute inset-x-0 top-0 h-[3px] ${meta.accent} opacity-80`} aria-hidden />
       <header className="flex h-10 shrink-0 items-center gap-2 border-b border-border/40 pl-3 pr-2 pt-[3px]">
@@ -159,21 +202,7 @@ function BoardColumnView({ column, title, tasks, now, readLocally, selectedThrea
         ) : null}
       </header>
       <div data-board-column-scroll="" className="min-h-0 flex-1 space-y-1.5 overflow-y-auto overscroll-contain p-2 [scrollbar-width:thin]">
-        {lead}
         {addForm}
-        {tasks.map((task) => (
-          <TaskCard
-            key={task.threadId}
-            task={task}
-            now={now}
-            unread={task.column === "done" && isUnread(task, readLocally)}
-            selected={task.threadId === selectedThreadId}
-            invertedTheme={invertedTheme}
-            provider={task.thread?.providerId ? providersById.get(task.thread.providerId) ?? null : null}
-            onArchive={onArchive}
-            onOpen={onOpen}
-          />
-        ))}
         {tasks.length === 0 && !adding ? (
           onStartAdding ? (
             <button
@@ -190,6 +219,20 @@ function BoardColumnView({ column, title, tasks, now, readLocally, selectedThrea
             </div>
           )
         ) : null}
+        {lead}
+        {tasks.map((task) => (
+          <TaskCard
+            key={task.threadId}
+            task={task}
+            now={now}
+            unread={task.column === "done" && isUnread(task, readLocally)}
+            selected={task.threadId === selectedThreadId}
+            invertedTheme={invertedTheme}
+            provider={task.thread?.providerId ? providersById.get(task.thread.providerId) ?? null : null}
+            onArchive={onArchive}
+            onOpen={onOpen}
+          />
+        ))}
       </div>
     </section>
   );
@@ -215,7 +258,8 @@ export function BoardView({ api, reviews }: { api: BoardApi; reviews: ReviewsApi
     if (next.size !== readLocally.size) setReadLocally(next);
   }, [board, readLocally]);
   const now = useNow(CLOCK_TICK_MS);
-  const [adding, setAdding] = useState(false);
+  // A saved draft means the form was open with text when the app last closed: reopen it, without focus.
+  const [adding, setAdding] = useState<"closed" | "restored" | "opened">(() => (readDraft() ? "restored" : "closed"));
 
   const archiveTask = (threadId: string) => {
     rpc.call("board_remove_task", { threadId }).then(refetch, report);
@@ -250,7 +294,8 @@ export function BoardView({ api, reviews }: { api: BoardApi; reviews: ReviewsApi
         </div>
       ) : null}
       {board ? (
-        <div data-board-scroll="" className="grid min-h-0 flex-1 auto-cols-[minmax(250px,1fr)] grid-flow-col gap-2.5 overflow-x-auto overscroll-x-contain p-3 [scrollbar-width:thin]">
+        // Phones: one column per screen with a peek of the next, snapping as you swipe.
+        <div data-board-scroll="" className="grid min-h-0 flex-1 auto-cols-[minmax(250px,1fr)] grid-flow-col gap-2.5 overflow-x-auto overscroll-x-contain p-3 [scrollbar-width:thin] max-sm:auto-cols-[calc(100%-2.5rem)] max-sm:snap-x max-sm:snap-mandatory max-sm:scroll-px-3">
           {board.columns.map((column) => (
             <BoardColumnView
               key={column.id}
@@ -264,9 +309,13 @@ export function BoardView({ api, reviews }: { api: BoardApi; reviews: ReviewsApi
               providersById={providersById}
               onArchive={archiveTask}
               onOpen={openTask}
-              onStartAdding={column.id === "queue" ? () => setAdding(true) : null}
+              onStartAdding={column.id === "queue" ? () => setAdding("opened") : null}
               lead={column.id === "queue" ? <ReviewSection reviews={reviews} now={now} /> : null}
-              addForm={column.id === "queue" && adding ? <AddTaskForm onAdd={addTask} onCancel={() => setAdding(false)} onError={report} /> : null}
+              addForm={
+                column.id === "queue" && adding !== "closed" ? (
+                  <AddTaskForm focus={adding === "opened"} onAdd={addTask} onCancel={() => setAdding("closed")} onError={report} />
+                ) : null
+              }
             />
           ))}
         </div>

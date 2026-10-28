@@ -106,7 +106,7 @@ export const reviewRiskSchema = z.enum(["low", "medium", "high"]);
 /** Whose review a pull request asks for: the user's by name, or one of their teams'. Me first. */
 export const reviewScopeSchema = z.enum(["me", "team"]);
 
-/** An open pull request waiting on the user's review: a one-card entry at the top of the Queue column. */
+/** An open pull request waiting on the user's review: a one-card entry in the Queue column's Reviews section. */
 const reviewCardSchema = z.object({
   /** `<forge>:<owner>/<repo>#<number>` */
   id: z.string(),
@@ -181,8 +181,6 @@ export const rpcContract = {
   board_mark_read: { input: threadRefSchema, output: z.object({ ok: z.boolean() }) },
   board_search: { input: z.object({ query: z.string().trim().min(1).max(200) }), output: searchResponseSchema },
   reviews_list: { input: z.null(), output: reviewStateSchema },
-  /** Re-run the searches now; resolves once they are read. */
-  reviews_refresh: { input: z.null(), output: reviewStateSchema },
   /** Mark read and return the prompt that seeds a new thread explaining the pull request. */
   reviews_draft: { input: reviewRefSchema, output: z.object({ prompt: z.string() }) },
   reviews_mark_read: { input: reviewRefSchema, output: okSchema },

@@ -371,10 +371,6 @@ export default async function plugin(bb: BbPluginApi) {
     },
     board_search: ({ query }) => search.search(query),
     reviews_list: () => reviews.list(),
-    reviews_refresh: async () => {
-      await reviews.refresh();
-      return reviews.list();
-    },
     reviews_draft: ({ id }) => reviews.draft(id),
     reviews_mark_read: ({ id }) => reviews.markRead(id),
     reviews_archive: ({ id }) => reviews.archive(id),

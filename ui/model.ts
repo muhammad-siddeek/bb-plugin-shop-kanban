@@ -21,6 +21,8 @@ export type BoardState = z.infer<(typeof rpcContract)["board_list"]["output"]>;
 export const CLOCK_TICK_MS = 15_000;
 export const BOTTOM_BOARD_OPEN_CLASS = `${PLUGIN_SLUG}-bottom-open`;
 export const BOTTOM_BOARD_HEIGHT_VAR = `--${PLUGIN_SLUG}-bottom-height`;
+/** Set while the board is hidden; on phones the hidden board is a bottom bar that keeps its own strip of the page. */
+export const BOTTOM_BOARD_COLLAPSED_CLASS = `${PLUGIN_SLUG}-bottom-collapsed`;
 const COLUMNS: BoardColumn[] = ["queue", "wip", "blocked", "done"];
 
 export const COLUMN_META: Record<BoardColumn, {

@@ -21,19 +21,25 @@ Columns are derived from live thread state; you never drag threads around.
 - A `[category] intent` title, e.g. `[docs site] search page`. The title is
   written back to the bb sidebar thread title unless you rename the thread
   yourself.
-- A two-line summary of the latest exchange.
+- A summary of the latest exchange: two lines, three while you hover the
+  card.
 - The updated time and status on the left of the footer. On the right: what
   the thread's whole tree has spent, how full its context window is, and the
   icon of the harness the thread runs on (omp, Pi, Codex, …; the same icon as
-  the bb sidebar). Hover any of them for a three-line tooltip: model and
-  thinking level, token counts and cost, then access mode, service tier and
-  model id. Running threads refresh these every 5 seconds, idle threads every
-  minute.
+  the bb sidebar). Running threads refresh these every 5 seconds, idle
+  threads every minute.
+- Resting the pointer anywhere on a card, or tabbing to it, opens a tooltip
+  beside the card (never over it): the summary in full when the card cut it
+  off, harness, model and thinking level, token counts and cost, access mode,
+  service tier and model id, then the footer's time and status. A tap on a
+  touch screen opens the thread.
 - The cost adds up the thread, every descendant thread (hidden and archived
   ones included) and their harness subagents; the tooltip says how many
   threads it spans. omp and Pi threads are read from their transcripts on
-  the thread's host (`~/.omp/agent/sessions`, and bb's Pi bridge sessions in
-  `~/.bb/pi-bridge-sessions`). For omp, subagents at every depth (nested
+  the thread's host (omp's sessions dir, `~/.omp/agent/sessions` unless
+  `PI_CODING_AGENT_DIR` or `XDG_DATA_HOME` moves it, and bb's Pi bridge
+  sessions in `~/.bb/pi-bridge-sessions` unless `BB_PI_BRIDGE_SESSION_DIR`
+  moves them). For omp, subagents at every depth (nested
   tasks, background tasks, eval agents, advisors) count; omp itself reports
   only a session's own replies and its direct tasks, and Pi reports nothing.
   Other harnesses count what they report to bb, and so do threads on a
@@ -46,16 +52,28 @@ Columns are derived from live thread state; you never drag threads around.
   Auto (`shopify/auto`) reply is saved at $0 without the model that served
   it, so its estimate follows the mix of models the router served before. A
   provider and model never priced on the host stays at $0.
-- An archive button in the top-right corner, shown on hover or focus.
+- An archive button in the top-right corner, shown on hover or focus, and
+  always on touch screens.
 - Clicking a thread opens it at its latest message. The Queue `+` button
-  starts a new thread.
+  starts a new thread; its form sits at the top of Queue, above Reviews, and
+  keeps what you typed across reloads and crashes until you start the thread
+  or cancel.
+
+### On a phone
+
+Below 640px wide, each column takes the width of the screen with the next
+one peeking in, and a swipe snaps to the next column. The title bar gives its
+room to search, whose results span the bar. The hidden board is a bottom bar
+that reserves its own strip, so it doesn't sit on bb's composer controls. On
+touch screens, buttons and toggles are larger and text fields use 16px text,
+so iOS doesn't zoom into them.
 
 ### omp icon
 
 An ACP providers `customAgents` entry with id `omp` replaces bb's shipped omp
 agent, and bb gives custom agents a generic toolbox glyph. The plugin
-registers bb's omp mark for the `acp-omp` provider, drawn in the surrounding
-text color. The registration is app-wide, so bb's sidebar and pickers show
+registers bb's omp mark for the `acp-omp` provider, drawn in omp's pink
+(`#f84fcc`). The registration is app-wide, so bb's sidebar and pickers show
 the mark too, but only while this plugin is loaded.
 
 ## Model-written labels
@@ -121,15 +139,15 @@ qmd --index shop-kanban search "redis timeout"   # same index from a terminal
 ## Review queue
 
 Open pull requests waiting on your review sit in a collapsible **Reviews**
-section at the top of the Queue column, newest update first. A **Me | Team**
-toggle in its header switches between requests of you by name and requests of
-your teams. It opens on Me every time the board loads. Each side shows its
-count, in blue when it has new cards. Which pull requests land where is up to
-you: the `reviewSearchesMe` and `reviewSearchesTeam` settings each list one
-search per line, so each user gets their own and their teams' requests. A
-pull request that a Me search also finds is listed under Me only. Empty one
-setting and its side of the toggle goes away; empty both and the section
-does.
+section near the top of the Queue column, below the new-thread form, newest
+update first. A **Me | Team** toggle in its header switches between requests
+of you by name and requests of your teams. It opens on Me every time the
+board loads. Each side shows its count, in blue when it has new cards. Which
+pull requests land where is up to you: the `reviewSearchesMe` and
+`reviewSearchesTeam` settings each list one search per line, so each user
+gets their own and their teams' requests. A pull request that a Me search
+also finds is listed under Me only. Empty one setting and its side of the
+toggle goes away; empty both and the section does.
 
 Each pull request is a two-line card:
 
@@ -159,8 +177,8 @@ button, and remembers whether it is collapsed.
 
 The searches run through the forge CLIs you already signed in to, `dt` for
 Delta and `gh` for GitHub, on the same connected persistent host as thread
-search: 8 seconds after the plugin loads, every 5 minutes, when either setting
-changes, and when you press the board's refresh button. Reviews are submitted
+search: 8 seconds after the plugin loads, every 5 minutes, and when either
+setting changes. Reviews are submitted
 as those CLIs' signed-in user. Each line is GitHub search syntax prefixed by
 its forge:
 

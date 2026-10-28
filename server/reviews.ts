@@ -487,5 +487,5 @@ export function createReviewQueue(bb: BbPluginApi, labeler: Labeler) {
     clearTimeout(changedTimer);
   }
 
-  return { list, refresh, draft, markRead, archive, submit, dispose };
+  return { list, draft, markRead, archive, submit, dispose };
 }
