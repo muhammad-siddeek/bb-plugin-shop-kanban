@@ -35,7 +35,8 @@ const SNIPPET_MAX_CHARS = 240;
 const ROLE_HEADINGS: Record<ThreadMessage["role"], string> = { user: "User", assistant: "Assistant", message: "Message" };
 const ROLE_HEADING_LINE = /^#{1,6}\s+(User|Assistant|Message)\s*$/;
 
-const NO_HOST = "No connected host to keep the search index on (ephemeral hosts are skipped).";
+const NO_HOST =
+  "Thread search keeps its index on a connected persistent bb host, and none is connected (ephemeral hosts are skipped).";
 
 /** Which threads the index holds on `hostId`: thread id → the exported `updatedAt`, or null when exported mid-run. */
 type IndexState = { hostId: string | null; synced: Record<string, number | null> };
@@ -99,6 +100,9 @@ export function createSearchIndex(bb: BbPluginApi, reader: ThreadReader) {
   let syncing = false;
   let syncAgain = false;
   let syncError: string | null = null;
+  /** The last KV save error that was logged; a large index can outgrow the KV value cap on every save. */
+  let saveErrorLogged: string | null = null;
+  let disposed = false;
   let syncTimer: ReturnType<typeof setTimeout> | undefined;
   /** When each running thread was last exported by this process. */
   const runningExports = new Map<string, number>();
@@ -118,7 +122,15 @@ export function createSearchIndex(bb: BbPluginApi, reader: ThreadReader) {
 
   async function saveState(next: IndexState) {
     state = next;
-    await safe(async () => bb.storage.kv.set(INDEX_KEY, next));
+    try {
+      await bb.storage.kv.set(INDEX_KEY, next);
+      saveErrorLogged = null;
+    } catch (error) {
+      // The index keeps working from memory; a restart re-exports what was not saved.
+      const text = error instanceof Error ? error.message : String(error);
+      if (text !== saveErrorLogged) bb.log.info(`saving the search index state failed: ${text}`);
+      saveErrorLogged = text;
+    }
   }
 
   async function exportThreads(threads: LiveThread[]) {
@@ -175,7 +187,7 @@ export function createSearchIndex(bb: BbPluginApi, reader: ThreadReader) {
       .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
     // Claim the host now, so search stops waiting for it even when nothing needs exporting.
     await saveState({ hostId, synced });
-    for (let offset = 0; offset < stale.length || remove.length > 0; ) {
+    for (let offset = 0; (offset < stale.length || remove.length > 0) && !disposed; ) {
       const size = offset === 0 ? FIRST_BATCH_SIZE : BATCH_SIZE;
       const docs = await exportThreads(stale.slice(offset, offset + size));
       offset += size;
@@ -222,7 +234,7 @@ export function createSearchIndex(bb: BbPluginApi, reader: ThreadReader) {
 
   /** Debounced sync; thread events arrive in bursts. */
   function scheduleSync(delayMs = SYNC_DELAY_MS) {
-    if (syncTimer) return;
+    if (syncTimer || disposed) return;
     syncTimer = setTimeout(() => {
       syncTimer = undefined;
       void runSync();
@@ -273,6 +285,7 @@ export function createSearchIndex(bb: BbPluginApi, reader: ThreadReader) {
   const intervalTimer = setInterval(() => scheduleSync(0), SYNC_INTERVAL_MS);
 
   function dispose() {
+    disposed = true;
     clearTimeout(startupTimer);
     clearInterval(intervalTimer);
     clearTimeout(syncTimer);

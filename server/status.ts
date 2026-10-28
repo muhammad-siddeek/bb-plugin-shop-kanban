@@ -1,3 +1,4 @@
+import type { BbPluginApi, PluginThreadEventPayloads } from "@get-bb/plugin-sdk";
 import type { Column, StoredTask } from "./schema";
 import { ELLIPSIS, oneLine } from "./text";
 
@@ -22,35 +23,36 @@ export type LiveThread = {
   latestAttentionAt: number | null;
 };
 
-const str = (value: unknown) => (typeof value === "string" ? value : null);
-const num = (value: unknown) => (typeof value === "number" ? value : null);
-const positive = (value: unknown) => (typeof value === "number" && value > 0 ? value : 0);
+/** A `threads.list` row; the SDK exports no name for it. */
+type ThreadListRow = Awaited<ReturnType<BbPluginApi["sdk"]["threads"]["list"]>>[number];
+/** A thread as `threads.get`, `threads.spawn` and thread events return it; the SDK names it only through events. */
+type ThreadResponse = PluginThreadEventPayloads["thread.created"]["thread"];
 
-export function toLiveThread(raw: any): LiveThread | null {
-  if (!raw || typeof raw !== "object" || raw.id == null) return null;
-  const activity = raw.activity && typeof raw.activity === "object" ? raw.activity : {};
+export function toLiveThread(raw: ThreadListRow | ThreadResponse | null | undefined): LiveThread | null {
+  if (!raw) return null;
+  // Only list rows carry the host, pending interaction, queued work and activity counts.
+  const row = "activity" in raw ? raw : null;
   return {
-    id: String(raw.id),
-    title: str(raw.title),
-    titleFallback: str(raw.titleFallback),
-    status: str(raw.status),
-    displayStatus: str(raw.runtime?.displayStatus) ?? str(raw.runtimeStatus),
-    providerId: str(raw.providerId),
-    projectId: str(raw.projectId),
-    parentThreadId: str(raw.parentThreadId),
-    hostId: str(raw.environmentHostId),
-    visibility: str(raw.visibility),
-    archivedAt: num(raw.archivedAt),
-    createdAt: num(raw.createdAt),
-    updatedAt: num(raw.updatedAt),
-    hasPendingInteraction: raw.hasPendingInteraction === true,
-    lastReadAt: num(raw.lastReadAt),
-    latestAttentionAt: num(raw.latestAttentionAt),
-    queuedWork: str(raw.queuedWork),
-    backgroundWork:
-      positive(activity.activeBackgroundAgentCount) +
-      positive(activity.activeBackgroundCommandCount) +
-      positive(activity.activeWorkflowCount),
+    id: raw.id,
+    title: raw.title,
+    titleFallback: raw.titleFallback,
+    status: raw.status,
+    displayStatus: raw.runtime.displayStatus,
+    providerId: raw.providerId,
+    projectId: raw.projectId,
+    parentThreadId: raw.parentThreadId,
+    hostId: row?.environmentHostId ?? null,
+    visibility: raw.visibility,
+    archivedAt: raw.archivedAt,
+    createdAt: raw.createdAt,
+    updatedAt: raw.updatedAt,
+    hasPendingInteraction: row?.hasPendingInteraction ?? false,
+    lastReadAt: raw.lastReadAt,
+    latestAttentionAt: raw.latestAttentionAt,
+    queuedWork: row?.queuedWork ?? null,
+    backgroundWork: row
+      ? row.activity.activeBackgroundAgentCount + row.activity.activeBackgroundCommandCount + row.activity.activeWorkflowCount
+      : 0,
   };
 }
 

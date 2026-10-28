@@ -1,10 +1,13 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { safe } from "./text";
 
-/** The first connected bb host (any host when none is connected); null when the list is empty or unreadable. */
+/**
+ * The first connected bb host; null when none is connected or the list is unreadable. A disconnected host would only
+ * hold the call until its timeout.
+ */
 export async function connectedHostId(bb: BbPluginApi): Promise<string | null> {
   const list = (await safe(async () => bb.sdk.hosts.list())) ?? [];
-  return list.find((entry) => entry.status === "connected")?.id ?? list[0]?.id ?? null;
+  return list.find((entry) => entry.status === "connected")?.id ?? null;
 }
 
 /**

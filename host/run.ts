@@ -1,5 +1,6 @@
 import { spawn } from "cross-spawn";
 import type { ChildProcessByStdio } from "node:child_process";
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import type { Readable } from "node:stream";
 
@@ -8,6 +9,23 @@ export type RunResult = { code: number | null; stdout: string; stderr: string };
 /** Output past this is dropped; every caller reads bounded JSON or text. */
 const STDOUT_MAX = 2_000_000;
 const STDERR_MAX = 20_000;
+
+/** The user's home directory; null when the OS names none (no HOME and no passwd entry). */
+export function homeDir(): string | null {
+  try {
+    return homedir();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The home directory, or the worker's own cwd when there is none: spawning in a missing cwd fails with ENOENT,
+ * which reads as a command that is not installed.
+ */
+function workDir(home: string | null): string | undefined {
+  return home && existsSync(home) ? home : undefined;
+}
 
 /**
  * Runs `command` from the home directory and resolves when it exits; never rejects. A command that cannot start
@@ -18,7 +36,10 @@ export function run(command: string, args: string[], timeoutMs: number, signal: 
   return new Promise((resolve) => {
     let child: ChildProcessByStdio<null, Readable, Readable>;
     try {
-      child = spawn(command, args, { cwd: homedir(), env: process.env, stdio: ["ignore", "pipe", "pipe"] });
+      const home = homeDir();
+      // A daemon started without HOME still gives the CLIs their config dirs (gh reads ~/.config/gh).
+      const env = home && !process.env.HOME ? { ...process.env, HOME: home } : process.env;
+      child = spawn(command, args, { cwd: workDir(home), env, stdio: ["ignore", "pipe", "pipe"] });
     } catch (error) {
       // Invalid arguments (an empty command, a NUL byte in a prompt) throw instead of emitting "error".
       resolve({ code: -1, stdout: "", stderr: String(error) });

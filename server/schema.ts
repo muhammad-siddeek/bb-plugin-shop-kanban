@@ -146,7 +146,7 @@ const reviewSourceSchema = z.object({
   /** Every open match, the user's own reviews included. */
   total: z.number(),
   error: z.string().nullable(),
-  /** The forge's CLI is not installed on the host. */
+  /** Cannot run here: no connected persistent host, or the forge's CLI is not installed or not signed in. Shown quietly. */
   missing: z.boolean(),
 });
 
@@ -158,7 +158,7 @@ const reviewStateSchema = z.object({
   sources: z.array(reviewSourceSchema),
   refreshing: z.boolean(),
   refreshedAt: z.number().nullable(),
-  /** Why no search could run, e.g. no connected host. */
+  /** An unexpected failure of the whole refresh. */
   error: z.string().nullable(),
 });
 
@@ -199,19 +199,24 @@ export const rpcContract = {
   },
 };
 
-export type StoredTask = {
-  threadId: string;
-  shortName: string;
-  titleChain: string;
-  column: Column;
-  parentThreadId: string | null;
-  projectId: string | null;
-  description: string | null;
-  result: Result | null;
-  note: string | null;
-  createdAt: string;
-  updatedAt: string;
-};
+/**
+ * One entry of the stored tasks KV blob. Unknown keys (entries from before 0.9.0) are stripped; an unknown column
+ * starts over in the queue.
+ */
+export const storedTaskSchema = z.object({
+  threadId: z.string(),
+  shortName: z.string(),
+  titleChain: z.string(),
+  column: columnSchema.catch("queue"),
+  parentThreadId: z.string().nullable().catch(null),
+  projectId: z.string().nullable().catch(null),
+  description: z.string().nullable().catch(null),
+  result: resultSchema.nullable().catch(null),
+  note: z.string().nullable().catch(null),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type StoredTask = z.infer<typeof storedTaskSchema>;
 
 export type BoardTask = z.infer<typeof boardTaskSchema>;
 export type BoardSession = z.infer<typeof boardSessionSchema>;

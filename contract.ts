@@ -134,7 +134,8 @@ export const hostContract = defineRpcContract({
   },
   /**
    * Open pull requests matching a forge search (GitHub search syntax), most recently updated first. `missing` is
-   * true when the forge's CLI is not installed on this host. Delta searches one repository, so it needs `repo`.
+   * true when the forge's CLI is not installed or not signed in on this host. Delta searches one repository, so it
+   * needs `repo`.
    */
   pr_search: {
     input: z

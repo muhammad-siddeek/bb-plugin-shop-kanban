@@ -1,4 +1,4 @@
-import type { BbPluginApi } from "@get-bb/plugin-sdk";
+import type { BbPluginApi, PluginThreadEventPayloads } from "@get-bb/plugin-sdk";
 import { toLiveThread, type LiveThread, type ThreadDetails } from "./status";
 import { compactTitle, safe } from "./text";
 
@@ -21,22 +21,22 @@ export type ProviderSessions = { ids: string[]; afterSeq: string | null };
 type ListEvents = BbPluginApi["sdk"]["threads"]["events"]["list"];
 type EventTypes = NonNullable<Parameters<ListEvents>[0]["types"]>;
 type ThreadEvent = Awaited<ReturnType<ListEvents>>[number];
+/** The SDK names its thread row type only through event payloads. */
+type ThreadResponse = PluginThreadEventPayloads["thread.created"]["thread"];
 
-/** Text parts of a `client/turn/requested` event, joined. */
-function eventText(event: any): string | null {
-  return Array.isArray(event?.data?.input)
-    ? event.data.input
-        .filter((part: any) => part?.type === "text" && typeof part.text === "string")
-        .map((part: any) => part.text)
-        .join("\n") || null
-    : null;
+/** Text parts of a `client/turn/requested` event, joined; null for any other event. */
+function eventText(event: ThreadEvent | undefined): string | null {
+  if (event?.type !== "client/turn/requested") return null;
+  return event.data.input.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n") || null;
 }
 
 export function createThreadReader(bb: BbPluginApi) {
   const detailsCache = new Map<string, ThreadDetails>();
   const firstPromptCache = new Map<string, string>();
+  /** Which lists (archived or not) already logged hitting MAX_THREADS. */
+  const cappedLogged = new Set<boolean>();
 
-  async function getThread(threadId: string): Promise<any | null> {
+  function getThread(threadId: string): Promise<ThreadResponse | null> {
     return safe(async () => await bb.sdk.threads.get({ threadId }));
   }
 
@@ -51,11 +51,11 @@ export function createThreadReader(bb: BbPluginApi) {
         typeof meta?.titleChain === "string" && meta.titleChain.trim()
           ? meta.titleChain
           : compactTitle(thread?.title ?? thread?.titleFallback ?? parentThreadId),
-      projectId: typeof thread?.projectId === "string" ? thread.projectId : null,
+      projectId: thread?.projectId ?? null,
     };
   }
 
-  function turnRequests(threadId: string, order: "asc" | "desc", limit: number): Promise<any[] | null> {
+  function turnRequests(threadId: string, order: "asc" | "desc", limit: number): Promise<ThreadEvent[] | null> {
     return safe(async () =>
       await bb.sdk.threads.events.list({ threadId, order, limit: String(limit), types: ["client/turn/requested"] }),
     );
@@ -64,13 +64,13 @@ export function createThreadReader(bb: BbPluginApi) {
   /** Latest user-initiated turn (time and text) plus the recent user messages, oldest first. */
   async function lastUserTurn(threadId: string): Promise<{ at: number | null; prompt: string | null; prompts: string[] }> {
     const events = (await turnRequests(threadId, "desc", 50)) ?? [];
-    const userEvents = events.filter((entry) => entry?.data?.initiator === "user");
+    const userEvents = events.filter((entry) => entry.type === "client/turn/requested" && entry.data.initiator === "user");
     const event = userEvents[0] ?? events[0];
     const prompts = userEvents
       .map(eventText)
       .filter((text): text is string => Boolean(text))
       .reverse();
-    return { at: typeof event?.createdAt === "number" ? event.createdAt : null, prompt: eventText(event), prompts };
+    return { at: event?.createdAt ?? null, prompt: eventText(event), prompts };
   }
 
   /** The thread's opening user request, cached once found (it never changes). */
@@ -78,7 +78,9 @@ export function createThreadReader(bb: BbPluginApi) {
     const known = firstPromptCache.get(threadId);
     if (known !== undefined) return known;
     const events = (await turnRequests(threadId, "asc", 10)) ?? [];
-    const prompt = eventText(events.find((entry) => entry?.data?.initiator === "user") ?? events[0]);
+    const prompt = eventText(
+      events.find((entry) => entry.type === "client/turn/requested" && entry.data.initiator === "user") ?? events[0],
+    );
     if (prompt !== null) firstPromptCache.set(threadId, prompt);
     return prompt;
   }
@@ -107,10 +109,18 @@ export function createThreadReader(bb: BbPluginApi) {
     return details;
   }
 
-  /** All non-archived (or all archived) threads, hidden included; null when even the first page fails. */
+  /**
+   * All non-archived (or all archived) threads, hidden included, up to MAX_THREADS (logged once per process when
+   * hit); null when even the first page fails.
+   */
   async function listAllThreads(archived = false): Promise<LiveThread[] | null> {
     const all: LiveThread[] = [];
-    for (let offset = 0; offset < MAX_THREADS; offset += PAGE) {
+    for (let offset = 0; ; offset += PAGE) {
+      if (offset >= MAX_THREADS) {
+        if (!cappedLogged.has(archived)) bb.log.info(`listing stopped at ${MAX_THREADS} ${archived ? "archived" : "open"} threads`);
+        cappedLogged.add(archived);
+        return all;
+      }
       const page = await safe(async () =>
         await bb.sdk.threads.list({ archived, includeHidden: true, limit: PAGE, offset }),
       );
@@ -119,9 +129,8 @@ export function createThreadReader(bb: BbPluginApi) {
         const thread = toLiveThread(row);
         if (thread) all.push(thread);
       }
-      if (page.length < PAGE) break;
+      if (page.length < PAGE) return all;
     }
-    return all;
   }
 
   /** Visit every `types` event after `afterSeq`, oldest first; the last seq read, or null when a read fails. */

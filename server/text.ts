@@ -1,5 +1,3 @@
-import { columnSchema, type Column } from "./schema";
-
 export function nowIso(): string {
   return new Date().toISOString();
 }
@@ -23,12 +21,6 @@ export function compactTitle(value: unknown): string {
     .slice(0, 5)
     .join(" ");
   return words || "Thread";
-}
-
-/** A stored column; anything unknown starts over in the queue. */
-export function normalizeColumn(value: unknown): Column {
-  const parsed = columnSchema.safeParse(value);
-  return parsed.success ? parsed.data : "queue";
 }
 
 const CATEGORY_STOPWORDS = new Set([

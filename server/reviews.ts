@@ -1,9 +1,10 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
+import { z } from "zod";
 import { hostContract, type Forge, type ForgePr, type ForgePrDetail } from "../contract";
 import { indexHostId } from "./hosts";
 import { hashText } from "./labels";
 import { REVIEW_SUMMARY_VERSION, REVIEW_SYSTEM, draftPrompt, parseReviewSummary, reviewPrompt } from "./review-prompt";
-import { reviewScopeSchema, type ReviewCard, type ReviewRisk, type ReviewScope, type ReviewSource, type ReviewState } from "./schema";
+import { reviewRiskSchema, reviewScopeSchema, type ReviewCard, type ReviewScope, type ReviewSource, type ReviewState } from "./schema";
 import { safe } from "./text";
 
 // Review queue: open pull requests waiting on the user's review, read through the forge CLIs (`dt`, `gh`) on the
@@ -21,11 +22,17 @@ const REVIEWED_LIMIT = 100;
 const SUMMARY_RETRY_MS = 10 * 60_000;
 /** Per-PR failures recur every poll; each distinct one is logged at most this often. */
 const LOG_REPEAT_MS = 60 * 60_000;
-/** Read, archived, reviewed and summary entries kept per kind, newest first. */
-const MARKS_MAX = 1_000;
+/**
+ * Read, archived and reviewed marks kept per kind, newest first. One KV value holds them all and KV caps values at
+ * 256KB: three full kinds take ~110KB, leaving room for the summaries of every listed pull request.
+ */
+const MARKS_MAX = 500;
 /** Delta hosts shop/world; a Delta search that names no repository searches it. */
 const DELTA_DEFAULT_REPO = "shop/world";
 const NO_HOST = "No connected persistent host to read pull requests on.";
+/** Host calls end a little after the host's own 30s (60s for a review) CLI timeout, so its clearer error wins. */
+const CALL_TIMEOUT_MS = 35_000;
+const REVIEW_CALL_TIMEOUT_MS = 65_000;
 
 const LINE_SYNTAX =
   "One search per line: `delta: <query>` reads Delta through `dt` (shop/world unless the query names a `repo:`), `github: <query>` reads GitHub through `gh`. GitHub search syntax with `is:pr is:open` implied; pull requests you already reviewed drop off until new commits land.";
@@ -37,14 +44,22 @@ type Search = { line: string; scope: ReviewScope; forge: Forge; repo: string | n
  * Me when any search for the user found it.
  */
 type Entry = ForgePr & { id: string; forge: Forge; lines: string[]; reviewed: boolean; scope: ReviewScope };
-type Marks = {
+const shaMark = z.object({ sha: z.string().nullable(), at: z.number() });
+/** Stored marks; a kind that fails to parse starts over empty rather than taking the others with it. */
+const marksSchema = z.object({
   /** Head commit when last opened from the board; null when it was opened before its head was read. */
-  read: Record<string, { sha: string | null; at: number }>;
-  archived: Record<string, number>;
+  read: z.record(z.string(), shaMark).catch({}),
+  archived: z.record(z.string(), z.number()).catch({}),
   /** Reviewed from the board, at that head commit: hidden at once, before the forge's search and reviews list it. */
-  reviewed: Record<string, { sha: string | null; at: number }>;
-  summaries: Record<string, { sig: string; risk: ReviewRisk | null; text: string | null; at: number; failedAt?: number }>;
-};
+  reviewed: z.record(z.string(), shaMark).catch({}),
+  summaries: z
+    .record(
+      z.string(),
+      z.object({ sig: z.string(), risk: reviewRiskSchema.nullable(), text: z.string().nullable(), at: z.number(), failedAt: z.number().optional() }),
+    )
+    .catch({}),
+});
+type Marks = z.infer<typeof marksSchema>;
 
 /**
  * Setting lines as searches: `delta: <query>` or `github: <query>` in GitHub search syntax. `is:pr is:open` is
@@ -148,8 +163,8 @@ export function createReviewQueue(bb: BbPluginApi, labeler: Labeler) {
 
   function load(): Promise<Marks> {
     marksLoad ??= (async () => {
-      const raw = await safe(async () => bb.storage.kv.get<Partial<Marks>>(MARKS_KEY));
-      return { read: raw?.read ?? {}, archived: raw?.archived ?? {}, reviewed: raw?.reviewed ?? {}, summaries: raw?.summaries ?? {} };
+      const parsed = marksSchema.safeParse(await safe(async () => bb.storage.kv.get<unknown>(MARKS_KEY)));
+      return parsed.success ? parsed.data : marksSchema.parse({});
     })();
     return marksLoad;
   }
@@ -158,7 +173,11 @@ export function createReviewQueue(bb: BbPluginApi, labeler: Labeler) {
     marks.read = capped(marks.read, (mark) => mark.at);
     marks.archived = capped(marks.archived, (at) => at);
     marks.reviewed = capped(marks.reviewed, (mark) => mark.at);
-    marks.summaries = capped(marks.summaries, (summary) => summary.at);
+    // Summaries cache the listed pull requests' first reads; one no longer listed only eats into the KV value.
+    if (refreshedAt !== null) {
+      const listed = new Set(entries.map((entry) => entry.id));
+      marks.summaries = Object.fromEntries(Object.entries(marks.summaries).filter(([id]) => listed.has(id)));
+    }
     marksWrite = marksWrite.then(() => safe(async () => bb.storage.kv.set(MARKS_KEY, marks)));
     changed();
   }
@@ -236,24 +255,33 @@ export function createReviewQueue(bb: BbPluginApi, labeler: Labeler) {
 
   function callSearch(target: string, input: { forge: Forge; repo: string | null; query: string; limit: number }) {
     return host
-      .call("pr_search", input, { hostId: target })
-      .catch((cause: unknown) => ({ prs: [] as ForgePr[], total: 0, error: message(cause), missing: false }));
+      .call("pr_search", input, { hostId: target, timeoutMs: CALL_TIMEOUT_MS })
+      .catch((cause: unknown) => ({ prs: [], total: 0, error: message(cause), missing: false }));
   }
 
   async function runRefresh() {
     changed();
     const { searches, invalid } = configuredSearches(await settings.get());
-    const invalidSources = invalid.map(({ line, scope }) => ({ search: line, scope, count: 0, total: 0, error: "Start the line with delta: or github:", missing: false }));
+    const failed = (search: { line: string; scope: ReviewScope }, why: string, missing: boolean): ReviewSource => ({
+      search: search.line,
+      scope: search.scope,
+      count: 0,
+      total: 0,
+      error: why,
+      missing,
+    });
+    const invalidSources = invalid.map((line) => failed(line, "Start the line with delta: or github:", false));
+    error = null;
     if (searches.length === 0) {
       entries = [];
       sources = invalidSources;
-      error = null;
       return;
     }
     hostId = await indexHostId(bb, hostId);
     const target = hostId;
     if (!target) {
-      error = NO_HOST;
+      // Quiet like a missing CLI; the last list stays up until a host connects again.
+      sources = [...searches.map((search) => failed(search, NO_HOST, true)), ...invalidSources];
       return;
     }
     const results = await Promise.all(
@@ -267,38 +295,36 @@ export function createReviewQueue(bb: BbPluginApi, labeler: Labeler) {
       }),
     );
     const marks = await load();
-    const previous = entries;
     const next = new Map<string, Entry>();
+    const add = (found: Entry, search: Search) => {
+      const existing = next.get(found.id);
+      if (!existing) {
+        next.set(found.id, found);
+        return;
+      }
+      if (!existing.lines.includes(search.line)) existing.lines.push(search.line);
+      existing.reviewed ||= found.reviewed;
+      if (search.scope === "me") existing.scope = "me";
+    };
     const nextSources: ReviewSource[] = [];
     for (const { search, open, reviewed } of results) {
       if (open.error !== null) {
         // Keep what this search listed last time instead of flickering it away on a transient failure.
-        for (const entry of previous) {
-          if (!entry.lines.includes(search.line)) continue;
-          const existing = next.get(entry.id);
-          if (!existing) next.set(entry.id, entry);
-          else if (search.scope === "me") existing.scope = "me";
+        for (const entry of entries) {
+          if (entry.lines.includes(search.line)) add({ ...entry, lines: [search.line], scope: search.scope }, search);
         }
-        nextSources.push({ search: search.line, scope: search.scope, count: 0, total: 0, error: open.error, missing: open.missing });
+        nextSources.push(failed(search, open.error, open.missing));
         continue;
       }
       const done = new Set(reviewed.prs.map((pr) => `${search.forge}:${pr.repo}#${pr.number}`));
       for (const pr of open.prs) {
         const id = `${search.forge}:${pr.repo}#${pr.number}`;
-        const existing = next.get(id);
-        if (existing) {
-          if (!existing.lines.includes(search.line)) existing.lines.push(search.line);
-          existing.reviewed ||= done.has(id);
-          if (search.scope === "me") existing.scope = "me";
-        } else {
-          next.set(id, { ...pr, id, forge: search.forge, lines: [search.line], reviewed: done.has(id), scope: search.scope });
-        }
+        add({ ...pr, id, forge: search.forge, lines: [search.line], reviewed: done.has(id), scope: search.scope }, search);
       }
       nextSources.push({ search: search.line, scope: search.scope, count: open.prs.length, total: open.total, error: reviewed.error, missing: false });
     }
     entries = [...next.values()].sort((a, b) => (Date.parse(b.updatedAt) || 0) - (Date.parse(a.updatedAt) || 0));
     sources = [...nextSources, ...invalidSources];
-    error = null;
     for (const id of details.keys()) if (!next.has(id)) details.delete(id);
     for (const entry of entries) {
       // Reviewed ones too: their details say whether commits landed after the user's review.
@@ -335,7 +361,7 @@ export function createReviewQueue(bb: BbPluginApi, labeler: Labeler) {
     if (!target) return;
     const at = Date.now();
     const result = await host
-      .call("pr_detail", { forge: entry.forge, repo: entry.repo, number: entry.number }, { hostId: target })
+      .call("pr_detail", { forge: entry.forge, repo: entry.repo, number: entry.number }, { hostId: target, timeoutMs: CALL_TIMEOUT_MS })
       .catch((cause: unknown) => ({ detail: null, error: message(cause) }));
     if (!result.detail) {
       logFailure("details", entry.id, result.error ?? "no details");
@@ -453,7 +479,11 @@ export function createReviewQueue(bb: BbPluginApi, labeler: Labeler) {
     if (verdict === "request_changes" && !body) throw new Error("Say what needs to change.");
     hostId = await indexHostId(bb, hostId);
     if (!hostId) throw new Error(NO_HOST);
-    const result = await host.call("pr_review", { forge: entry.forge, repo: entry.repo, number: entry.number, verdict, body }, { hostId });
+    const result = await host.call(
+      "pr_review",
+      { forge: entry.forge, repo: entry.repo, number: entry.number, verdict, body },
+      { hostId, timeoutMs: REVIEW_CALL_TIMEOUT_MS },
+    );
     if (result.error) throw new Error(result.error);
     const marks = await load();
     marks.reviewed[id] = { sha: currentHead(entry), at: Date.now() };

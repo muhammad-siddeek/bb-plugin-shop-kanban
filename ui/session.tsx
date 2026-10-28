@@ -16,12 +16,19 @@ const CRITICAL_TONE = { ring: "text-rose-500", bar: "bg-rose-500" };
 const RING_RADIUS = 4.5;
 const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
 
+/** Built once per currency: every card formats its cost on each render. */
+const currencyFormats = new Map<string, Intl.NumberFormat>();
+
 function formatCost({ amount, currency }: { amount: number; currency: string }): string {
   const tiny = amount > 0 && amount < 0.01;
   const value = tiny ? 0.01 : amount;
   let text: string;
   try {
-    const formatter = new Intl.NumberFormat(undefined, { style: "currency", currency, minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    let formatter = currencyFormats.get(currency);
+    if (!formatter) {
+      formatter = new Intl.NumberFormat(undefined, { style: "currency", currency, minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      currencyFormats.set(currency, formatter);
+    }
     text = formatter.format(value);
   } catch {
     text = `${value.toFixed(2)} ${currency}`;
@@ -72,9 +79,9 @@ export function HarnessMeta({ provider, session }: { provider: AgentProvider | n
   const cost = session?.cost ? `${estimate ? "~" : ""}${formatCost(session.cost)}` : null;
   // The cost covers the thread's descendant threads too; say so when more than one spent.
   const spent =
-    cost === null
+    cost === null || !session
       ? null
-      : `${cost} spent${(session?.costThreads ?? 0) > 1 ? ` across ${session?.costThreads} threads` : ""}${estimate ? ` (${estimate} estimated)` : ""}`;
+      : `${cost} spent${session.costThreads > 1 ? ` across ${session.costThreads} threads` : ""}${estimate ? ` (${estimate} estimated)` : ""}`;
   const used = session?.usedTokens ?? null;
   const capacity = session?.contextWindow ?? null;
   const fill = used !== null && capacity ? used / capacity : null;

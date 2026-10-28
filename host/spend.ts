@@ -1,8 +1,10 @@
+import { existsSync } from "node:fs";
 import { open, readdir, readFile, stat } from "node:fs/promises";
-import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { gunzipSync } from "node:zlib";
+import { promisify } from "node:util";
+import { gunzip } from "node:zlib";
 import { z } from "zod";
+import { homeDir } from "./run";
 
 // What harness sessions spent, from the transcripts the harnesses write on this host.
 //
@@ -44,15 +46,13 @@ const TAIL_BYTES = 64;
 const FORGET_MS = 60 * 60_000;
 
 const BUCKETS = ["input", "output", "cacheRead", "cacheWrite"] as const;
+type Bucket = (typeof BUCKETS)[number];
 /** A number per token bucket: token counts, USD, or USD per token. */
-type Buckets = Record<(typeof BUCKETS)[number], number>;
+type Buckets = Record<Bucket, number>;
 /** Spend on some of a transcript's entries, plus the tokens of replies saved without a price, by `provider/model`. */
 type Part = { amount: number; unpriced: Map<string, Buckets> };
 /** What a provider/model's priced replies used and cost. */
 type Priced = { tokens: Buckets; cost: Buckets };
-
-/** Where a fork's copied entries came from, and when the fork began: entries older than that are copies. */
-type Fork = { source: string; at: number };
 
 type FileSpend = {
   /** Harnesses rewrite a transcript by renaming a new copy over it: a new inode means read it all again. */
@@ -63,7 +63,8 @@ type FileSpend = {
   offset: number;
   /** The `TAIL_BYTES` before `offset`; guards against a file rewritten in place under the same inode. */
   tail: Buffer;
-  fork: Fork | null;
+  /** Where a fork's copied entries came from, and when the fork began: entries older than that are copies. */
+  fork: { source: string; at: number } | null;
   /** The transcript's own entries. */
   own: Part;
   /** Entries a fork copied from its source. */
@@ -80,19 +81,9 @@ export type Spend = { amount: number; estimated: number };
 const titleSlotSchema = z.object({ type: z.literal("title") });
 /** The session header: a transcript's first line, or its second after a title slot. */
 const headerSchema = z.object({ type: z.literal("session"), timestamp: z.string().optional(), parentSession: z.string().optional() });
-const usageSchema = z.object({
-  input: z.number().nullish(),
-  output: z.number().nullish(),
-  cacheRead: z.number().nullish(),
-  cacheWrite: z.number().nullish(),
-  cost: z.object({
-    total: z.number().nullish(),
-    input: z.number().nullish(),
-    output: z.number().nullish(),
-    cacheRead: z.number().nullish(),
-    cacheWrite: z.number().nullish(),
-  }),
-});
+const count = z.number().nullish();
+const counts = { input: count, output: count, cacheRead: count, cacheWrite: count };
+const usageSchema = z.object({ ...counts, cost: z.object({ ...counts, total: z.number().nullish() }) });
 const entrySchema = z.object({
   type: z.string(),
   timestamp: z.string().optional(),
@@ -118,20 +109,23 @@ function parseJson(line: string): unknown {
   }
 }
 
-const zero = (): Buckets => ({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
+/** Missing counts are 0. */
+const buckets = (from: Partial<Record<Bucket, number | null | undefined>> = {}): Buckets => ({
+  input: from.input ?? 0,
+  output: from.output ?? 0,
+  cacheRead: from.cacheRead ?? 0,
+  cacheWrite: from.cacheWrite ?? 0,
+});
 
-function addInto(map: Map<string, Buckets>, key: string, add: Buckets) {
-  const into = map.get(key) ?? zero();
+function addBuckets(into: Buckets, add: Buckets): Buckets {
   for (const bucket of BUCKETS) into[bucket] += add[bucket];
-  map.set(key, into);
+  return into;
 }
 
 function addPriced(map: Map<string, Priced>, model: string, add: Priced) {
-  const into = map.get(model) ?? { tokens: zero(), cost: zero() };
-  for (const bucket of BUCKETS) {
-    into.tokens[bucket] += add.tokens[bucket];
-    into.cost[bucket] += add.cost[bucket];
-  }
+  const into = map.get(model) ?? { tokens: buckets(), cost: buckets() };
+  addBuckets(into.tokens, add.tokens);
+  addBuckets(into.cost, add.cost);
   map.set(model, into);
 }
 
@@ -145,9 +139,9 @@ async function entries(dir: string) {
 }
 
 /** Every transcript under `dir`, at any depth. Dot names are omp's staging files (`.x.jsonl.123.tmp`) and `omp gc` scratch dirs. */
-async function transcriptsUnder(dir: string): Promise<string[]> {
+async function transcriptsUnder(dir: string | null): Promise<string[]> {
   const out: string[] = [];
-  const stack = [dir];
+  const stack = dir ? [dir] : [];
   while (stack.length) {
     const next = stack.pop()!;
     for (const entry of await entries(next)) {
@@ -161,20 +155,33 @@ async function transcriptsUnder(dir: string): Promise<string[]> {
   return out;
 }
 
-function ompSessionsDir(): string {
-  // Profiles and XDG relocation of omp's agent dir aren't followed.
-  return join(process.env.PI_CODING_AGENT_DIR || join(homedir(), ".omp", "agent"), "sessions");
+/**
+ * omp's sessions dir, resolved as omp resolves it: `PI_CODING_AGENT_DIR`, else `$XDG_DATA_HOME/omp` once
+ * `omp config migrate` has made it (Linux and macOS), else `~/.omp/agent` (`PI_CONFIG_DIR` renames `.omp`).
+ * Named profiles (`OMP_PROFILE`) aren't followed. Null when there is no home directory.
+ */
+function ompSessionsDir(): string | null {
+  const agentDir = process.env.PI_CODING_AGENT_DIR;
+  if (agentDir) return join(resolve(agentDir), "sessions");
+  const xdgData = process.env.XDG_DATA_HOME;
+  if (xdgData && process.platform !== "win32" && existsSync(join(xdgData, "omp"))) return join(xdgData, "omp", "sessions");
+  const home = homeDir();
+  return home && join(home, process.env.PI_CONFIG_DIR || ".omp", "agent", "sessions");
 }
 
-function piSessionsDir(): string {
+/** bb's Pi bridge dir, resolved as the bridge resolves it. Null when there is no home directory. */
+function piSessionsDir(): string | null {
   const dir = process.env.BB_PI_BRIDGE_SESSION_DIR?.trim();
-  return dir ? resolve(dir) : join(homedir(), ".bb", "pi-bridge-sessions");
+  if (dir) return resolve(dir);
+  const home = homeDir();
+  return home && join(home, ".bb", "pi-bridge-sessions");
 }
 
 /** Session id → transcript path, for every session under omp's sessions dir (one directory per cwd). */
 async function indexOmpRoots(): Promise<Map<string, string>> {
   const paths = new Map<string, string>();
   const base = ompSessionsDir();
+  if (!base) return paths;
   for (const dir of await entries(base)) {
     if (!dir.isDirectory()) continue;
     for (const file of await entries(join(base, dir.name))) {
@@ -207,7 +214,7 @@ function time(iso: string | undefined): number | null {
 type LineSpend = {
   amount: number;
   at: number | null;
-  /** An assistant reply's model, tokens and, when priced in every bucket, cost per bucket. */
+  /** An assistant reply's model, tokens and, when priced per bucket, cost per bucket. */
   reply: { model: string; tokens: Buckets; cost: Buckets | null } | null;
 };
 
@@ -220,17 +227,13 @@ function lineSpend(line: string): LineSpend | null {
   const isReply = type === "message" && message?.role === "assistant";
   const usage = type === "message" ? (isReply ? message.usage : undefined) : entryUsage;
   if (!usage) return null;
-  const { cost } = usage;
+  const parts = buckets(usage.cost);
+  const partsTotal = parts.input + parts.output + parts.cacheRead + parts.cacheWrite;
   // Harnesses complete a missing total from its parts when they load a transcript.
-  const parts: Buckets = { input: cost.input ?? 0, output: cost.output ?? 0, cacheRead: cost.cacheRead ?? 0, cacheWrite: cost.cacheWrite ?? 0 };
-  const amount = cost.total ?? parts.input + parts.output + parts.cacheRead + parts.cacheWrite;
+  const amount = usage.cost.total ?? partsTotal;
   const reply =
     isReply && message.provider && message.model
-      ? {
-          model: `${message.provider}/${message.model}`,
-          tokens: { input: usage.input ?? 0, output: usage.output ?? 0, cacheRead: usage.cacheRead ?? 0, cacheWrite: usage.cacheWrite ?? 0 },
-          cost: amount > 0 && parts.input + parts.output + parts.cacheRead + parts.cacheWrite > 0 ? parts : null,
-        }
+      ? { model: `${message.provider}/${message.model}`, tokens: buckets(usage), cost: amount > 0 && partsTotal > 0 ? parts : null }
       : null;
   return { amount, at: time(timestamp), reply };
 }
@@ -269,7 +272,7 @@ function parse(path: string, bytes: Buffer, start: number, into: Pick<FileSpend,
     if (reply.cost && !copy) {
       addPriced(into.priced, reply.model, { tokens: reply.tokens, cost: reply.cost });
     } else if (spend.amount === 0 && BUCKETS.some((bucket) => reply.tokens[bucket] > 0)) {
-      addInto(part.unpriced, reply.model, reply.tokens);
+      part.unpriced.set(reply.model, addBuckets(part.unpriced.get(reply.model) ?? buckets(), reply.tokens));
     }
   }
   return start + end;
@@ -314,8 +317,8 @@ async function fileSpend(path: string, now: number): Promise<FileSpend | null> {
   }
 
   // Unreadable or corrupt (a bad gzip, too large to load): it spends nothing until it changes.
-  const { bytes, base, skip, previous } = await readChanged(path, info.size, known?.ino === info.ino ? known : undefined).catch(
-    (): Changed => ({ bytes: Buffer.alloc(0), base: 0, skip: 0, previous: null }),
+  const { bytes, base, previous } = await readChanged(path, info.size, known?.ino === info.ino ? known : undefined).catch(
+    (): Changed => ({ bytes: Buffer.alloc(0), base: 0, previous: null }),
   );
   const into = {
     fork: previous?.fork ?? null,
@@ -325,8 +328,8 @@ async function fileSpend(path: string, now: number): Promise<FileSpend | null> {
   };
   for (const [model, priced] of previous?.priced ?? []) addPriced(into.priced, model, priced);
   // Null only for a full read that found no header, which leaves `into` as empty as it started.
-  const parsed = parse(path, bytes.subarray(skip), base + skip, into);
-  const offset = parsed ?? 0;
+  const start = previous?.offset ?? 0;
+  const offset = parse(path, bytes.subarray(start - base), start, into) ?? 0;
   // Copy the tail: a subarray would pin the whole file's buffer.
   const tail = Buffer.from(bytes.subarray(Math.max(0, offset - base - TAIL_BYTES), offset - base));
   const spend: FileSpend = { ino: info.ino, size: info.size, mtimeMs: info.mtimeMs, offset, tail, ...into, seenAt: now };
@@ -334,18 +337,19 @@ async function fileSpend(path: string, now: number): Promise<FileSpend | null> {
   return spend;
 }
 
-/** What to parse: `bytes` starts at file offset `base`, and its first `skip` bytes were parsed into `previous`. */
-type Changed = { bytes: Buffer; base: number; skip: number; previous: FileSpend | null };
+/** What to parse: `bytes` starts at file offset `base`; what precedes `previous.offset` was parsed into `previous`. */
+type Changed = { bytes: Buffer; base: number; previous: FileSpend | null };
 
 /** Only what was appended when the file just grew under the same inode; otherwise all of it. */
 async function readChanged(path: string, size: number, known: FileSpend | undefined): Promise<Changed> {
-  if (path.endsWith(COMPRESSED)) return { bytes: gunzipSync(await readFile(path)), base: 0, skip: 0, previous: null };
+  // Async: a large archive would block the worker's event loop.
+  if (path.endsWith(COMPRESSED)) return { bytes: await promisify(gunzip)(await readFile(path)), base: 0, previous: null };
   if (known && known.offset > 0 && size >= known.offset) {
     const base = known.offset - known.tail.length;
     const bytes = await readRange(path, base, size);
-    if (bytes.subarray(0, known.tail.length).equals(known.tail)) return { bytes, base, skip: known.tail.length, previous: known };
+    if (bytes.subarray(0, known.tail.length).equals(known.tail)) return { bytes, base, previous: known };
   }
-  return { bytes: await readFile(path), base: 0, skip: 0, previous: null };
+  return { bytes: await readFile(path), base: 0, previous: null };
 }
 
 /** One read per file at a time; requests for the same tree overlap while a turn is running. */
@@ -367,7 +371,7 @@ async function readRates(now: number): Promise<Map<string, Buckets>> {
   }
   const byModel = new Map<string, Buckets>();
   for (const [model, { tokens, cost }] of totals) {
-    const rate = zero();
+    const rate = buckets();
     for (const bucket of BUCKETS) rate[bucket] = tokens[bucket] > 0 ? cost[bucket] / tokens[bucket] : 0;
     byModel.set(model, rate);
   }
@@ -402,7 +406,7 @@ async function sumSpend(paths: readonly string[], now: number): Promise<Spend | 
     const sourceCounts = copies && spend.fork !== null && (await stat(spend.fork.source).catch(() => null)) !== null;
     for (const part of sourceCounts ? [spend.own] : [spend.own, spend.copied]) {
       amount = (amount ?? 0) + part.amount;
-      for (const [model, tokens] of part.unpriced) addInto(unpriced, model, tokens);
+      for (const [model, tokens] of part.unpriced) unpriced.set(model, addBuckets(unpriced.get(model) ?? buckets(), tokens));
     }
   }
   if (amount === null) return null;
@@ -443,5 +447,6 @@ export function ompSpend(sessionIds: readonly string[]): Promise<Record<string, 
  * names a transcript after the id; the contract admits only ids it keeps as they are.
  */
 export function piSpend(providerThreadIds: readonly string[]): Promise<Record<string, Spend>> {
-  return spendBy(providerThreadIds, async (id) => [join(piSessionsDir(), `${id}${SESSION}`)]);
+  const dir = piSessionsDir();
+  return spendBy(providerThreadIds, async (id) => (dir ? [join(dir, `${id}${SESSION}`)] : []));
 }

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { Forge, ForgePr } from "../contract";
-import { failure, run } from "./run";
+import { failure, run, type RunResult } from "./run";
 
 // Pull requests through the forge CLIs the user already signed in to: `dt` for Delta, `gh` for GitHub. Both speak
 // GitHub's REST shapes, so one set of schemas reads either.
@@ -86,14 +86,23 @@ const myIds = new Map<Forge, number>();
 
 type ApiResult<T> = { ok: true; value: T } | { ok: false; error: string; missing: boolean };
 
+/** `gh` says "gh auth login" when signed out or its token went bad; `dt` says "run `dt auth login` first". */
+const SIGNED_OUT = /\b(?:gh|dt) auth login\b/;
+
+/** Why a forge command failed; `missing` when the CLI cannot work on this host at all: not installed or signed out. */
+function failed(command: string, result: RunResult): { error: string; missing: boolean } {
+  // Code -1: the CLI could not start, i.e. it is not installed here (Node says ENOENT, Bun "Executable not found").
+  if (result.code === -1) return { error: `${command} is not installed on this host.`, missing: true };
+  if (SIGNED_OUT.test(result.stderr)) return { error: `${command} is not signed in on this host; run \`${command} auth login\`.`, missing: true };
+  return { error: failure(command, result), missing: false };
+}
+
 /** One GET through the forge's `api` command. `dt` finds the host from the repository, so Delta calls name it. */
 async function api<T>(forge: Forge, repo: string | null, endpoint: string, schema: z.ZodType<T>, signal: AbortSignal): Promise<ApiResult<T>> {
   const command = CLI[forge];
-  const args = forge === "delta" ? ["api", "-R", repo ?? "", endpoint] : ["api", endpoint];
+  const args = forge === "delta" && repo ? ["api", "-R", repo, endpoint] : ["api", endpoint];
   const result = await run(command, args, 30_000, signal);
-  // Code -1: the CLI could not start, i.e. it is not installed here (Node says ENOENT, Bun "Executable not found").
-  if (result.code === -1) return { ok: false, error: `${command} is not installed on this host.`, missing: true };
-  if (result.code !== 0) return { ok: false, error: failure(command, result), missing: false };
+  if (result.code !== 0) return { ok: false, ...failed(command, result) };
   try {
     return { ok: true, value: schema.parse(JSON.parse(result.stdout)) };
   } catch {
@@ -200,5 +209,5 @@ export async function prReview(
   const body = input.body.trim();
   if (body) args.push("--body", body);
   const result = await run(command, args, 60_000, signal);
-  return { error: result.code === 0 ? null : failure(command, result) };
+  return { error: result.code === 0 ? null : failed(command, result).error };
 }

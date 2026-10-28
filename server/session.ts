@@ -171,7 +171,7 @@ export function createSessionInfo(bb: BbPluginApi, reader: ThreadReader) {
       const list = [...ids];
       for (let start = 0; start < list.length; start += SESSIONS_PAGE) {
         const sessionIds = list.slice(start, start + SESSIONS_PAGE);
-        // A disconnected host or a missing harness fails or finds nothing: those threads count what bb reports.
+        // A failed call or a missing harness finds nothing: those threads count what bb reports.
         const result = await safe(() => host.call(method, { sessionIds }, { hostId }));
         for (const [id, spend] of Object.entries(result?.spends ?? {})) bySession.set(`${method}:${id}`, spend);
       }
@@ -192,12 +192,15 @@ export function createSessionInfo(bb: BbPluginApi, reader: ThreadReader) {
     // One thread at a time: a tree can hold hundreds of threads, and nothing waits on this.
     const read: ThreadSpend[] = [];
     for (const thread of tree) read.push(await threadSpend(thread));
-
+    // A call to a disconnected host would wait out the SDK's 30s timeout: its threads count what bb reports. Every
+    // host is tried when the list can't be read.
+    const hosts = await safe(() => bb.sdk.hosts.list());
+    const offline = new Set(hosts?.flatMap((entry) => (entry.status === "connected" ? [] : [entry.id])));
     const groups = new Map<string, { method: SpendMethod; hostId: string; ids: Set<string> }>();
     tree.forEach((thread, index) => {
       const spender = spenderFor(thread);
       const ids = read[index].sessions?.ids.filter((id) => spender?.sessionId.safeParse(id).success);
-      if (!spender || !thread.hostId || !ids?.length) return;
+      if (!spender || !thread.hostId || offline.has(thread.hostId) || !ids?.length) return;
       const key = `${spender.method}:${thread.hostId}`;
       const group = groups.get(key) ?? { method: spender.method, hostId: thread.hostId, ids: new Set<string>() };
       for (const id of ids) group.ids.add(id);

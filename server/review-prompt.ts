@@ -1,5 +1,6 @@
+import { z } from "zod";
 import type { Forge, ForgePr, ForgePrDetail } from "../contract";
-import type { ReviewRisk } from "./schema";
+import { reviewRiskSchema, type ReviewRisk } from "./schema";
 import { oneLine } from "./text";
 
 // What the review queue asks of models: the small labeler model's "[risk] what, why" first read of a pull
@@ -55,22 +56,26 @@ export function reviewPrompt(pr: ReviewPr, detail: ForgePrDetail | null): string
     .join("\n");
 }
 
+/** A sentence the model may leave out or fill with something other than text. */
+const sentenceField = z.string().catch("");
+const summarySchema = z.object({ risk: reviewRiskSchema, what: sentenceField, why: sentenceField, risk_reason: sentenceField });
+
 /** The model's JSON as a risk and up to three sentences: what, why, what could break. */
 export function parseReviewSummary(text: string): { risk: ReviewRisk; text: string } | null {
   const json = text.match(/\{[\s\S]*\}/u)?.[0];
   if (!json) return null;
-  let fields: Record<string, unknown> | null;
+  let value: unknown;
   try {
-    fields = JSON.parse(json);
+    value = JSON.parse(json);
   } catch {
     return null;
   }
-  const risk = fields?.risk;
-  if (risk !== "low" && risk !== "medium" && risk !== "high") return null;
-  const sentences = [fields?.what, fields?.why, fields?.risk_reason].flatMap((value) => {
+  const fields = summarySchema.safeParse(value);
+  if (!fields.success) return null;
+  const { risk, what, why, risk_reason } = fields.data;
+  const sentences = [what, why, risk_reason].flatMap((field) => {
     // One sentence per field keeps the first read at three sentences at most.
-    const first = typeof value === "string" ? oneLine(value).split(/(?<=[.!?])\s+/u)[0] : "";
-    const sentence = first.slice(0, 220).replace(/[\s.!?;:,]+$/u, "");
+    const sentence = oneLine(field).split(/(?<=[.!?])\s+/u)[0].slice(0, 220).replace(/[\s.!?;:,]+$/u, "");
     return sentence ? [`${sentence}.`] : [];
   });
   return sentences.length ? { risk, text: sentences.join(" ") } : null;

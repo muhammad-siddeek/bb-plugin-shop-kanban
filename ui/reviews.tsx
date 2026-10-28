@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { experimental_Icon as Icon, useBbContext, useBbNavigate } from "@get-bb/plugin-sdk/app";
 import { PLUGIN_SLUG } from "../brand";
-import { formatShortAge, type ReviewCard, type ReviewScope } from "./model";
+import { errorMessage, formatShortAge, type ReviewCard, type ReviewScope } from "./model";
 import type { ReviewVerdict, ReviewsApi } from "./hooks";
 
 // Review queue at the top of the Queue column: a two-line card per pull request waiting on the user, toggled
@@ -71,7 +71,7 @@ function ReviewRow({ review, now, unread, actions }: { review: ReviewCard; now: 
     try {
       await action();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(errorMessage(cause));
     }
   };
 
@@ -265,6 +265,17 @@ function readCollapsed(): boolean {
   }
 }
 
+/** `set` with `id`; the same set when it is already there, so React skips the render. */
+function withId(set: ReadonlySet<string>, id: string): ReadonlySet<string> {
+  return set.has(id) ? set : new Set([...set, id]);
+}
+
+/** `set` without the ids `keep` rejects; the same set when none go. */
+function kept(set: ReadonlySet<string>, keep: (id: string) => boolean): ReadonlySet<string> {
+  const next = new Set([...set].filter(keep));
+  return next.size === set.size ? set : next;
+}
+
 export function ReviewSection({ reviews, now }: { reviews: ReviewsApi; now: number }) {
   const navigate = useBbNavigate();
   const context = useBbContext();
@@ -281,24 +292,22 @@ export function ReviewSection({ reviews, now }: { reviews: ReviewsApi; now: numb
     // Drop local overrides once the server agrees, so a new push can mark the card unread again.
     if (!state) return;
     const listed = new Map(state.reviews.map((review) => [review.id, review]));
-    setHidden((current) => {
-      const next = new Set([...current].filter((id) => listed.has(id)));
-      return next.size === current.size ? current : next;
-    });
-    setReadLocally((current) => {
-      const next = new Set([...current].filter((id) => listed.get(id)?.unread));
-      return next.size === current.size ? current : next;
-    });
+    setHidden((current) => kept(current, (id) => listed.has(id)));
+    setReadLocally((current) => kept(current, (id) => listed.get(id)?.unread === true));
   }, [state]);
 
   if (!state || state.scopes.length === 0) return null;
   const listed = state.reviews.filter((review) => !hidden.has(review.id));
 
   const problems = [
-    reviews.error,
-    state.error,
-    ...state.sources.flatMap((source) => (source.error && !source.missing ? [`${source.search}: ${source.error}`] : [])),
+    ...new Set([
+      reviews.error,
+      state.error,
+      ...state.sources.map((source) => (source.error && !source.missing ? `${source.search}: ${source.error}` : null)),
+    ]),
   ].filter((problem): problem is string => Boolean(problem));
+  // No host, or a forge CLI missing or signed out there: expected on many machines, so a hover hint, not a warning.
+  const skipped = [...new Set(state.sources.flatMap((source) => (source.error && source.missing ? [source.error] : [])))];
   const loading = state.refreshedAt === null;
   if (listed.length === 0 && problems.length === 0 && !loading) return null;
 
@@ -314,38 +323,29 @@ export function ReviewSection({ reviews, now }: { reviews: ReviewsApi; now: numb
   const scoped = listed.filter((review) => review.scope === scope);
   const shown = showAll ? scoped : scoped.slice(0, SHOWN_MAX);
 
-  const markRead = (id: string) => setReadLocally((current) => (current.has(id) ? current : new Set([...current, id])));
-  const setHiddenId = (id: string, hide: boolean) =>
-    setHidden((current) => {
-      const next = new Set(current);
-      if (hide) next.add(id);
-      else next.delete(id);
-      return next;
-    });
-
   const actions: RowActions = {
     onDraft: async (review) => {
-      markRead(review.id);
+      setReadLocally((current) => withId(current, review.id));
       const initialPrompt = await reviews.draft(review.id);
       navigate?.toCompose?.({ ...(context?.projectId ? { projectId: context.projectId } : {}), initialPrompt, focusPrompt: true });
     },
     onOpen: async (review) => {
-      markRead(review.id);
+      setReadLocally((current) => withId(current, review.id));
       if (!navigate?.openUrl?.(review.url)) window.open(review.url, "_blank", "noopener,noreferrer");
       await reviews.markRead(review.id);
     },
     onArchive: async (review) => {
-      setHiddenId(review.id, true);
+      setHidden((current) => withId(current, review.id));
       try {
         await reviews.archive(review.id);
       } catch (cause) {
-        setHiddenId(review.id, false);
+        setHidden((current) => kept(current, (id) => id !== review.id));
         throw cause;
       }
     },
     onSubmit: async (review, verdict, body) => {
       await reviews.submit(review.id, verdict, body);
-      setHiddenId(review.id, true);
+      setHidden((current) => withId(current, review.id));
     },
   };
 
@@ -371,6 +371,7 @@ export function ReviewSection({ reviews, now }: { reviews: ReviewsApi; now: numb
           type="button"
           onClick={() => setCollapsedStored(!collapsed)}
           aria-expanded={!collapsed}
+          title={skipped.length > 0 ? ["Not read:", ...skipped].join("\n") : undefined}
           className="flex min-w-0 items-center gap-1 rounded-sm text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
         >
           <Icon name={collapsed ? "ChevronRight" : "ChevronDown"} className="size-3" aria-hidden />

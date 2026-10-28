@@ -21,7 +21,10 @@ const LABELER_FLAGS = [
   "off",
 ];
 
-/** qmd named index owned by the plugin (`~/.config/qmd/shop-kanban.yml`, `~/.cache/qmd/shop-kanban.sqlite`). */
+/**
+ * qmd named index owned by the plugin. qmd places it: `shop-kanban.yml` in `$XDG_CONFIG_HOME/qmd` (`~/.config/qmd`),
+ * `shop-kanban.sqlite` in `$XDG_CACHE_HOME/qmd` (`~/.cache/qmd`).
+ */
 const QMD_INDEX = ["--index", "shop-kanban"];
 const QMD_COLLECTION = "threads";
 /** One `<threadId>.md` per thread, under the plugin's host data dir. */

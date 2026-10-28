@@ -19,14 +19,13 @@ const LOG_INTERVAL_MS = 60 * 60_000;
 const TITLE_SETTLE_MS = 60_000;
 
 /** Model-written card label: "[category] intent" title plus a summary of the latest interaction. */
-export type CardLabel = {
+type CardLabel = {
   titleSig: string;
   category: string;
   intent: string;
   summarySig: string;
   summary: string | null;
   needsInput: boolean | null;
-  failedAt?: number;
   /** Title the board last wrote to the bb thread, to tell our renames from the user's. */
   appliedTitle?: string;
   /** The title our last rename replaced; seeing it again just means a stale snapshot. */
@@ -34,6 +33,9 @@ export type CardLabel = {
   /** The user renamed the thread themselves; stop syncing and show their title. */
   userTitled?: boolean;
 };
+type Labels = Record<string, CardLabel>;
+/** What a queued refresh writes: the signatures it labels and the title the model is shown. */
+type LabelJob = { titleSig: string; summarySig: string; currentTitle: string | null };
 
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -64,18 +66,21 @@ export function createLabeler(bb: BbPluginApi, onChange: () => void) {
   };
 
   const host = bb.hosts.experimental_client({ contract: hostContract });
-  let labels: Promise<Record<string, CardLabel>> | null = null;
+  let labels: Promise<Labels> | null = null;
   let labelsWrite: Promise<void> = Promise.resolve();
   const labelQueue: Array<() => Promise<void>> = [];
   const labelInFlight = new Set<string>();
   let labelActive = 0;
   const renaming = new Set<string>();
+  /**
+   * Threads whose last refresh failed, with the `titleSig|summarySig` it tried. They keep showing their last label
+   * and retry after LABEL_RETRY_MS, or at once when the thread moves on. Kept in memory: a restart retries.
+   */
+  const failures = new Map<string, { at: number; sig: string }>();
   let changedTimer: ReturnType<typeof setTimeout> | undefined;
   let fallbackHostId: string | null = null;
   let enabled = true;
   const loggedAt = new Map<string, number>();
-  /** Failures before the last settings change are retried right away: the user may have just fixed the command. */
-  let settingsChangedAt = 0;
 
   void settings.get().then(
     (values) => {
@@ -85,7 +90,8 @@ export function createLabeler(bb: BbPluginApi, onChange: () => void) {
   );
   settings.onChange((next) => {
     enabled = config(next).models.length > 0;
-    settingsChangedAt = Date.now();
+    // The user may have just fixed the command: retry failed threads right away.
+    failures.clear();
     changedSoon();
   });
 
@@ -98,10 +104,8 @@ export function createLabeler(bb: BbPluginApi, onChange: () => void) {
   }
 
   /** One shared promise, so concurrent first loads mutate and persist the same record. */
-  function load(): Promise<Record<string, CardLabel>> {
-    labels ??= safe(async () => bb.storage.kv.get<Record<string, CardLabel>>(LABELS_KEY)).then((raw) =>
-      raw && typeof raw === "object" ? raw : {},
-    );
+  function load(): Promise<Labels> {
+    labels ??= safe(async () => bb.storage.kv.get<Labels>(LABELS_KEY)).then((raw) => (raw && typeof raw === "object" ? raw : {}));
     return labels;
   }
 
@@ -121,12 +125,6 @@ export function createLabeler(bb: BbPluginApi, onChange: () => void) {
       changedTimer = undefined;
       onChange();
     }, 400);
-  }
-
-  async function resolveHostId(thread: LiveThread): Promise<string | null> {
-    if (thread.hostId) return thread.hostId;
-    fallbackHostId ??= await connectedHostId(bb);
-    return fallbackHostId;
   }
 
   function pumpLabels() {
@@ -166,7 +164,7 @@ export function createLabeler(bb: BbPluginApi, onChange: () => void) {
    * Keep the bb sidebar title equal to the card title. A title that differs from the one we
    * last applied means someone renamed the thread by hand: respect it from then on.
    */
-  function syncThreadTitle(thread: LiveThread, title: string, all: Record<string, CardLabel>) {
+  function syncThreadTitle(thread: LiveThread, title: string, all: Labels) {
     const label = all[thread.id];
     if (!label || label.userTitled || thread.title === title || renaming.has(thread.id)) return;
     if (label.appliedTitle && thread.title && thread.title !== label.appliedTitle && thread.title !== label.replacedTitle) {
@@ -191,83 +189,74 @@ export function createLabeler(bb: BbPluginApi, onChange: () => void) {
     })();
   }
 
+  async function relabel(thread: LiveThread, details: ThreadDetails, running: boolean, job: LabelJob, all: Labels) {
+    const hostId = thread.hostId ?? (fallbackHostId ??= await connectedHostId(bb));
+    try {
+      if (!hostId) throw new Error("No connected bb host to run the labeler on.");
+      const categories = Array.from(new Set(Object.values(all).map((entry) => entry.category).filter(Boolean))).slice(0, 30);
+      const prompt = labelPrompt({
+        title: thread.title,
+        currentTitle: job.currentTitle,
+        firstPrompt: details.firstUserPrompt,
+        lastPrompt: details.lastUserPrompt,
+        prompts: details.userPrompts,
+        output: details.output,
+        running,
+        categories,
+      });
+      const parsed = parseLabel(await complete(hostId, LABEL_SYSTEM, prompt, LABEL_TIMEOUT_MS));
+      if (!parsed) throw new Error("reply had no usable JSON; threads keep their last label");
+      const previous = all[thread.id];
+      // Only a new user message may retitle the card; summary refreshes keep the title.
+      const keepTitle = previous !== undefined && Boolean(previous.category && previous.intent) && previous.titleSig === job.titleSig;
+      all[thread.id] = {
+        ...previous,
+        titleSig: job.titleSig,
+        category: keepTitle ? previous.category : parsed.category,
+        intent: keepTitle ? previous.intent : parsed.intent,
+        summarySig: job.summarySig,
+        summary: parsed.summary,
+        needsInput: running ? null : parsed.needsInput,
+      };
+      failures.delete(thread.id);
+      persist();
+    } catch (error) {
+      // Usually the CLI or the host failing, not this thread: look the fallback host up again next time.
+      fallbackHostId = null;
+      logQuietly(`labeler failed${hostId ? ` on host ${hostId}` : ""}: ${message(error)}`);
+      failures.set(thread.id, { at: Date.now(), sig: `${job.titleSig}|${job.summarySig}` });
+    } finally {
+      labelInFlight.delete(thread.id);
+      changedSoon();
+    }
+  }
+
   /**
-   * Returns the current (possibly stale) label and schedules a refresh when the thread moved on.
-   * `all` is the record returned by `load()`.
+   * Returns the current label (the last one while its refresh keeps failing) and schedules a refresh when the
+   * thread moved on. `all` is the record returned by `load()`.
    */
-  function view(thread: LiveThread, details: ThreadDetails, running: boolean, all: Record<string, CardLabel>): LabelView {
-    const current = all[thread.id];
+  function view(thread: LiveThread, details: ThreadDetails, running: boolean, all: Labels): LabelView {
     const titleSig = `v${LABEL_PROMPT_VERSION}:${details.userPrompts.length}:${details.lastUserInputAt ?? 0}:${hashText(details.firstUserPrompt ?? thread.title ?? thread.id)}`;
     const summarySig = running
       ? `v${LABEL_PROMPT_VERSION}:run:${details.lastUserInputAt ?? 0}`
       : `v${LABEL_PROMPT_VERSION}:idle:${details.lastUserInputAt ?? 0}:${hashText(details.output ?? "")}`;
-    const title = current?.category && current.intent ? `[${current.category}] ${current.intent}` : null;
-    const fresh = current !== undefined && title !== null && current.titleSig === titleSig && current.summarySig === summarySig;
-    const backingOff =
-      current?.failedAt !== undefined &&
-      current.failedAt > settingsChangedAt &&
-      Date.now() - current.failedAt < LABEL_RETRY_MS &&
-      current.summarySig === summarySig;
+    const current = all[thread.id];
+    const labeled = current?.category && current.intent ? current : undefined;
+    const title = labeled ? `[${labeled.category}] ${labeled.intent}` : null;
+    const fresh = labeled?.titleSig === titleSig && labeled.summarySig === summarySig;
+    const failure = failures.get(thread.id);
+    const backingOff = failure?.sig === `${titleSig}|${summarySig}` && Date.now() - failure.at < LABEL_RETRY_MS;
     const worthLabeling = running || Boolean(details.output?.trim()) || Boolean(details.lastUserPrompt);
 
     if (enabled && !fresh && !backingOff && worthLabeling && !labelInFlight.has(thread.id)) {
       labelInFlight.add(thread.id);
-      labelQueue.push(async () => {
-        const hostId = await resolveHostId(thread);
-        const failed = () => {
-          const previous = all[thread.id];
-          all[thread.id] = previous
-            ? { ...previous, titleSig, summarySig, failedAt: Date.now() }
-            : { titleSig: "", category: "", intent: "", summarySig, summary: null, needsInput: null, failedAt: Date.now() };
-        };
-        try {
-          if (!hostId) throw new Error("No bb host is listed to run the labeler on.");
-          const categories = Array.from(new Set(Object.values(all).map((entry) => entry.category).filter(Boolean))).slice(0, 30);
-          const prompt = labelPrompt({
-            title: thread.title,
-            currentTitle: title,
-            firstPrompt: details.firstUserPrompt,
-            lastPrompt: details.lastUserPrompt,
-            prompts: details.userPrompts,
-            output: details.output,
-            running,
-            categories,
-          });
-          const parsed = parseLabel(await complete(hostId, LABEL_SYSTEM, prompt, LABEL_TIMEOUT_MS));
-          if (!parsed) {
-            logQuietly("labeler reply had no usable JSON; threads keep their last label");
-            failed();
-            return;
-          }
-          const previous = all[thread.id];
-          // Only a new user message may retitle the card; summary refreshes keep the title.
-          const keepTitle = previous !== undefined && Boolean(previous.category && previous.intent) && previous.titleSig === titleSig;
-          all[thread.id] = {
-            ...previous,
-            titleSig,
-            category: keepTitle ? previous.category : parsed.category,
-            intent: keepTitle ? previous.intent : parsed.intent,
-            summarySig,
-            summary: parsed.summary,
-            needsInput: running ? null : parsed.needsInput,
-            failedAt: undefined,
-          };
-        } catch (error) {
-          // Usually the CLI or the host failing, not this thread: look the fallback host up again next time.
-          fallbackHostId = null;
-          logQuietly(`labeler failed${hostId ? ` on host ${hostId}` : ""}: ${message(error)}`);
-          failed();
-        } finally {
-          labelInFlight.delete(thread.id);
-          persist();
-          changedSoon();
-        }
-      });
+      labelQueue.push(() => relabel(thread, details, running, { titleSig, summarySig, currentTitle: title }, all));
       pumpLabels();
     }
 
-    const summary = fresh ? current.summary : null;
-    const needsInput = fresh && !running ? current.needsInput : null;
+    const shown = fresh || backingOff ? labeled : undefined;
+    const summary = shown?.summary ?? null;
+    const needsInput = running ? null : (shown?.needsInput ?? null);
     if (current?.userTitled && thread.title) return { title: thread.title, summary, needsInput };
     if (title) syncThreadTitle(thread, title, all);
     return { title, summary, needsInput };
@@ -278,6 +267,7 @@ export function createLabeler(bb: BbPluginApi, onChange: () => void) {
    * thread the user renamed keeps its label, so their title survives a restore.
    */
   async function forget(threadId: string, keepRenamed = false) {
+    failures.delete(threadId);
     const all = await load();
     if (!(threadId in all) || (keepRenamed && all[threadId].userTitled)) return;
     delete all[threadId];

@@ -71,9 +71,10 @@ export function labelPrompt(input: {
 export function parseLabel(text: string): { category: string; intent: string; summary: string; needsInput: boolean } | null {
   const match = text.match(/\{[\s\S]*\}/u);
   if (!match) return null;
-  let raw: any;
+  let raw: Record<string, unknown>;
   try {
-    raw = JSON.parse(match[0]);
+    // The match runs from `{` to `}`, so whatever parses is an object.
+    raw = JSON.parse(match[0]) as Record<string, unknown>;
   } catch {
     return null;
   }

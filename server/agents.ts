@@ -3,10 +3,13 @@ import { z } from "zod";
 import { PLUGIN_NAME, PLUGIN_SLUG, TOOL_PREFIX } from "../brand";
 import { COLUMN_IDS, COLUMNS, columnSchema, type BoardTask, type Column, type Result } from "./schema";
 
+export type TaskSpawn = { shortName: string; prompt: string; projectId?: string; parentThreadId?: string; column?: Column };
+export type TaskUpdate = { threadId: string; column?: Column; shortName?: string; note?: string; result?: Result | null };
+
 type BoardApi = {
   listBoard(): Promise<{ columns: unknown[]; tasks: BoardTask[] }>;
-  spawnTask(input: { shortName: string; prompt: string; projectId?: string; parentThreadId?: string; column?: Column }): Promise<BoardTask>;
-  updateTask(input: { threadId: string; column?: Column; shortName?: string; note?: string; result?: Result | null }): Promise<BoardTask>;
+  spawnTask(input: TaskSpawn): Promise<BoardTask>;
+  updateTask(input: TaskUpdate): Promise<BoardTask>;
   markTaskResult(threadId: string, success: boolean, summary: string): Promise<{ task: BoardTask; result: Result }>;
   removeTask(threadId: string, options?: { archiveThread?: boolean }): Promise<boolean>;
 };
@@ -211,9 +214,10 @@ export function registerCli(bb: BbPluginApi, { listBoard, spawnTask, updateTask,
           return reply(task, `Spawned ${task.titleChain} as ${task.threadId}`);
         }
         if (command === "move") {
-          const [, threadId, column, ...note] = args;
-          if (!threadId || !(COLUMN_IDS as readonly string[]).includes(column)) return usageError;
-          const task = await updateTask({ threadId, column: column as Column, note: note.join(" ") || undefined });
+          const [, threadId, columnArg, ...note] = args;
+          const column = columnSchema.safeParse(columnArg);
+          if (!threadId || !column.success) return usageError;
+          const task = await updateTask({ threadId, column: column.data, note: note.join(" ") || undefined });
           return reply(task, `Moved ${task.titleChain} to ${task.column}`);
         }
         if (command === "success" || command === "fail") {
