@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.10.0
 
 - The title bar's refresh button is gone; the board already updates live,
   and the review searches still re-run every 5 minutes and when their
