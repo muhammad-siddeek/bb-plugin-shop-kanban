@@ -27,7 +27,7 @@ const threadSummarySchema = z.object({
   archivedAt: z.number().nullable(),
 });
 
-/** The card thread's harness session: current execution options (display labels) and usage so far. */
+/** The card thread's harness session: current execution options (display labels), context usage, and the tree's spend. */
 const boardSessionSchema = z.object({
   modelId: z.string().nullable(),
   /** Catalog display name; the raw model id until the provider's catalog has loaded. */
@@ -36,8 +36,18 @@ const boardSessionSchema = z.object({
   /** Null for the provider's default tier. */
   serviceTier: z.string().nullable(),
   access: z.string().nullable(),
-  /** Spent so far in the session; null when the harness doesn't report cost. */
+  /**
+   * Spent by the thread, its harness subagents and every descendant thread, archived ones included; null while
+   * it is first read, or when no harness in the tree reports cost.
+   */
   cost: z.object({ amount: z.number(), currency: z.string() }).nullable(),
+  /**
+   * The part of `cost` that is estimated: replies a harness saved with tokens but no price (omp 18.13's Shopify
+   * Auto replies), priced at the average rates that provider and model charged in the host's other transcripts.
+   */
+  costEstimated: z.number(),
+  /** Threads whose spend is in `cost`, the card's own included. */
+  costThreads: z.number(),
   usedTokens: z.number().nullable(),
   contextWindow: z.number().nullable(),
   /** Token counts are bb's estimate rather than the harness's report. */

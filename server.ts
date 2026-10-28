@@ -93,8 +93,8 @@ export default async function plugin(bb: BbPluginApi) {
   bb.log.info("loaded");
 
   const labels = createLabeler(bb, publishBoardChanged);
-  const sessions = createSessionInfo(bb);
   const reader = createThreadReader(bb);
+  const sessions = createSessionInfo(bb, reader);
   const search = createSearchIndex(bb, reader);
 
   function publishBoardChanged() {
@@ -141,7 +141,7 @@ export default async function plugin(bb: BbPluginApi) {
     const [details, all, session] = await Promise.all([
       reader.threadDetails(thread, !running),
       labels.load(),
-      sessions.sessionFor(thread, isRunningSelf(thread)),
+      sessions.sessionFor(thread, descendants),
     ]);
     const label = labels.view(thread, details, running, all);
     const derived = deriveStatus(thread, details, stored, descendants, label);
@@ -189,7 +189,7 @@ export default async function plugin(bb: BbPluginApi) {
         session: null,
       };
     }
-    const descendants = await reader.listDescendants(thread.id);
+    const descendants = (await reader.listDescendants(thread.id)) ?? [];
     return materialize(thread, stored, descendants, descendants.filter((entry) => entry.parentThreadId === thread.id).length);
   }
 

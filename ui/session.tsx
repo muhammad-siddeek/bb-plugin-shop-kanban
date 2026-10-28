@@ -67,7 +67,14 @@ export function HarnessMeta({ provider, session }: { provider: AgentProvider | n
     return () => window.removeEventListener("scroll", close, true);
   }, [open]);
 
-  const cost = session?.cost ? formatCost(session.cost) : null;
+  // Part of the spend is priced from other replies' rates when a harness saved replies without a price.
+  const estimate = session?.cost && session.costEstimated > 0 ? formatCost({ amount: session.costEstimated, currency: session.cost.currency }) : null;
+  const cost = session?.cost ? `${estimate ? "~" : ""}${formatCost(session.cost)}` : null;
+  // The cost covers the thread's descendant threads too; say so when more than one spent.
+  const spent =
+    cost === null
+      ? null
+      : `${cost} spent${(session?.costThreads ?? 0) > 1 ? ` across ${session?.costThreads} threads` : ""}${estimate ? ` (${estimate} estimated)` : ""}`;
   const used = session?.usedTokens ?? null;
   const capacity = session?.contextWindow ?? null;
   const fill = used !== null && capacity ? used / capacity : null;
@@ -79,7 +86,7 @@ export function HarnessMeta({ provider, session }: { provider: AgentProvider | n
   const barTone = tone?.bar ?? "bg-muted-foreground/50";
   const usage = [
     used !== null && capacity ? `${session?.estimated ? "~" : ""}${TOKENS.format(used)} / ${TOKENS.format(capacity)} tokens · ${percent}` : null,
-    cost !== null ? `${cost} spent` : null,
+    spent,
   ].filter(Boolean).join(" · ");
   // Short facts first so only the long model id truncates.
   const details = [
@@ -98,7 +105,7 @@ export function HarnessMeta({ provider, session }: { provider: AgentProvider | n
       <span
         ref={triggerRef}
         tabIndex={0}
-        aria-label={[provider?.displayName, cost && `${cost} spent`, percent && `${percent} of context used`].filter(Boolean).join(", ")}
+        aria-label={[provider?.displayName, spent, percent && `${percent} of context used`].filter(Boolean).join(", ")}
         aria-describedby={open ? tooltipId : undefined}
         onPointerEnter={() => {
           window.clearTimeout(timer.current);

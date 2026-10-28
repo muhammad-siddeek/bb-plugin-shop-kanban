@@ -3,9 +3,9 @@ import { hostContract } from "../contract";
 import { TOOL_HELP_LEAD } from "./agents";
 import { indexHostId } from "./hosts";
 import type { SearchResponse } from "./schema";
-import { isRunningSelf, toLiveThread, type LiveThread } from "./status";
+import { isRunningSelf, type LiveThread } from "./status";
 import { ELLIPSIS, oneLine, safe } from "./text";
-import { rows, type ThreadMessage, type ThreadReader } from "./threads";
+import type { ThreadMessage, ThreadReader } from "./threads";
 
 // Thread search: every visible thread, archived included, is exported as one markdown file on a persistent
 // host and indexed there by qmd (BM25). Idle threads are re-exported when their `updatedAt` moves; running
@@ -220,22 +220,6 @@ export function createSearchIndex(bb: BbPluginApi, reader: ThreadReader) {
     }, delayMs);
   }
 
-  /** Thread rows for `ids`, archived or not; deleted threads are left out. */
-  async function threadsById(ids: string[]): Promise<Map<string, LiveThread>> {
-    if (ids.length === 0) return new Map();
-    const lists = await Promise.all(
-      [false, true].map((archived) => safe(async () => bb.sdk.threads.list({ threadIds: ids, archived, includeHidden: true }))),
-    );
-    const byId = new Map<string, LiveThread>();
-    for (const list of lists) {
-      for (const row of rows(list, "threads")) {
-        const thread = toLiveThread(row);
-        if (thread) byId.set(thread.id, thread);
-      }
-    }
-    return byId;
-  }
-
   async function search(query: string): Promise<SearchResponse> {
     const current = await loadState();
     const command = (await settings.get()).searchCommand.trim();
@@ -257,7 +241,7 @@ export function createSearchIndex(bb: BbPluginApi, reader: ThreadReader) {
     const found = await safe(async () => host.call("index_search", { command, query, limit: SEARCH_LIMIT }, { hostId }));
     if (!found) return respond("The host could not run the search.");
     if (found.error) return respond(explain(command, found.error));
-    const threads = await threadsById(found.hits.map((hit) => hit.threadId));
+    const threads = await reader.threadsById(found.hits.map((hit) => hit.threadId));
     const results = found.hits.flatMap((hit) => {
       const thread = threads.get(hit.threadId);
       if (!thread) return [];

@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased
+
+- A card's cost now covers the thread's whole tree: the thread, every
+  descendant thread (hidden and archived ones included) and their harness
+  subagents. It used to be the card thread's own figure only. The tooltip
+  says how many threads the cost spans.
+- omp and Pi threads are read from their transcripts on the thread's host.
+  For omp, subagents at every depth count; omp's own figure covers only a
+  session's replies and its direct tasks, and reaches bb only at the end of
+  a turn. Pi reports no cost to bb at all, so Pi threads used to add nothing.
+  When no transcript is found there, the board falls back to what the harness
+  reported.
+- A forked transcript doesn't count the entries it copied from its source
+  (those count once, in the source), unless the source is gone.
+- Replies saved with tokens but no price are estimated, and the card shows
+  `~` in front of the cost; the tooltip says how much is estimated. Since
+  omp 18.13 every Shopify Auto (`shopify/auto`) reply is saved at $0: omp
+  ignores the price its router-cost plugin works out, and the model that
+  served the turn isn't saved. Such replies are priced at the average rate,
+  per token bucket, that the same provider and model charged across the
+  host's other transcripts, i.e. the mix of models the router served before.
+- The cost appears one board refresh after the board opens instead of
+  holding up the first load.
+
 ## 0.7.1
 
 - Search finds running threads. They were left out of the index until they

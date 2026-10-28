@@ -23,12 +23,29 @@ Columns are derived from live thread state; you never drag threads around.
   yourself.
 - A two-line summary of the latest exchange.
 - The updated time and status on the left of the footer. On the right: what
-  the session has spent when the harness reports cost, how full its context
-  window is, and the icon of the harness the thread runs on (omp, Pi, Codex,
-  …; the same icon as the bb sidebar). Hover any of them for a three-line
-  tooltip: model and thinking level, token counts and cost, then access mode,
-  service tier and model id. Running threads refresh these every 5 seconds,
-  idle threads every minute.
+  the thread's whole tree has spent, how full its context window is, and the
+  icon of the harness the thread runs on (omp, Pi, Codex, …; the same icon as
+  the bb sidebar). Hover any of them for a three-line tooltip: model and
+  thinking level, token counts and cost, then access mode, service tier and
+  model id. Running threads refresh these every 5 seconds, idle threads every
+  minute.
+- The cost adds up the thread, every descendant thread (hidden and archived
+  ones included) and their harness subagents; the tooltip says how many
+  threads it spans. omp and Pi threads are read from their transcripts on
+  the thread's host (`~/.omp/agent/sessions`, and bb's Pi bridge sessions in
+  `~/.bb/pi-bridge-sessions`). For omp, subagents at every depth (nested
+  tasks, background tasks, eval agents, advisors) count; omp itself reports
+  only a session's own replies and its direct tasks, and Pi reports nothing.
+  Other harnesses count what they report to bb. A fork doesn't count the
+  entries it copied from its source while the source's transcript is still
+  there.
+- A `~` in front of the cost means part of it is estimated; the tooltip says
+  how much. Replies a harness saved with tokens but no price are priced at
+  the average rate, per token bucket, that the same provider and model
+  charged across the host's other transcripts. Since omp 18.13 every Shopify
+  Auto (`shopify/auto`) reply is saved at $0 without the model that served
+  it, so its estimate follows the mix of models the router served before. A
+  provider and model never priced on the host stays at $0.
 - An archive button in the top-right corner, shown on hover or focus.
 - Clicking a thread opens it at its latest message. The Queue `+` button
   starts a new thread.

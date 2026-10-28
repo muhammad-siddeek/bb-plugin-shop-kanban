@@ -3,16 +3,20 @@ import { toLiveThread, type LiveThread, type ThreadDetails } from "./status";
 import { compactTitle, safe } from "./text";
 
 // Thread reads for the board and search: the live and archived thread lists, descendants, parent
-// titles, each thread's user turns and last output, and every message of a thread for the search index.
-// Every read degrades to null/empty instead of throwing.
+// titles, each thread's user turns and last output, every message of a thread for the search index,
+// and the harness sessions a thread has run. Every read degrades to null/empty instead of throwing.
 
 const PAGE = 200;
+/** The thread list route takes at most this many `threadIds`. */
+const IDS_PAGE = 200;
 const MAX_THREADS = 5_000;
 /** The events route caps a page at 100. */
 const EVENT_PAGE = 100;
 const MAX_EVENT_PAGES = 500;
 
 export type ThreadMessage = { role: "user" | "assistant" | "message"; text: string };
+/** A thread's harness session ids, oldest first, and the event to continue reading identities after. */
+export type ProviderSessions = { ids: string[]; afterSeq: string | null };
 
 /** The SDK types `limit` as a string; the board has always sent a number. */
 type EventListArgs = Parameters<BbPluginApi["sdk"]["threads"]["events"]["list"]>[0];
@@ -162,12 +166,61 @@ export function createThreadReader(bb: BbPluginApi) {
     return messages;
   }
 
-  /** Every descendant of a thread (hidden included); empty when the read fails. */
-  async function listDescendants(threadId: string): Promise<LiveThread[]> {
+  /** Thread rows for `ids`, archived or not; deleted threads are left out. */
+  async function threadsById(ids: readonly string[]): Promise<Map<string, LiveThread>> {
+    const byId = new Map<string, LiveThread>();
+    for (let start = 0; start < ids.length; start += IDS_PAGE) {
+      const threadIds = ids.slice(start, start + IDS_PAGE);
+      const lists = await Promise.all(
+        [false, true].map((archived) => safe(async () => bb.sdk.threads.list({ threadIds, archived, includeHidden: true }))),
+      );
+      for (const list of lists) {
+        for (const row of rows(list, "threads")) {
+          const thread = toLiveThread(row);
+          if (thread) byId.set(thread.id, thread);
+        }
+      }
+    }
+    return byId;
+  }
+
+  /** Every descendant of a thread, hidden included and archived ones on request; null when the read fails. */
+  async function listDescendants(threadId: string, includeArchived = false): Promise<LiveThread[] | null> {
     const result = await safe(async () =>
-      await bb.sdk.threads.experimental_listDescendants({ threadIds: [threadId], includeHidden: true }),
+      await bb.sdk.threads.experimental_listDescendants({ threadIds: [threadId], includeHidden: true, includeArchived }),
     );
-    return rows(result, "threads").map(toLiveThread).filter((entry): entry is LiveThread => entry !== null);
+    if (result === null) return null;
+    const ids = result.threads.find((entry) => entry.threadId === threadId)?.descendantIds ?? [];
+    return [...(await threadsById(ids)).values()];
+  }
+
+  /**
+   * The harness session ids a thread has run, oldest first, from its `thread/identity` events (a new one after a
+   * context clear; repeats on every reconnect). Pass the previous result to read only the events since; null when
+   * a read fails.
+   */
+  async function providerSessions(threadId: string, known: ProviderSessions | null): Promise<ProviderSessions | null> {
+    const ids = [...(known?.ids ?? [])];
+    let afterSeq = known?.afterSeq ?? null;
+    for (let page = 0; page < MAX_EVENT_PAGES; page += 1) {
+      const events = await safe(async () =>
+        await bb.sdk.threads.events.list({
+          threadId,
+          order: "asc",
+          limit: String(EVENT_PAGE),
+          types: ["thread/identity"],
+          ...(afterSeq ? { afterSeq } : {}),
+        }),
+      );
+      if (events === null) return null;
+      for (const event of events) {
+        if (event.type === "thread/identity" && !ids.includes(event.data.providerThreadId)) ids.push(event.data.providerThreadId);
+      }
+      const last = events.at(-1);
+      if (last) afterSeq = String(last.seq);
+      if (events.length < EVENT_PAGE) break;
+    }
+    return { ids, afterSeq };
   }
 
   /** Drop cached details for threads that left the thread list. */
@@ -181,7 +234,18 @@ export function createThreadReader(bb: BbPluginApi) {
     firstPromptCache.delete(threadId);
   }
 
-  return { getThread, titleChainForParent, threadDetails, listAllThreads, listDescendants, readMessages, retain, forget };
+  return {
+    getThread,
+    titleChainForParent,
+    threadDetails,
+    listAllThreads,
+    threadsById,
+    listDescendants,
+    providerSessions,
+    readMessages,
+    retain,
+    forget,
+  };
 }
 
 export type ThreadReader = ReturnType<typeof createThreadReader>;

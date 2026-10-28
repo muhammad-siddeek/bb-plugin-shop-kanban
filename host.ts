@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { experimental_defineHostEntry } from "@get-bb/plugin-sdk/host";
 import { z } from "zod";
 import { hostContract } from "./contract";
+import { ompSpend, piSpend } from "./host/spend";
 
 const LABELER_FLAGS = [
   "-p",
@@ -140,5 +141,7 @@ export default experimental_defineHostEntry({
       });
       return { hits, error: null };
     },
+    omp_spend: async ({ sessionIds }) => ({ spends: await ompSpend(sessionIds) }),
+    pi_spend: async ({ sessionIds }) => ({ spends: await piSpend(sessionIds) }),
   },
 });
