@@ -76,7 +76,10 @@ export function createSessionInfo(bb: BbPluginApi, reader: ThreadReader) {
   const spends = new Map<string, ThreadSpend>();
   const host = bb.hosts.experimental_client({ contract: hostContract });
 
-  /** Stale-while-revalidate: only the very first read for a key waits on the fetch. */
+  /**
+   * Stale-while-revalidate: only the very first read for a key waits on the fetch. A failed fetch (null or thrown)
+   * keeps the last value.
+   */
   async function cached<T>(
     store: Map<string, Entry<T>>,
     id: string,
@@ -90,12 +93,14 @@ export function createSessionInfo(bb: BbPluginApi, reader: ThreadReader) {
     const stale = entry.key !== key || Date.now() - entry.at > maxAgeMs;
     if (stale && !entry.pending) {
       entry.key = key;
-      entry.pending = fetch().then((value) => {
-        entry.value = value;
-        entry.at = Date.now();
-        entry.pending = null;
-        return value;
-      });
+      entry.pending = fetch()
+        .catch(() => null)
+        .then((value) => {
+          entry.value = value ?? entry.value;
+          entry.at = Date.now();
+          entry.pending = null;
+          return entry.value;
+        });
     }
     return entry.at === 0 && entry.pending && wait ? entry.pending : entry.value;
   }
@@ -136,7 +141,7 @@ export function createSessionInfo(bb: BbPluginApi, reader: ThreadReader) {
   async function catalogFor(providerId: string, hostId: string | null): Promise<Catalog | null> {
     const id = `${providerId}:${hostId ?? ""}`;
     const entry = catalogs.get(id);
-    // A failed load leaves `value` null; retry it on the shorter cadence.
+    // A catalog that never loaded is retried on the shorter cadence.
     const maxAge = entry && entry.at > 0 && entry.value === null ? CATALOG_RETRY_MS : CATALOG_TTL_MS;
     // Never block the board on a catalog load: it can spawn the provider. Labels fill in on a later poll.
     return cached(catalogs, id, null, maxAge, () => fetchCatalog(providerId, hostId), false);
@@ -161,16 +166,17 @@ export function createSessionInfo(bb: BbPluginApi, reader: ThreadReader) {
 
   /** Spend per harness session (keyed `method:id`), from the transcripts on each host; omp's include its subagents. */
   async function transcriptSpends(groups: Iterable<{ method: SpendMethod; hostId: string; ids: Set<string> }>): Promise<Map<string, SessionSpend>> {
-    const spends = new Map<string, SessionSpend>();
+    const bySession = new Map<string, SessionSpend>();
     for (const { method, hostId, ids } of groups) {
       const list = [...ids];
       for (let start = 0; start < list.length; start += SESSIONS_PAGE) {
         const sessionIds = list.slice(start, start + SESSIONS_PAGE);
+        // A disconnected host or a missing harness fails or finds nothing: those threads count what bb reports.
         const result = await safe(() => host.call(method, { sessionIds }, { hostId }));
-        for (const [id, spend] of Object.entries(result?.spends ?? {})) spends.set(`${method}:${id}`, spend);
+        for (const [id, spend] of Object.entries(result?.spends ?? {})) bySession.set(`${method}:${id}`, spend);
       }
     }
-    return spends;
+    return bySession;
   }
 
   /**
@@ -197,14 +203,14 @@ export function createSessionInfo(bb: BbPluginApi, reader: ThreadReader) {
       for (const id of ids) group.ids.add(id);
       groups.set(key, group);
     });
-    const spends = await transcriptSpends(groups.values());
+    const bySession = await transcriptSpends(groups.values());
 
     let cost: Cost | null = null;
     let estimated = 0;
     let threads = 0;
     tree.forEach((thread, index) => {
       const method = spenderFor(thread)?.method;
-      const found = method ? (read[index].sessions?.ids ?? []).flatMap((id) => spends.get(`${method}:${id}`) ?? []) : [];
+      const found = method ? (read[index].sessions?.ids ?? []).flatMap((id) => bySession.get(`${method}:${id}`) ?? []) : [];
       const spent: SessionSpend & { currency: string } | null =
         found.length > 0
           ? {

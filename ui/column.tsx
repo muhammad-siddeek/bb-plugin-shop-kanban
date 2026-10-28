@@ -1,12 +1,49 @@
 import { useEffect, useMemo, useState } from "react";
-import type { FormEvent, KeyboardEvent, ReactElement, ReactNode } from "react";
+import type { FormEvent, KeyboardEvent, ReactElement } from "react";
 import { experimental_Icon as Icon, experimental_useCodeTheme, experimental_useProviders, useBbContext, useBbNavigate } from "@get-bb/plugin-sdk/app";
-import { CLOCK_TICK_MS, columnMeta, groupTasksByColumn, isUnread, scrollThreadToLatest, shortNameFromPrompt, type BoardColumn, type BoardTask } from "./model";
+import { CLOCK_TICK_MS, COLUMN_META, groupTasksByColumn, isUnread, shortNameFromPrompt, type BoardColumn, type BoardTask } from "./model";
 import { useNow, type BoardApi, type ReviewsApi } from "./hooks";
 import { IconButton } from "./primitives";
 import { TaskCard, type ThemeScope } from "./card";
 import { ReviewSection } from "./reviews";
 import type { AgentProvider } from "./session";
+
+const SCROLL_TO_LATEST_SELECTOR = 'button[aria-label="Scroll to latest event"]';
+
+/**
+ * After opening a thread, jump its timeline to the newest message. bb restores the last
+ * scroll position per thread, so keep nudging for a moment while it mounts and restores,
+ * and stop as soon as the user scrolls themselves.
+ */
+function scrollThreadToLatest(threadId: string) {
+  const startedAt = Date.now();
+  let cancelled = false;
+  const cancel = () => {
+    cancelled = true;
+  };
+  const events = ["wheel", "touchstart", "keydown", "pointerdown"] as const;
+  for (const name of events) window.addEventListener(name, cancel, { capture: true, passive: true, once: true });
+  const cleanup = () => {
+    for (const name of events) window.removeEventListener(name, cancel, { capture: true });
+  };
+  const tick = () => {
+    if (cancelled) return cleanup();
+    const onThread = window.location.pathname.includes(`/threads/${threadId}`);
+    if (onThread || Date.now() - startedAt > 400) {
+      const buttons = document.querySelectorAll<HTMLButtonElement>(SCROLL_TO_LATEST_SELECTOR);
+      if (buttons.length > 0) {
+        for (const button of buttons) button.click();
+      } else {
+        for (const viewport of document.querySelectorAll<HTMLElement>("[data-thread-window] [data-page-scroll-viewport]")) {
+          viewport.scrollTop = viewport.scrollHeight;
+        }
+      }
+    }
+    if (Date.now() - startedAt < 1_800) window.setTimeout(tick, 150);
+    else cleanup();
+  };
+  window.requestAnimationFrame(tick);
+}
 
 function AddTaskForm({ onAdd, onCancel, onError }: {
   onAdd: (prompt: string) => Promise<void>;
@@ -89,14 +126,6 @@ function AddTaskForm({ onAdd, onCancel, onError }: {
   );
 }
 
-function ColumnEmpty({ children }: { children: ReactNode }) {
-  return (
-    <div className="flex shrink-0 items-center justify-center rounded-lg border border-dashed border-border/60 px-3 py-5 text-[11px] text-muted-foreground/60">
-      {children}
-    </div>
-  );
-}
-
 function BoardColumnView({ column, title, tasks, now, readLocally, selectedThreadId, invertedTheme, providersById, onArchive, onOpen, onStartAdding, lead, addForm }: {
   column: BoardColumn;
   title: string;
@@ -114,7 +143,7 @@ function BoardColumnView({ column, title, tasks, now, readLocally, selectedThrea
   /** The new-task form; non-null only while it is open. */
   addForm: ReactElement | null;
 }) {
-  const meta = columnMeta(column);
+  const meta = COLUMN_META[column];
   const adding = addForm !== null;
   return (
     <section
@@ -156,7 +185,9 @@ function BoardColumnView({ column, title, tasks, now, readLocally, selectedThrea
               New thread
             </button>
           ) : (
-            <ColumnEmpty>No threads</ColumnEmpty>
+            <div className="flex shrink-0 items-center justify-center rounded-lg border border-dashed border-border/60 px-3 py-5 text-[11px] text-muted-foreground/60">
+              No threads
+            </div>
           )
         ) : null}
       </div>
@@ -166,7 +197,7 @@ function BoardColumnView({ column, title, tasks, now, readLocally, selectedThrea
 
 export function BoardView({ api, reviews }: { api: BoardApi; reviews: ReviewsApi }) {
   const context = useBbContext();
-  const selectedThreadId = context?.threadId ?? null;
+  const selectedThreadId = context.threadId;
   // The selected card renders in the opposite theme so it pops against the board.
   const invertedTheme: ThemeScope = experimental_useCodeTheme().mode === "dark" ? "light" : "dark";
   // Same roster and lookup as bb's sidebar: a thread's harness icon is its agent provider's artwork.
@@ -195,7 +226,7 @@ export function BoardView({ api, reviews }: { api: BoardApi; reviews: ReviewsApi
     setReadLocally((current) => (current.has(threadId) ? current : new Set([...current, threadId])));
     rpc.call("board_mark_read", { threadId }).then(refetch, refetch);
     try {
-      navigate?.toThread?.(threadId);
+      navigate.toThread(threadId);
       scrollThreadToLatest(threadId);
     } catch (cause) {
       report(cause);
@@ -206,7 +237,7 @@ export function BoardView({ api, reviews }: { api: BoardApi; reviews: ReviewsApi
     await rpc.call("board_spawn_task", {
       shortName: shortNameFromPrompt(prompt),
       prompt,
-      projectId: context?.projectId,
+      projectId: context.projectId ?? undefined,
     });
     refetch();
   };

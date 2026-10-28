@@ -34,8 +34,6 @@ const SESSION = ".jsonl";
 /** `omp gc` compresses old transcripts in place; the subagent directory keeps the uncompressed name. */
 const COMPRESSED = ".jsonl.gz";
 const OMP_SESSION_FILE = /_([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl(?:\.gz)?$/i;
-/** bb's Pi bridge keeps transcripts here unless `BB_PI_BRIDGE_SESSION_DIR` points elsewhere. */
-const PI_SESSION_DIR_ENV = "BB_PI_BRIDGE_SESSION_DIR";
 /** New sessions get a transcript after the index was built; look again at most this often. */
 const INDEX_TTL_MS = 30_000;
 /** Re-read the host's priced replies for the estimate rates at most this often; later reads parse only what was appended. */
@@ -128,6 +126,15 @@ function addInto(map: Map<string, Buckets>, key: string, add: Buckets) {
   map.set(key, into);
 }
 
+function addPriced(map: Map<string, Priced>, model: string, add: Priced) {
+  const into = map.get(model) ?? { tokens: zero(), cost: zero() };
+  for (const bucket of BUCKETS) {
+    into.tokens[bucket] += add.tokens[bucket];
+    into.cost[bucket] += add.cost[bucket];
+  }
+  map.set(model, into);
+}
+
 /** A deep copy, so a failed read can't leave a half-updated cache entry. */
 function copyPart(part: Part): Part {
   return { amount: part.amount, unpriced: new Map([...part.unpriced].map(([key, tokens]) => [key, { ...tokens }])) };
@@ -160,7 +167,7 @@ function ompSessionsDir(): string {
 }
 
 function piSessionsDir(): string {
-  const dir = process.env[PI_SESSION_DIR_ENV]?.trim();
+  const dir = process.env.BB_PI_BRIDGE_SESSION_DIR?.trim();
   return dir ? resolve(dir) : join(homedir(), ".bb", "pi-bridge-sessions");
 }
 
@@ -206,8 +213,6 @@ type LineSpend = {
 
 /** The entry's spend, or null when it records no model call. */
 function lineSpend(line: string): LineSpend | null {
-  // Most lines (user turns, tool output) carry no cost; skip parsing them.
-  if (!line.includes('"cost"')) return null;
   const entry = entrySchema.safeParse(parseJson(line));
   if (!entry.success) return null;
   const { type, message, usage: entryUsage, timestamp } = entry.data;
@@ -239,17 +244,22 @@ function lineSpend(line: string): LineSpend | null {
 function parse(path: string, bytes: Buffer, start: number, into: Pick<FileSpend, "fork" | "own" | "copied" | "priced">): number | null {
   const end = bytes.lastIndexOf(0x0a) + 1;
   if (end === 0) return start === 0 ? null : start;
-  const lines = bytes.toString("utf8", 0, end).split("\n");
   if (start === 0) {
-    const first = parseJson(lines[0]);
-    const header = headerSchema.safeParse(titleSlotSchema.safeParse(first).success ? parseJson(lines[1]) : first);
+    const first = parseJson(lineAt(bytes, 0));
+    const header = headerSchema.safeParse(titleSlotSchema.safeParse(first).success ? parseJson(lineAt(bytes, bytes.indexOf(0x0a) + 1)) : first);
     if (!header.success) return null;
     const { parentSession, timestamp } = header.data;
     const at = time(timestamp);
     into.fork = parentSession && at !== null ? { source: resolve(dirname(path), parentSession), at } : null;
   }
-  for (const line of lines) {
-    const spend = lineSpend(line);
+  // Most lines (user turns, tool output) carry no cost: jump from one `"cost"` to the next and decode only its line,
+  // so a huge transcript is never turned into one string.
+  for (let from = 0; ; ) {
+    const cost = bytes.indexOf('"cost"', from);
+    if (cost === -1 || cost >= end) break;
+    const lineEnd = bytes.indexOf(0x0a, cost);
+    const spend = lineSpend(bytes.toString("utf8", bytes.lastIndexOf(0x0a, cost) + 1, lineEnd));
+    from = lineEnd + 1;
     if (!spend) continue;
     const copy = into.fork !== null && spend.at !== null && spend.at < into.fork.at;
     const part = copy ? into.copied : into.own;
@@ -257,17 +267,18 @@ function parse(path: string, bytes: Buffer, start: number, into: Pick<FileSpend,
     const reply = spend.reply;
     if (!reply) continue;
     if (reply.cost && !copy) {
-      const priced = into.priced.get(reply.model) ?? { tokens: zero(), cost: zero() };
-      for (const bucket of BUCKETS) {
-        priced.tokens[bucket] += reply.tokens[bucket];
-        priced.cost[bucket] += reply.cost[bucket];
-      }
-      into.priced.set(reply.model, priced);
+      addPriced(into.priced, reply.model, { tokens: reply.tokens, cost: reply.cost });
     } else if (spend.amount === 0 && BUCKETS.some((bucket) => reply.tokens[bucket] > 0)) {
       addInto(part.unpriced, reply.model, reply.tokens);
     }
   }
   return start + end;
+}
+
+/** The complete line starting at `from`, without its newline; "" when none does. */
+function lineAt(bytes: Buffer, from: number): string {
+  const to = bytes.indexOf(0x0a, from);
+  return to === -1 ? "" : bytes.toString("utf8", from, to);
 }
 
 async function readRange(path: string, start: number, end: number): Promise<Buffer> {
@@ -302,31 +313,17 @@ async function fileSpend(path: string, now: number): Promise<FileSpend | null> {
     return known;
   }
 
-  // `bytes` starts at file offset `base`; its first `skip` bytes were parsed before.
-  let bytes: Buffer | null = null;
-  let base = 0;
-  let skip = 0;
-  let previous: FileSpend | null = null;
-  if (path.endsWith(COMPRESSED)) {
-    bytes = gunzipSync(await readFile(path));
-  } else if (known && known.ino === info.ino && known.offset > 0 && info.size >= known.offset) {
-    const from = known.offset - known.tail.length;
-    const chunk = await readRange(path, from, info.size);
-    if (chunk.subarray(0, known.tail.length).equals(known.tail)) {
-      bytes = chunk;
-      base = from;
-      skip = known.tail.length;
-      previous = known;
-    }
-  }
-  bytes ??= await readFile(path);
-
+  // Unreadable or corrupt (a bad gzip, too large to load): it spends nothing until it changes.
+  const { bytes, base, skip, previous } = await readChanged(path, info.size, known?.ino === info.ino ? known : undefined).catch(
+    (): Changed => ({ bytes: Buffer.alloc(0), base: 0, skip: 0, previous: null }),
+  );
   const into = {
     fork: previous?.fork ?? null,
     own: previous ? copyPart(previous.own) : { amount: 0, unpriced: new Map() },
     copied: previous ? copyPart(previous.copied) : { amount: 0, unpriced: new Map() },
-    priced: new Map([...(previous?.priced ?? [])].map(([key, { tokens, cost }]) => [key, { tokens: { ...tokens }, cost: { ...cost } }])),
+    priced: new Map<string, Priced>(),
   };
+  for (const [model, priced] of previous?.priced ?? []) addPriced(into.priced, model, priced);
   // Null only for a full read that found no header, which leaves `into` as empty as it started.
   const parsed = parse(path, bytes.subarray(skip), base + skip, into);
   const offset = parsed ?? 0;
@@ -335,6 +332,20 @@ async function fileSpend(path: string, now: number): Promise<FileSpend | null> {
   const spend: FileSpend = { ino: info.ino, size: info.size, mtimeMs: info.mtimeMs, offset, tail, ...into, seenAt: now };
   files.set(path, spend);
   return spend;
+}
+
+/** What to parse: `bytes` starts at file offset `base`, and its first `skip` bytes were parsed into `previous`. */
+type Changed = { bytes: Buffer; base: number; skip: number; previous: FileSpend | null };
+
+/** Only what was appended when the file just grew under the same inode; otherwise all of it. */
+async function readChanged(path: string, size: number, known: FileSpend | undefined): Promise<Changed> {
+  if (path.endsWith(COMPRESSED)) return { bytes: gunzipSync(await readFile(path)), base: 0, skip: 0, previous: null };
+  if (known && known.offset > 0 && size >= known.offset) {
+    const base = known.offset - known.tail.length;
+    const bytes = await readRange(path, base, size);
+    if (bytes.subarray(0, known.tail.length).equals(known.tail)) return { bytes, base, skip: known.tail.length, previous: known };
+  }
+  return { bytes: await readFile(path), base: 0, skip: 0, previous: null };
 }
 
 /** One read per file at a time; requests for the same tree overlap while a turn is running. */
@@ -352,16 +363,7 @@ async function readRates(now: number): Promise<Map<string, Buckets>> {
   const totals = new Map<string, Priced>();
   const paths = [...(await transcriptsUnder(ompSessionsDir())), ...(await transcriptsUnder(piSessionsDir()))];
   for (const path of paths) {
-    // A file that vanishes or can't be read just leaves its replies out of the averages.
-    const spend = await spendOnce(path, now).catch(() => null);
-    for (const [model, { tokens, cost }] of spend?.priced ?? []) {
-      const total = totals.get(model) ?? { tokens: zero(), cost: zero() };
-      for (const bucket of BUCKETS) {
-        total.tokens[bucket] += tokens[bucket];
-        total.cost[bucket] += cost[bucket];
-      }
-      totals.set(model, total);
-    }
+    for (const [model, priced] of (await spendOnce(path, now))?.priced ?? []) addPriced(totals, model, priced);
   }
   const byModel = new Map<string, Buckets>();
   for (const [model, { tokens, cost }] of totals) {

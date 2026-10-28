@@ -6,7 +6,7 @@ import { OmpIcon } from "./ui/provider-icons";
 export default definePluginApp((app) => {
   app.contentScripts.register({
     id: "bottom-board-layout",
-    mount({ signal }) {
+    mount() {
       const style = document.createElement("style");
       style.textContent = `
         html.${BOTTOM_BOARD_OPEN_CLASS} body {
@@ -14,13 +14,11 @@ export default definePluginApp((app) => {
         }
       `;
       document.head.appendChild(style);
-      const cleanup = () => {
+      return () => {
         style.remove();
         document.documentElement.classList.remove(BOTTOM_BOARD_OPEN_CLASS);
         document.documentElement.style.removeProperty(BOTTOM_BOARD_HEIGHT_VAR);
       };
-      signal.addEventListener("abort", cleanup, { once: true });
-      return cleanup;
     },
   });
 

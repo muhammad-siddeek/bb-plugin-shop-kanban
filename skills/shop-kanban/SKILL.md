@@ -12,7 +12,7 @@ Use the Shop Kanban plugin when a user wants work tracked as threads on a Kanban
 - Every item on the board is a BB thread.
 - Move your thread between columns as work progresses with `shop_kanban_move_card`.
 - When an investigation yields theories, call `shop_kanban_create_theory_tasks` so each theory gets its own independent BB thread.
-- Child threads are hidden from the board by default. Only show them when the user explicitly asks to see child threads for the parent.
+- Only top-level threads appear on the board; child threads roll up into their parent thread.
 - When you finish, call `shop_kanban_mark_result` with success or failure and a concise summary.
 - Do not spawn raw `pi` processes for board work. Spawn BB threads through the plugin tools so the board can track them.
 

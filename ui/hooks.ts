@@ -1,23 +1,21 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
-import { PLUGIN_SLUG } from "../brand";
 import type { rpcContract } from "../server/schema";
-import { BOARD_REFRESH_MS, type BoardState, type ReviewState } from "./model";
+import { errorMessage, type BoardState, type ReviewState } from "./model";
 
+const BOARD_REFRESH_MS = 1000;
 /** The review queue re-reads on the server's change signal; this clock only backs it up. */
 const REVIEWS_POLL_MS = 60_000;
 
 export function useBoard() {
-  const rpc = useRpc<any>();
+  const rpc = useRpc<typeof rpcContract>();
   const [board, setBoard] = useState<BoardState | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const report = useCallback((cause: unknown) => {
-    setError(cause instanceof Error ? cause.message : String(cause));
-  }, []);
+  const report = useCallback((cause: unknown) => setError(errorMessage(cause)), []);
 
   const refetch = useCallback(() => {
-    rpc.call("board_list").then((result: BoardState) => {
+    rpc.call("board_list", null).then((result) => {
       setBoard(result);
       setError(null);
     }, report);
@@ -30,7 +28,6 @@ export function useBoard() {
   }, [refetch]);
 
   useRealtime("board-changed", refetch);
-  useRealtime("board-task-status", refetch);
 
   return { rpc, board, error, report, refetch };
 }
@@ -42,15 +39,6 @@ export function useNow(intervalMs: number): number {
     return () => window.clearInterval(timer);
   }, [intervalMs]);
   return now;
-}
-
-export function useTaskStatusNotifications() {
-  useRealtime("board-task-status", (payload: unknown) => {
-    if (!payload || typeof payload !== "object") return;
-    const data = payload as { column?: string; title?: string; note?: string };
-    if (data.column !== "done" && data.column !== "blocked") return;
-    console.info(`[${PLUGIN_SLUG}] ${data.title ?? "Thread"} moved to ${data.column}`, data.note ?? "");
-  });
 }
 
 export type BoardApi = ReturnType<typeof useBoard>;
@@ -79,7 +67,7 @@ export function useReviews(): ReviewsApi {
     setState(next);
     setError(null);
   }, []);
-  const fail = useCallback((cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause)), []);
+  const fail = useCallback((cause: unknown) => setError(errorMessage(cause)), []);
   const refetch = useCallback(() => {
     rpc.call("reviews_list", null).then(receive, fail);
   }, [rpc, receive, fail]);

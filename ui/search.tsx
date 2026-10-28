@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import { experimental_Icon as Icon, useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
 import type { rpcContract } from "../server/schema";
-import { CLOCK_TICK_MS, formatRelativeTime, type SearchResponse } from "./model";
+import { CLOCK_TICK_MS, errorMessage, formatRelativeTime, type SearchResponse } from "./model";
 import { useNow } from "./hooks";
 
 const SEARCH_DEBOUNCE_MS = 200;
@@ -37,12 +37,7 @@ export function ThreadSearch({ maxListHeight }: { maxListHeight: number }) {
     const timer = window.setTimeout(() => {
       rpc
         .call("board_search", { query: trimmed })
-        .catch((cause: unknown): SearchResponse => ({
-          results: [],
-          indexed: 0,
-          indexing: false,
-          error: cause instanceof Error ? cause.message : String(cause),
-        }))
+        .catch((cause: unknown): SearchResponse => ({ results: [], indexed: 0, indexing: false, error: errorMessage(cause) }))
         .then((next) => {
           if (!current) return;
           setResponse(next);

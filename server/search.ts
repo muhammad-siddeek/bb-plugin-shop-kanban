@@ -1,7 +1,7 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { hostContract } from "../contract";
 import { TOOL_HELP_LEAD } from "./agents";
-import { indexHostId } from "./hosts";
+import { commandMissing, indexHostId } from "./hosts";
 import type { SearchResponse } from "./schema";
 import { isRunningSelf, type LiveThread } from "./status";
 import { ELLIPSIS, oneLine, safe } from "./text";
@@ -19,10 +19,14 @@ const SYNC_INTERVAL_MS = 10 * 60_000;
 const RUNNING_EXPORT_INTERVAL_MS = 5 * 60_000;
 const STARTUP_DELAY_MS = 15_000;
 const EXPORT_CONCURRENCY = 3;
-/** Threads exported per host write; the index is updated after every batch so results appear early. */
-const BATCH_SIZE = 10;
+/** Threads exported per host write; the index is updated after every batch, the first kept small so results appear early. */
+const FIRST_BATCH_SIZE = 10;
+/** The host contract's cap on docs per write. */
+const BATCH_SIZE = 50;
 /** The host contract's cap on deletions per write. */
 const REMOVE_BATCH = 1_000;
+/** The host runs `qmd collection add` and `qmd update` for up to 120s each; bb's default call timeout is 30s. */
+const INDEX_CALL_TIMEOUT_MS = 150_000;
 const MESSAGE_MAX_CHARS = 6_000;
 /** Below the host contract's 200k cap. */
 const DOC_MAX_CHARS = 100_000;
@@ -38,6 +42,13 @@ type IndexState = { hostId: string | null; synced: Record<string, number | null>
 
 function clip(text: string, max: number): string {
   return text.length <= max ? text : `${text.slice(0, max).trimEnd()}${ELLIPSIS}`;
+}
+
+/** A missing CLI reads better as advice than as a spawn error. */
+function explain(command: string, error: string): string {
+  return commandMissing(error)
+    ? `${command} was not found on the host. Install qmd (npm install -g @tobilu/qmd) or set the searchCommand setting to its absolute path.`
+    : error;
 }
 
 /** `# title`, then one section per message; over the size cap, keep the opening request and the latest messages. */
@@ -110,13 +121,6 @@ export function createSearchIndex(bb: BbPluginApi, reader: ThreadReader) {
     await safe(async () => bb.storage.kv.set(INDEX_KEY, next));
   }
 
-  /** `qmd` missing from the host's PATH reads better as advice than as a spawn error. */
-  function explain(command: string, error: string): string {
-    return /ENOENT/.test(error)
-      ? `${command} was not found on the host. Install qmd (npm install -g @tobilu/qmd) or set the searchCommand setting.`
-      : error;
-  }
-
   async function exportThreads(threads: LiveThread[]) {
     const docs: Array<{ thread: LiveThread; markdown: string }> = [];
     let next = 0;
@@ -148,34 +152,39 @@ export function createSearchIndex(bb: BbPluginApi, reader: ThreadReader) {
       syncError = NO_HOST;
       return;
     }
-    const [active, archived] = await Promise.all([reader.listAllThreads(false), reader.listAllThreads(true)]);
-    if (!active || !archived) return;
-    const status = await safe(async () => host.call("index_status", { command }, { hostId }));
+    const status = await safe(async () => host.call("index_status", { command }, { hostId, timeoutMs: INDEX_CALL_TIMEOUT_MS }));
     if (!status || status.error) {
       syncError = explain(command, status?.error ?? "The host could not read the search index.");
       return;
     }
+    const [active, archived] = await Promise.all([reader.listAllThreads(false), reader.listAllThreads(true)]);
+    if (!active || !archived) return;
     const threads = [...active, ...archived].filter((thread) => thread.visibility !== "hidden");
     const live = new Set(threads.map((thread) => thread.id));
     const onHost = new Set(status.threadIds);
     const synced = Object.fromEntries(
       Object.entries(previous.hostId === hostId ? previous.synced : {}).filter(([id]) => onHost.has(id)),
     );
-    const remove = status.threadIds.filter((id) => !live.has(id));
+    // A failed page or the listing cap leaves threads out; drop only files of threads that are gone or hidden.
+    const unlisted = status.threadIds.filter((id) => !live.has(id));
+    const existing = await reader.threadsById(unlisted);
+    const remove = unlisted.filter((id) => (existing.get(id)?.visibility ?? "hidden") === "hidden");
     const now = Date.now();
     const stale = threads
       .filter((thread) => needsExport(thread, synced[thread.id], now))
       .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
     // Claim the host now, so search stops waiting for it even when nothing needs exporting.
     await saveState({ hostId, synced });
-    for (let offset = 0; offset < stale.length || remove.length > 0; offset += BATCH_SIZE) {
-      const docs = await exportThreads(stale.slice(offset, offset + BATCH_SIZE));
+    for (let offset = 0; offset < stale.length || remove.length > 0; ) {
+      const size = offset === 0 ? FIRST_BATCH_SIZE : BATCH_SIZE;
+      const docs = await exportThreads(stale.slice(offset, offset + size));
+      offset += size;
       const dropping = remove.splice(0, REMOVE_BATCH);
       const write = await safe(async () =>
         host.call(
           "index_write",
           { command, docs: docs.map(({ thread, markdown }) => ({ threadId: thread.id, markdown })), remove: dropping },
-          { hostId },
+          { hostId, timeoutMs: INDEX_CALL_TIMEOUT_MS },
         ),
       );
       if (!write || write.error) {
@@ -224,19 +233,20 @@ export function createSearchIndex(bb: BbPluginApi, reader: ThreadReader) {
     const current = await loadState();
     const command = (await settings.get()).searchCommand.trim();
     const hostId = command ? await indexHostId(bb, current.hostId) : null;
-    // A host that does not hold the index yet has nothing to search until the first batch lands there.
+    // A host that does not hold the index yet has nothing to search until the first batch lands there; a failing
+    // first sync (qmd missing, say) never claims it, so its error must show here rather than "Indexing".
     const moving = hostId !== null && hostId !== current.hostId;
     const respond = (error: string | null, results: SearchResponse["results"] = []): SearchResponse => ({
       results,
       indexed: moving ? 0 : Object.keys(current.synced).length,
-      indexing: syncing || moving,
+      indexing: (syncing || moving) && !error,
       error,
     });
     if (!command) return respond("Thread search is off. Set the searchCommand setting to a qmd CLI.");
     if (!hostId) return respond(NO_HOST);
     if (moving) {
       scheduleSync(0);
-      return respond(null);
+      return respond(syncError);
     }
     const found = await safe(async () => host.call("index_search", { command, query, limit: SEARCH_LIMIT }, { hostId }));
     if (!found) return respond("The host could not run the search.");

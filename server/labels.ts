@@ -1,7 +1,5 @@
 import { oneLine } from "./text";
 
-export const LABEL_RETRY_MS = 10 * 60_000;
-export const LABEL_CONCURRENCY = 2;
 export const LABEL_PROMPT_VERSION = 5;
 
 export const LABEL_SYSTEM = [

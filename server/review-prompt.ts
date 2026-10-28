@@ -7,7 +7,6 @@ import { oneLine } from "./text";
 
 export const REVIEW_SUMMARY_VERSION = 1;
 const CHANGED_FILES_MAX = 80;
-const SENTENCE_MAX = 220;
 
 const FORGE_NAME: Record<Forge, string> = { delta: "Delta", github: "GitHub" };
 
@@ -58,22 +57,20 @@ export function reviewPrompt(pr: ReviewPr, detail: ForgePrDetail | null): string
 
 /** The model's JSON as a risk and up to three sentences: what, why, what could break. */
 export function parseReviewSummary(text: string): { risk: ReviewRisk; text: string } | null {
-  const match = text.match(/\{[\s\S]*\}/u);
-  if (!match) return null;
-  let raw: unknown;
+  const json = text.match(/\{[\s\S]*\}/u)?.[0];
+  if (!json) return null;
+  let fields: Record<string, unknown> | null;
   try {
-    raw = JSON.parse(match[0]);
+    fields = JSON.parse(json);
   } catch {
     return null;
   }
-  if (!raw || typeof raw !== "object") return null;
-  const fields = raw as Record<string, unknown>;
-  const risk = fields.risk;
+  const risk = fields?.risk;
   if (risk !== "low" && risk !== "medium" && risk !== "high") return null;
-  const sentences = [fields.what, fields.why, fields.risk_reason].flatMap((value) => {
+  const sentences = [fields?.what, fields?.why, fields?.risk_reason].flatMap((value) => {
     // One sentence per field keeps the first read at three sentences at most.
     const first = typeof value === "string" ? oneLine(value).split(/(?<=[.!?])\s+/u)[0] : "";
-    const sentence = first.slice(0, SENTENCE_MAX).replace(/[\s.!?;:,]+$/u, "");
+    const sentence = first.slice(0, 220).replace(/[\s.!?;:,]+$/u, "");
     return sentence ? [`${sentence}.`] : [];
   });
   return sentences.length ? { risk, text: sentences.join(" ") } : null;
@@ -86,7 +83,7 @@ export function parseReviewSummary(text: string): { risk: ReviewRisk; text: stri
 export function draftPrompt(
   pr: ReviewPr,
   detail: ForgePrDetail | null,
-  summary: { risk: ReviewRisk | null; text: string | null },
+  summary: { risk: ReviewRisk | null; text: string | null } | undefined,
   reviewedSha: string | null,
 ): string {
   const { repo, number } = pr;
@@ -95,7 +92,7 @@ export function draftPrompt(
       ? `\`dt pr view ${number} -R ${repo}\` for the description and \`dt api -R ${repo} 'repos/${repo}/pulls/${number}/files?per_page=100'\` for the diff`
       : `\`gh pr view ${number} -R ${repo}\` for the description and \`gh pr diff ${number} -R ${repo}\` for the diff`;
   const size = sizeLine(detail);
-  const firstRead = summary.text ? `${summary.risk ? `[${summary.risk}] ` : ""}${summary.text}` : null;
+  const firstRead = summary?.text ? `${summary.risk ? `[${summary.risk}] ` : ""}${summary.text}` : null;
   return [
     "Explain this pull request so I can review it.",
     "",

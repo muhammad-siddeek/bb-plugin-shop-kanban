@@ -1,4 +1,4 @@
-import type { Column } from "./schema";
+import { columnSchema, type Column } from "./schema";
 
 export function nowIso(): string {
   return new Date().toISOString();
@@ -25,26 +25,10 @@ export function compactTitle(value: unknown): string {
   return words || "Thread";
 }
 
+/** A stored column; anything unknown starts over in the queue. */
 export function normalizeColumn(value: unknown): Column {
-  switch (value) {
-    case "queue":
-    case "wip":
-    case "blocked":
-    case "done":
-      return value;
-    case "backlog":
-      return "queue";
-    case "investigating":
-    case "theories":
-    case "trying":
-      return "wip";
-    case "success":
-      return "done";
-    case "failed":
-      return "blocked";
-    default:
-      return "queue";
-  }
+  const parsed = columnSchema.safeParse(value);
+  return parsed.success ? parsed.data : "queue";
 }
 
 const CATEGORY_STOPWORDS = new Set([
@@ -65,18 +49,12 @@ function categoryTokens(value: string): string[] {
   ).filter((token) => !CATEGORY_STOPWORDS.has(token));
 }
 
-function inferCategory(title: string, context: string): string {
-  const { category } = categoryParts(title);
-  if (category) return category;
-  // Tokens are 3+ non-space chars, so the result is empty only when there are none.
-  return categoryTokens(`${title} ${context}`).slice(0, 2).join(" ").slice(0, 28).trim() || "thread";
-}
-
 export function categorizedTitle(value: string, context: string): string {
-  const title = oneLine(value) || "Thread";
-  const { category, rest } = categoryParts(title);
+  const { category, rest } = categoryParts(oneLine(value) || "Thread");
   const body = rest || "Thread";
-  return `[${category || inferCategory(body, context)}] ${body}`;
+  // Tokens are 3+ non-space chars, so the inferred category is empty only when there are none.
+  const inferred = category || categoryTokens(`${body} ${context}`).slice(0, 2).join(" ").slice(0, 28).trim();
+  return `[${inferred || "thread"}] ${body}`;
 }
 
 export async function safe<T>(fn: () => Promise<T>): Promise<T | null> {

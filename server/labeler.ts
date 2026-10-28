@@ -1,8 +1,8 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { hostContract } from "../contract";
-import { LABEL_CONCURRENCY, LABEL_PROMPT_VERSION, LABEL_RETRY_MS, LABEL_SYSTEM, hashText, labelPrompt, parseLabel } from "./labels";
-import type { CardLabel, LabelView, LiveThread, ThreadDetails } from "./status";
-import { connectedHostId } from "./hosts";
+import { LABEL_PROMPT_VERSION, LABEL_SYSTEM, hashText, labelPrompt, parseLabel } from "./labels";
+import type { LabelView, LiveThread, ThreadDetails } from "./status";
+import { commandMissing, connectedHostId } from "./hosts";
 import { safe } from "./text";
 
 // Model-written card labels: a small model on the thread's host writes the "[category] intent" title and a
@@ -10,8 +10,34 @@ import { safe } from "./text";
 // concurrency, and the card title is mirrored onto the bb thread title until the user renames it.
 
 const LABELS_KEY = "labels-v2";
+const LABEL_CONCURRENCY = 2;
+const LABEL_TIMEOUT_MS = 12_000;
+const LABEL_RETRY_MS = 10 * 60_000;
+/** The same log line is written at most once per this interval. */
+const LOG_INTERVAL_MS = 60 * 60_000;
 /** Let bb's own titler finish on brand-new threads before taking over. */
 const TITLE_SETTLE_MS = 60_000;
+
+/** Model-written card label: "[category] intent" title plus a summary of the latest interaction. */
+export type CardLabel = {
+  titleSig: string;
+  category: string;
+  intent: string;
+  summarySig: string;
+  summary: string | null;
+  needsInput: boolean | null;
+  failedAt?: number;
+  /** Title the board last wrote to the bb thread, to tell our renames from the user's. */
+  appliedTitle?: string;
+  /** The title our last rename replaced; seeing it again just means a stale snapshot. */
+  replacedTitle?: string | null;
+  /** The user renamed the thread themselves; stop syncing and show their title. */
+  userTitled?: boolean;
+};
+
+function message(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
 
 /** `onChange` is called (debounced) whenever a label update should re-render the board. */
 export function createLabeler(bb: BbPluginApi, onChange: () => void) {
@@ -30,9 +56,15 @@ export function createLabeler(bb: BbPluginApi, onChange: () => void) {
       default: "anthropic/claude-haiku-4-5",
     },
   });
+  /** No models means the labeler is off. */
+  const config = ({ labelerCommand, labelerModels }: { labelerCommand: string; labelerModels: string }) => {
+    const command = labelerCommand.trim();
+    const models = command ? labelerModels.split(",").map((model) => model.trim()).filter(Boolean).slice(0, 4) : [];
+    return { command, models };
+  };
 
   const host = bb.hosts.experimental_client({ contract: hostContract });
-  let labels: Record<string, CardLabel> | null = null;
+  let labels: Promise<Record<string, CardLabel>> | null = null;
   let labelsWrite: Promise<void> = Promise.resolve();
   const labelQueue: Array<() => Promise<void>> = [];
   const labelInFlight = new Set<string>();
@@ -40,17 +72,46 @@ export function createLabeler(bb: BbPluginApi, onChange: () => void) {
   const renaming = new Set<string>();
   let changedTimer: ReturnType<typeof setTimeout> | undefined;
   let fallbackHostId: string | null = null;
+  let enabled = true;
+  const loggedAt = new Map<string, number>();
+  /** Failures before the last settings change are retried right away: the user may have just fixed the command. */
+  let settingsChangedAt = 0;
 
-  async function load(): Promise<Record<string, CardLabel>> {
-    if (labels) return labels;
-    const raw = await safe(async () => bb.storage.kv.get(LABELS_KEY));
-    labels = raw && typeof raw === "object" ? (raw as Record<string, CardLabel>) : {};
+  void settings.get().then(
+    (values) => {
+      enabled = config(values).models.length > 0;
+    },
+    () => {},
+  );
+  settings.onChange((next) => {
+    enabled = config(next).models.length > 0;
+    settingsChangedAt = Date.now();
+    changedSoon();
+  });
+
+  /** Failures repeat for every thread; one line per distinct message per interval keeps the plugin log readable. */
+  function logQuietly(line: string) {
+    const now = Date.now();
+    if (now - (loggedAt.get(line) ?? 0) < LOG_INTERVAL_MS) return;
+    loggedAt.set(line, now);
+    bb.log.info(line);
+  }
+
+  /** One shared promise, so concurrent first loads mutate and persist the same record. */
+  function load(): Promise<Record<string, CardLabel>> {
+    labels ??= safe(async () => bb.storage.kv.get<Record<string, CardLabel>>(LABELS_KEY)).then((raw) =>
+      raw && typeof raw === "object" ? raw : {},
+    );
     return labels;
   }
 
-  function persistLabels() {
+  function persist() {
     labelsWrite = labelsWrite.then(async () => {
-      await safe(async () => bb.storage.kv.set(LABELS_KEY, labels ?? {}));
+      try {
+        await bb.storage.kv.set(LABELS_KEY, await load());
+      } catch (error) {
+        logQuietly(`saving thread labels failed: ${message(error)}`);
+      }
     });
   }
 
@@ -80,48 +141,25 @@ export function createLabeler(bb: BbPluginApi, onChange: () => void) {
   }
 
   /**
-   * Runs the labeler model on `hostId` and returns its reply; throws when the labeler is off or the model returns
-   * nothing. Shared with the review queue, which writes its pull request summaries with the same model.
+   * Runs the labeler model on `hostId` and returns its reply; throws when the labeler is off, the CLI fails or
+   * the host is unreachable. Shared with the review queue, which writes its pull request summaries with the same model.
    */
   async function complete(hostId: string, system: string, prompt: string, timeoutMs: number): Promise<string> {
-    const { labelerCommand, labelerModels } = await settings.get();
-    const command = labelerCommand.trim();
-    const models = labelerModels.split(",").map((model) => model.trim()).filter(Boolean).slice(0, 4);
-    if (!command || models.length === 0) throw new Error("Labeler is turned off in settings.");
-    const result = await host.call("complete", { command, system, prompt, models, timeoutMs }, { hostId });
-    if (!result?.text) throw new Error(result?.error ?? "Labeler returned nothing.");
-    return result.text;
-  }
-
-  /** Runs the configured labeler on the thread's host; throws when it is off or returns nothing usable. */
-  async function requestLabel(
-    thread: LiveThread,
-    details: ThreadDetails,
-    running: boolean,
-    currentTitle: string | null,
-    all: Record<string, CardLabel>,
-  ) {
-    const hostId = await resolveHostId(thread);
-    if (!hostId) throw new Error("No connected host to run the labeler.");
-    const categories = Array.from(new Set(Object.values(all).map((entry) => entry.category).filter(Boolean))).slice(0, 30);
-    const text = await complete(
-      hostId,
-      LABEL_SYSTEM,
-      labelPrompt({
-        title: thread.title,
-        currentTitle,
-        firstPrompt: details.firstUserPrompt,
-        lastPrompt: details.lastUserPrompt,
-        prompts: details.userPrompts,
-        output: details.output,
-        running,
-        categories,
-      }),
-      12_000,
+    const { command, models } = config(await settings.get());
+    if (models.length === 0) throw new Error("Labeler is turned off in settings.");
+    // The host tries each model in turn; bb's default 30s call timeout would cut that short.
+    const result = await host.call(
+      "complete",
+      { command, system, prompt, models, timeoutMs },
+      { hostId, timeoutMs: timeoutMs * models.length + 5_000 },
     );
-    const parsed = parseLabel(text);
-    if (!parsed) throw new Error("Labeler returned no usable JSON.");
-    return parsed;
+    if (result.text) return result.text;
+    const error = result.error ?? "Labeler returned nothing.";
+    throw new Error(
+      commandMissing(error)
+        ? `${command} was not found on host ${hostId}. Install it there, or set the labelerCommand setting to a pi-compatible CLI's absolute path.`
+        : error,
+    );
   }
 
   /**
@@ -133,7 +171,7 @@ export function createLabeler(bb: BbPluginApi, onChange: () => void) {
     if (!label || label.userTitled || thread.title === title || renaming.has(thread.id)) return;
     if (label.appliedTitle && thread.title && thread.title !== label.appliedTitle && thread.title !== label.replacedTitle) {
       all[thread.id] = { ...label, userTitled: true };
-      persistLabels();
+      persist();
       changedSoon();
       return;
     }
@@ -143,11 +181,12 @@ export function createLabeler(bb: BbPluginApi, onChange: () => void) {
       try {
         await bb.sdk.threads.update({ threadId: thread.id, title });
         all[thread.id] = { ...all[thread.id], appliedTitle: title, replacedTitle: thread.title };
-        persistLabels();
-      } catch (error) {
-        bb.log.info(`rename failed for ${thread.id}: ${error instanceof Error ? error.message : String(error)}`);
-      } finally {
+        persist();
         renaming.delete(thread.id);
+      } catch (error) {
+        logQuietly(`thread rename failed: ${message(error)}`);
+        // Every board render would retry it; wait instead.
+        setTimeout(() => renaming.delete(thread.id), LABEL_RETRY_MS).unref?.();
       }
     })();
   }
@@ -164,14 +203,42 @@ export function createLabeler(bb: BbPluginApi, onChange: () => void) {
       : `v${LABEL_PROMPT_VERSION}:idle:${details.lastUserInputAt ?? 0}:${hashText(details.output ?? "")}`;
     const title = current?.category && current.intent ? `[${current.category}] ${current.intent}` : null;
     const fresh = current !== undefined && title !== null && current.titleSig === titleSig && current.summarySig === summarySig;
-    const backingOff = current?.failedAt !== undefined && Date.now() - current.failedAt < LABEL_RETRY_MS && current.summarySig === summarySig;
+    const backingOff =
+      current?.failedAt !== undefined &&
+      current.failedAt > settingsChangedAt &&
+      Date.now() - current.failedAt < LABEL_RETRY_MS &&
+      current.summarySig === summarySig;
     const worthLabeling = running || Boolean(details.output?.trim()) || Boolean(details.lastUserPrompt);
 
-    if (!fresh && !backingOff && worthLabeling && !labelInFlight.has(thread.id)) {
+    if (enabled && !fresh && !backingOff && worthLabeling && !labelInFlight.has(thread.id)) {
       labelInFlight.add(thread.id);
       labelQueue.push(async () => {
+        const hostId = await resolveHostId(thread);
+        const failed = () => {
+          const previous = all[thread.id];
+          all[thread.id] = previous
+            ? { ...previous, titleSig, summarySig, failedAt: Date.now() }
+            : { titleSig: "", category: "", intent: "", summarySig, summary: null, needsInput: null, failedAt: Date.now() };
+        };
         try {
-          const parsed = await requestLabel(thread, details, running, title, all);
+          if (!hostId) throw new Error("No bb host is listed to run the labeler on.");
+          const categories = Array.from(new Set(Object.values(all).map((entry) => entry.category).filter(Boolean))).slice(0, 30);
+          const prompt = labelPrompt({
+            title: thread.title,
+            currentTitle: title,
+            firstPrompt: details.firstUserPrompt,
+            lastPrompt: details.lastUserPrompt,
+            prompts: details.userPrompts,
+            output: details.output,
+            running,
+            categories,
+          });
+          const parsed = parseLabel(await complete(hostId, LABEL_SYSTEM, prompt, LABEL_TIMEOUT_MS));
+          if (!parsed) {
+            logQuietly("labeler reply had no usable JSON; threads keep their last label");
+            failed();
+            return;
+          }
           const previous = all[thread.id];
           // Only a new user message may retitle the card; summary refreshes keep the title.
           const keepTitle = previous !== undefined && Boolean(previous.category && previous.intent) && previous.titleSig === titleSig;
@@ -186,14 +253,13 @@ export function createLabeler(bb: BbPluginApi, onChange: () => void) {
             failedAt: undefined,
           };
         } catch (error) {
-          bb.log.info(`label failed for ${thread.id}: ${error instanceof Error ? error.message : String(error)}`);
-          const previous = all[thread.id];
-          all[thread.id] = previous
-            ? { ...previous, titleSig, summarySig, failedAt: Date.now() }
-            : { titleSig: "", category: "", intent: "", summarySig, summary: null, needsInput: null, failedAt: Date.now() };
+          // Usually the CLI or the host failing, not this thread: look the fallback host up again next time.
+          fallbackHostId = null;
+          logQuietly(`labeler failed${hostId ? ` on host ${hostId}` : ""}: ${message(error)}`);
+          failed();
         } finally {
           labelInFlight.delete(thread.id);
-          persistLabels();
+          persist();
           changedSoon();
         }
       });
@@ -207,13 +273,15 @@ export function createLabeler(bb: BbPluginApi, onChange: () => void) {
     return { title, summary, needsInput };
   }
 
-  /** Drop a deleted thread's label. */
-  async function forget(threadId: string) {
+  /**
+   * Drop a deleted or archived thread's label, so the KV row (capped at 256KB) holds live threads only. An archived
+   * thread the user renamed keeps its label, so their title survives a restore.
+   */
+  async function forget(threadId: string, keepRenamed = false) {
     const all = await load();
-    if (threadId in all) {
-      delete all[threadId];
-      persistLabels();
-    }
+    if (!(threadId in all) || (keepRenamed && all[threadId].userTitled)) return;
+    delete all[threadId];
+    persist();
   }
 
   function dispose() {

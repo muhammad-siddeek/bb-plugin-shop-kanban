@@ -1,22 +1,74 @@
 import { useCallback, useEffect, useRef } from "react";
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
-import {
-  COLUMN_META,
-  boardCardLayoutKey,
-  columnMeta,
-  formatRelativeTime,
-  revealBoardCard,
-  taskActivityTime,
-  taskCardTitle,
-  type BoardColumn,
-  type BoardTask,
-} from "./model";
+import { COLUMN_META, formatRelativeTime, taskActivityTime, taskCardTitle, type BoardColumn, type BoardTask } from "./model";
 import { HarnessMeta, type AgentProvider } from "./session";
 
 // All marks share one 16px frame so they line up with the 18px title line (mt-px centers them).
 const MARK_FRAME = "mt-px inline-flex size-4 shrink-0 items-center justify-center";
 const BLOCKED_STRIPE =
   "before:absolute before:inset-y-2 before:left-0 before:w-[2px] before:rounded-r-full before:bg-rose-500/70 before:content-['']";
+
+// Reveal margins: the column list's p-2 (covers the selected card's 4px outline) and the grid's p-3.
+const REVEAL_MARGIN_Y = 8;
+const REVEAL_MARGIN_X = 12;
+
+/**
+ * Smallest scroll delta that fits [start, end] inside the band inset by `margin`: zero when it already
+ * fits, otherwise just the overshoot at the nearer edge; content larger than the band aligns its start.
+ */
+function revealDelta(start: number, end: number, bandStart: number, bandSize: number, margin: number): number {
+  const min = bandStart + margin;
+  const max = bandStart + bandSize - margin;
+  if (start < min) return Math.round(start - min);
+  if (end > max) return Math.round(end - start > max - min ? start - min : end - max);
+  return 0;
+}
+
+/**
+ * Scroll the board so `card` is fully visible with minimal movement: no scroll when it already is,
+ * otherwise only enough to clear the nearest edge — vertically in its column, horizontally in the board
+ * grid. Scrolls only the board's own containers (never `scrollIntoView`, which would move bb's layout too).
+ */
+function revealBoardCard(card: HTMLElement) {
+  const behavior: ScrollBehavior = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
+
+  const list = card.closest<HTMLElement>("[data-board-column-scroll]");
+  if (list) {
+    const cardRect = card.getBoundingClientRect();
+    const top = list.getBoundingClientRect().top + list.clientTop;
+    const delta = revealDelta(cardRect.top, cardRect.bottom, top, list.clientHeight, REVEAL_MARGIN_Y);
+    if (delta !== 0) list.scrollTo({ top: list.scrollTop + delta, behavior });
+  }
+
+  const column = card.closest<HTMLElement>("section");
+  const grid = column?.closest<HTMLElement>("[data-board-scroll]");
+  if (column && grid) {
+    const columnRect = column.getBoundingClientRect();
+    const left = grid.getBoundingClientRect().left + grid.clientLeft;
+    const delta = revealDelta(columnRect.left, columnRect.right, left, grid.clientWidth, REVEAL_MARGIN_X);
+    if (delta !== 0) grid.scrollTo({ left: grid.scrollLeft + delta, behavior });
+  }
+}
+
+/** Scroll-independent signature of where `card` sits on the board; changes only when the layout does. */
+function boardCardLayoutKey(card: HTMLElement): string | null {
+  const list = card.closest<HTMLElement>("[data-board-column-scroll]");
+  const column = list?.closest<HTMLElement>("section");
+  const grid = column?.closest<HTMLElement>("[data-board-scroll]");
+  if (!list || !column || !grid) return null;
+  const cardRect = card.getBoundingClientRect();
+  const columnRect = column.getBoundingClientRect();
+  return [
+    cardRect.top - list.getBoundingClientRect().top + list.scrollTop,
+    cardRect.height,
+    list.clientHeight,
+    columnRect.left - grid.getBoundingClientRect().left + grid.scrollLeft,
+    columnRect.width,
+    grid.clientWidth,
+  ]
+    .map((value) => Math.round(value))
+    .join(":");
+}
 
 /** Theme class that re-scopes bb's color tokens for a subtree (`.light` / `.dark`). */
 export type ThemeScope = "light" | "dark";
@@ -64,6 +116,7 @@ function TaskStatusMark({ column, unread }: { column: BoardColumn; unread: boole
 export function TaskCard({ task, now, unread, selected, invertedTheme, provider, onArchive, onOpen }: {
   task: BoardTask;
   now: number;
+  /** Done and not yet read: the title bolds and the check fills. */
   unread: boolean;
   /** Card belongs to the thread currently open in bb. */
   selected: boolean;
@@ -118,7 +171,6 @@ export function TaskCard({ task, now, unread, selected, invertedTheme, provider,
   };
   const { category, intent } = taskCardTitle(task);
   const titleText = category ? `[${category}] ${intent}` : intent;
-  const emphasized = unread && task.column === "done";
   const titleNode = (
     <>
       {category ? (
@@ -130,9 +182,9 @@ export function TaskCard({ task, now, unread, selected, invertedTheme, provider,
     </>
   );
   const titleClass = `flex h-[18px] min-w-0 items-center gap-1.5 text-[13px] leading-[18px] text-foreground ${
-    emphasized ? "font-semibold" : "font-medium"
+    unread ? "font-semibold" : "font-medium"
   }`;
-  const meta = columnMeta(task.column);
+  const meta = COLUMN_META[task.column];
   const activity = taskActivityTime(task);
   const canOpen = !task.missingThread;
   const reason = task.statusReason && task.column !== "done" && task.statusReason !== "Running" ? task.statusReason : null;
@@ -140,7 +192,7 @@ export function TaskCard({ task, now, unread, selected, invertedTheme, provider,
   // Selection wins over the column/unread border; the blocked stripe stays either way.
   const borderClass = selected
     ? "border-border"
-    : emphasized
+    : unread
       ? "border-emerald-500/30 hover:border-emerald-500/50"
       : "border-border/60 hover:border-border";
   const stateClass = task.column === "blocked" ? `${borderClass} ${BLOCKED_STRIPE}` : borderClass;

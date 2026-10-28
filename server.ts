@@ -22,7 +22,6 @@ import { createReviewQueue } from "./server/reviews";
 export { rpcContract } from "./server/schema";
 
 const BOARD_CHANGED = "board-changed";
-const BOARD_TASK_STATUS = "board-task-status";
 const TASKS_KEY = "tasks-v1";
 
 function resultForUpdate(
@@ -46,8 +45,6 @@ function metadataFor(task: StoredTask) {
     parentThreadId: task.parentThreadId,
     result: task.result,
     note: task.note,
-    showOnBoard: task.showOnBoard === true,
-    showChildren: task.showChildren === true,
     updatedAt: task.updatedAt,
   };
 }
@@ -107,11 +104,7 @@ export default async function plugin(bb: BbPluginApi) {
     const raw = await bb.storage.kv.get(TASKS_KEY);
     if (!raw || typeof raw !== "object") return {};
     const tasks: Record<string, StoredTask> = {};
-    for (const [id, value] of Object.entries(raw as Record<string, any>)) tasks[id] = { ...value, column: normalizeColumn(value.column) };
-    for (const task of Object.values(tasks)) {
-      task.shortName = categorizedTitle(task.shortName, `${task.titleChain} ${task.description ?? ""}`);
-      task.titleChain = categorizedTitle(task.titleChain, task.description ?? task.shortName);
-    }
+    for (const [id, value] of Object.entries(raw as Record<string, StoredTask>)) tasks[id] = { ...value, column: normalizeColumn(value.column) };
     return tasks;
   }
 
@@ -129,8 +122,9 @@ export default async function plugin(bb: BbPluginApi) {
 
   async function defaultProjectId(): Promise<string> {
     const projects = await bb.sdk.projects.list({ includePersonal: true });
-    const personal = projects.find((p: any) => p.isPersonal || p.kind === "personal" || p.id === "proj_personal") ?? projects[0];
-    return personal?.id ?? "proj_personal";
+    const project = projects.find((entry) => entry.kind === "personal") ?? projects[0];
+    if (!project) throw new Error("No bb project to start the thread in.");
+    return project.id;
   }
 
   async function materialize(
@@ -158,10 +152,7 @@ export default async function plugin(bb: BbPluginApi) {
       description: stored?.description ?? null,
       result: derived.column === "done" ? "success" : derived.column === "blocked" ? "failed" : null,
       note: derived.description,
-      showOnBoard: stored?.showOnBoard === true,
-      showChildren: stored?.showChildren === true,
       childCount,
-      hiddenChildCount: 0,
       runningChildCount: derived.runningChildren,
       statusReason: derived.reason,
       unread: thread.latestAttentionAt !== null && (thread.lastReadAt === null || thread.latestAttentionAt > thread.lastReadAt),
@@ -175,13 +166,24 @@ export default async function plugin(bb: BbPluginApi) {
   }
 
   /** Materialize a single card (used as the return value of task mutations). */
-  async function materializeOne(stored: StoredTask, rawThread?: any): Promise<BoardTask> {
+  async function materializeOne(stored: StoredTask, rawThread?: unknown): Promise<BoardTask> {
     const thread = toLiveThread(rawThread ?? (await reader.getThread(stored.threadId)));
     if (!thread) {
+      // Listed field by field: entries stored before 0.9.0 carry keys the board no longer has.
+      const { threadId, shortName, titleChain, column, parentThreadId, projectId, description, result, note, createdAt, updatedAt } = stored;
       return {
-        ...stored,
+        threadId,
+        shortName,
+        titleChain,
+        column,
+        parentThreadId,
+        projectId,
+        description,
+        result,
+        note,
+        createdAt,
+        updatedAt,
         childCount: 0,
-        hiddenChildCount: 0,
         runningChildCount: 0,
         statusReason: null,
         unread: false,
@@ -249,18 +251,13 @@ export default async function plugin(bb: BbPluginApi) {
     );
   }
 
-  async function publishTaskStatus(previous: StoredTask | undefined, next: StoredTask) {
+  /** A thread an agent reports finished or stuck turns unread and notifies the user. */
+  async function notifyIfSettled(previous: StoredTask | undefined, next: StoredTask) {
     if (previous?.column === next.column) return;
     if (next.column !== "blocked" && next.column !== "done") return;
     await preferThreadNotifications(next.threadId);
     await safe(() => bb.sdk.threads.markUnread({ threadId: next.threadId }));
-    bb.realtime.publish(BOARD_TASK_STATUS, {
-      at: Date.now(),
-      threadId: next.threadId,
-      title: next.titleChain,
-      column: next.column,
-      note: next.note,
-    });
+    publishBoardChanged();
   }
 
   async function updateTask(input: {
@@ -269,8 +266,6 @@ export default async function plugin(bb: BbPluginApi) {
     shortName?: string;
     note?: string;
     result?: Result | null;
-    showOnBoard?: boolean;
-    showChildren?: boolean;
   }): Promise<BoardTask> {
     const previous = (await readTasks())[input.threadId];
     const thread = await reader.getThread(input.threadId);
@@ -294,13 +289,11 @@ export default async function plugin(bb: BbPluginApi) {
       description: previous?.description ?? null,
       result,
       note: input.note ?? previous?.note ?? null,
-      showOnBoard: input.showOnBoard ?? previous?.showOnBoard ?? false,
-      showChildren: input.showChildren ?? previous?.showChildren ?? false,
       createdAt: previous?.createdAt ?? now,
       updatedAt: now,
     };
     await saveTask(next);
-    await publishTaskStatus(previous, next);
+    await notifyIfSettled(previous, next);
     return materializeOne(next, thread);
   }
 
@@ -310,7 +303,6 @@ export default async function plugin(bb: BbPluginApi) {
     projectId?: string;
     parentThreadId?: string;
     column?: Column;
-    showOnBoard?: boolean;
   }): Promise<BoardTask> {
     const shortName = categorizedTitle(input.shortName, input.prompt);
     const parent = await reader.titleChainForParent(input.parentThreadId);
@@ -324,8 +316,6 @@ export default async function plugin(bb: BbPluginApi) {
       parentThreadId: input.parentThreadId ?? null,
       result: null,
       note: null,
-      showOnBoard: input.showOnBoard === true,
-      showChildren: false,
       updatedAt: now,
     } satisfies Partial<StoredTask>;
     const prompt = `${input.prompt.trim()}\n\n---\n${toolHelp(titleChain)}`;
@@ -369,7 +359,7 @@ export default async function plugin(bb: BbPluginApi) {
       bb.sdk.threads.updatePluginMetadata({
         threadId,
         set: { boardTask: false, updatedAt: nowIso() },
-        remove: ["shortName", "titleChain", "column", "result", "note", "showOnBoard", "showChildren"],
+        remove: ["shortName", "titleChain", "column", "result", "note"],
       }),
     );
     return true;
@@ -378,7 +368,6 @@ export default async function plugin(bb: BbPluginApi) {
   bb.rpc.register(rpcContract, {
     board_list: listBoard,
     board_spawn_task: spawnTask,
-    board_update_task: updateTask,
     board_remove_task: async ({ threadId }: { threadId: string }) => ({
       removed: await removeTask(threadId, { archiveThread: true }),
     }),
@@ -402,25 +391,32 @@ export default async function plugin(bb: BbPluginApi) {
   const boardApi = { listBoard, spawnTask, updateTask, markTaskResult, removeTask };
   registerAgentTools(bb, boardApi);
 
-  bb.events.on("thread.active", async ({ thread }: any) => {
+  bb.events.on("thread.active", async ({ thread }) => {
     publishBoardChanged();
     const task = (await readTasks())[thread.id];
     if (!task || task.result) return;
     if (task.column === "queue") await updateTask({ threadId: thread.id, column: "wip" });
   });
 
-  bb.events.on("thread.failed", async ({ thread, error }: any) => {
+  bb.events.on("thread.failed", async ({ thread, error }) => {
     publishBoardChanged();
     if (!(await readTasks())[thread.id]) return;
     await updateTask({ threadId: thread.id, column: "blocked", result: "failed", note: error ?? "Thread failed." });
   });
 
-  bb.events.on("thread.deleted", async ({ thread }: any) => {
+  bb.events.on("thread.deleted", async ({ thread }) => {
     reader.forget(thread.id);
     await labels.forget(thread.id);
     await removeTask(thread.id);
     publishBoardChanged();
     search.scheduleSync();
+  });
+
+  // Archived threads leave the board: drop their stored state so the KV rows (capped at 256KB each) only grow with
+  // live threads.
+  bb.events.on("thread.archived", async ({ thread }) => {
+    await labels.forget(thread.id, true);
+    await removeTask(thread.id);
   });
 
   // Settled, archived and restored threads change what the thread search index should hold.

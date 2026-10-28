@@ -14,54 +14,36 @@ import { safe } from "./text";
 
 export const REVIEWS_CHANGED = "reviews-changed";
 const MARKS_KEY = "reviews-v1";
-const POLL_MS = 5 * 60_000;
-const STARTUP_DELAY_MS = 8_000;
 /** Newest pull requests read per search. */
 const SEARCH_LIMIT = 30;
 /** The user's own reviews among a search's matches, subtracted from it. */
 const REVIEWED_LIMIT = 100;
-const QUERY_MAX = 900;
-const DETAIL_CONCURRENCY = 3;
-const SUMMARY_CONCURRENCY = 2;
-const SUMMARY_TIMEOUT_MS = 20_000;
 const SUMMARY_RETRY_MS = 10 * 60_000;
+/** Per-PR failures recur every poll; each distinct one is logged at most this often. */
+const LOG_REPEAT_MS = 60 * 60_000;
 /** Read, archived, reviewed and summary entries kept per kind, newest first. */
 const MARKS_MAX = 1_000;
 /** Delta hosts shop/world; a Delta search that names no repository searches it. */
 const DELTA_DEFAULT_REPO = "shop/world";
 const NO_HOST = "No connected persistent host to read pull requests on.";
-const INVALID_LINE = "Start the line with delta: or github:";
 
-/**
- * Delta's `review-requested:@me` is requests of the user by name only. GitHub's also matches their teams'
- * requests; its `user-review-requested:@me` is the by-name half.
- */
-const DEFAULT_SEARCHES: Record<ReviewScope, string> = {
-  me: ["delta: review-requested:@me -author:@me -is:draft", "github: user-review-requested:@me -author:@me -is:draft"].join("\n"),
-  team: [
-    "delta: team-review-requested:@me -author:@me -is:draft",
-    "github: review-requested:@me -user-review-requested:@me -author:@me -is:draft",
-  ].join("\n"),
-};
 const LINE_SYNTAX =
   "One search per line: `delta: <query>` reads Delta through `dt` (shop/world unless the query names a `repo:`), `github: <query>` reads GitHub through `gh`. GitHub search syntax with `is:pr is:open` implied; pull requests you already reviewed drop off until new commits land.";
 
 type Labeler = { complete(hostId: string, system: string, prompt: string, timeoutMs: number): Promise<string> };
 type Search = { line: string; scope: ReviewScope; forge: Forge; repo: string | null; query: string };
-type SearchResult = { prs: ForgePr[]; total: number; error: string | null; missing: boolean };
 /**
  * A listed pull request, the search lines that found it, whether one's `reviewed-by:@me` lists it, and its scope:
  * Me when any search for the user found it.
  */
 type Entry = ForgePr & { id: string; forge: Forge; lines: string[]; reviewed: boolean; scope: ReviewScope };
-type Summary = { sig: string; risk: ReviewRisk | null; text: string | null; at: number; failedAt?: number };
 type Marks = {
   /** Head commit when last opened from the board; null when it was opened before its head was read. */
   read: Record<string, { sha: string | null; at: number }>;
   archived: Record<string, number>;
   /** Reviewed from the board, at that head commit: hidden at once, before the forge's search and reviews list it. */
   reviewed: Record<string, { sha: string | null; at: number }>;
-  summaries: Record<string, Summary>;
+  summaries: Record<string, { sig: string; risk: ReviewRisk | null; text: string | null; at: number; failedAt?: number }>;
 };
 
 /**
@@ -76,7 +58,7 @@ function parseSearches(value: string, scope: ReviewScope): { searches: Search[];
     const line = raw.trim();
     if (!line || line.startsWith("#")) continue;
     const match = line.match(/^(delta|github)\s*:\s*(\S.*)$/iu);
-    if (!match || line.length > QUERY_MAX) {
+    if (!match || line.length > 900) {
       invalid.push(line);
       continue;
     }
@@ -121,7 +103,6 @@ function message(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
 }
 
-/** The newest `MARKS_MAX` entries of a mark record. */
 function capped<T>(record: Record<string, T>, at: (value: T) => number): Record<string, T> {
   const rows = Object.entries(record);
   if (rows.length <= MARKS_MAX) return record;
@@ -134,14 +115,15 @@ export function createReviewQueue(bb: BbPluginApi, labeler: Labeler) {
       type: "string",
       label: "Review queue: requested of you",
       description: `Open pull requests asking for your review by name, under Me in the board's Reviews section. ${LINE_SYNTAX} Delta's \`review-requested:@me\` and GitHub's \`user-review-requested:@me\` leave out your teams' requests. Leave empty to hide Me.`,
-      default: DEFAULT_SEARCHES.me,
+      default: "delta: review-requested:@me -author:@me -is:draft\ngithub: user-review-requested:@me -author:@me -is:draft",
       experimental_multiline: true,
     },
     reviewSearchesTeam: {
       type: "string",
       label: "Review queue: requested of your teams",
       description: `Open pull requests asking your teams for review, under Team in the board's Reviews section; one a search for you also finds is listed under Me only. ${LINE_SYNTAX} Delta's \`team-review-requested:@me\` matches every team you are on; on GitHub, \`review-requested:@me -user-review-requested:@me\` does. For one team, Delta takes the team slug (\`team-review-requested:exp\`) and GitHub \`team-review-requested:<org>/<team>\`. Leave empty to hide Team.`,
-      default: DEFAULT_SEARCHES.team,
+      default:
+        "delta: team-review-requested:@me -author:@me -is:draft\ngithub: review-requested:@me -user-review-requested:@me -author:@me -is:draft",
       experimental_multiline: true,
     },
   });
@@ -160,12 +142,9 @@ export function createReviewQueue(bb: BbPluginApi, labeler: Labeler) {
   let changedTimer: ReturnType<typeof setTimeout> | undefined;
   /** Details per pull request, keyed by the `updatedAt` they were read at, and when that read started. */
   const details = new Map<string, { updatedAt: string; detail: ForgePrDetail; at: number }>();
-  const detailQueue: Entry[] = [];
-  const detailPending = new Set<string>();
-  let detailActive = 0;
-  const summaryQueue: Entry[] = [];
-  const summaryPending = new Set<string>();
-  let summaryActive = 0;
+  const detailQueue = workQueue(3, readDetail);
+  const summaryQueue = workQueue(2, summarize);
+  const logged = new Map<string, number>();
 
   function load(): Promise<Marks> {
     marksLoad ??= (async () => {
@@ -181,6 +160,7 @@ export function createReviewQueue(bb: BbPluginApi, labeler: Labeler) {
     marks.reviewed = capped(marks.reviewed, (mark) => mark.at);
     marks.summaries = capped(marks.summaries, (summary) => summary.at);
     marksWrite = marksWrite.then(() => safe(async () => bb.storage.kv.set(MARKS_KEY, marks)));
+    changed();
   }
 
   function changed() {
@@ -189,6 +169,50 @@ export function createReviewQueue(bb: BbPluginApi, labeler: Labeler) {
       changedTimer = undefined;
       bb.realtime.publish(REVIEWS_CHANGED, { at: Date.now() });
     }, 300);
+  }
+
+  /** Logs a per-PR failure unless the same failure, for any pull request, was logged within `LOG_REPEAT_MS`. */
+  function logFailure(kind: "details" | "summary", id: string, cause: string) {
+    // A reload retires this generation mid-call ("worker exited", "generation is retired"): noise, not news.
+    if (disposed) return;
+    const now = Date.now();
+    for (const [key, at] of logged) if (now - at >= LOG_REPEAT_MS) logged.delete(key);
+    const key = `${kind}:${cause}`;
+    if (logged.has(key)) return;
+    logged.set(key, now);
+    bb.log.info(`review ${kind} failed for ${id}: ${cause}`);
+  }
+
+  /** Runs `job` per entry, `concurrency` at a time; an entry already waiting or running is not queued again. */
+  function workQueue(concurrency: number, job: (entry: Entry) => Promise<void>) {
+    const waiting: Entry[] = [];
+    const pending = new Set<string>();
+    let active = 0;
+    function pump() {
+      while (!disposed && active < concurrency && waiting.length > 0) {
+        const entry = waiting.shift()!;
+        active += 1;
+        void job(entry).finally(() => {
+          active -= 1;
+          pending.delete(entry.id);
+          changed();
+          pump();
+        });
+      }
+    }
+    return {
+      pending,
+      add(entry: Entry) {
+        if (pending.has(entry.id)) return;
+        pending.add(entry.id);
+        waiting.push(entry);
+        pump();
+      },
+    };
+  }
+
+  function currentHead(entry: Entry): string | null {
+    return details.get(entry.id)?.detail.headSha ?? entry.headSha;
   }
 
   /**
@@ -202,7 +226,7 @@ export function createReviewQueue(bb: BbPluginApi, labeler: Labeler) {
     const reviewedSha = mark && (!known || mark.at > known.at) ? mark.sha : (known?.detail.reviewedSha ?? null);
     // Reviewed at a commit not known yet: hidden until the details name it.
     if (reviewedSha === null) return { hidden: entry.reviewed || mark !== undefined, reviewedSha: null };
-    const head = known?.detail.headSha ?? entry.headSha;
+    const head = currentHead(entry);
     return { hidden: head === null || head === reviewedSha, reviewedSha };
   }
 
@@ -210,18 +234,16 @@ export function createReviewQueue(bb: BbPluginApi, labeler: Labeler) {
     return `v${REVIEW_SUMMARY_VERSION}:${detail.headSha ?? entry.updatedAt}:${hashText(entry.title)}`;
   }
 
-  async function callSearch(target: string, input: { forge: Forge; repo: string | null; query: string; limit: number }): Promise<SearchResult> {
-    try {
-      return await host.call("pr_search", input, { hostId: target });
-    } catch (cause) {
-      return { prs: [], total: 0, error: message(cause), missing: false };
-    }
+  function callSearch(target: string, input: { forge: Forge; repo: string | null; query: string; limit: number }) {
+    return host
+      .call("pr_search", input, { hostId: target })
+      .catch((cause: unknown) => ({ prs: [] as ForgePr[], total: 0, error: message(cause), missing: false }));
   }
 
   async function runRefresh() {
     changed();
     const { searches, invalid } = configuredSearches(await settings.get());
-    const invalidSources = invalid.map(({ line, scope }) => ({ search: line, scope, count: 0, total: 0, error: INVALID_LINE, missing: false }));
+    const invalidSources = invalid.map(({ line, scope }) => ({ search: line, scope, count: 0, total: 0, error: "Start the line with delta: or github:", missing: false }));
     if (searches.length === 0) {
       entries = [];
       sources = invalidSources;
@@ -282,12 +304,8 @@ export function createReviewQueue(bb: BbPluginApi, labeler: Labeler) {
       // Reviewed ones too: their details say whether commits landed after the user's review.
       if (entry.id in marks.archived) continue;
       if (details.get(entry.id)?.updatedAt === entry.updatedAt) queueSummary(entry, marks);
-      else if (!detailPending.has(entry.id)) {
-        detailPending.add(entry.id);
-        detailQueue.push(entry);
-      }
+      else detailQueue.add(entry);
     }
-    pumpDetails();
   }
 
   /** Re-reads every search; a call while one runs joins it and queues one more run. */
@@ -312,19 +330,6 @@ export function createReviewQueue(bb: BbPluginApi, labeler: Labeler) {
     return refreshing;
   }
 
-  function pumpDetails() {
-    while (!disposed && detailActive < DETAIL_CONCURRENCY && detailQueue.length > 0) {
-      const entry = detailQueue.shift()!;
-      detailActive += 1;
-      void readDetail(entry).finally(() => {
-        detailActive -= 1;
-        detailPending.delete(entry.id);
-        changed();
-        pumpDetails();
-      });
-    }
-  }
-
   async function readDetail(entry: Entry) {
     const target = hostId;
     if (!target) return;
@@ -333,9 +338,10 @@ export function createReviewQueue(bb: BbPluginApi, labeler: Labeler) {
       .call("pr_detail", { forge: entry.forge, repo: entry.repo, number: entry.number }, { hostId: target })
       .catch((cause: unknown) => ({ detail: null, error: message(cause) }));
     if (!result.detail) {
-      bb.log.info(`review details failed for ${entry.id}: ${result.error}`);
+      logFailure("details", entry.id, result.error ?? "no details");
       return;
     }
+    if (disposed) return;
     details.set(entry.id, { updatedAt: entry.updatedAt, detail: result.detail, at });
     const marks = await load();
     // Opened before its head was known: that head is the one the user saw.
@@ -350,26 +356,11 @@ export function createReviewQueue(bb: BbPluginApi, labeler: Labeler) {
   function queueSummary(entry: Entry, marks: Marks) {
     const known = details.get(entry.id);
     // Hidden ones wait: a reviewed pull request gets its model read only once new commits bring it back.
-    if (!known || summaryPending.has(entry.id) || reviewState(entry, marks).hidden) return;
+    if (!known || reviewState(entry, marks).hidden) return;
     const current = marks.summaries[entry.id];
     const backingOff = current?.failedAt !== undefined && Date.now() - current.failedAt < SUMMARY_RETRY_MS;
     if (current?.sig === summarySig(entry, known.detail) && (current.failedAt === undefined || backingOff)) return;
-    summaryPending.add(entry.id);
-    summaryQueue.push(entry);
-    pumpSummaries();
-  }
-
-  function pumpSummaries() {
-    while (!disposed && summaryActive < SUMMARY_CONCURRENCY && summaryQueue.length > 0) {
-      const entry = summaryQueue.shift()!;
-      summaryActive += 1;
-      void summarize(entry).finally(() => {
-        summaryActive -= 1;
-        summaryPending.delete(entry.id);
-        changed();
-        pumpSummaries();
-      });
-    }
+    summaryQueue.add(entry);
   }
 
   async function summarize(entry: Entry) {
@@ -380,11 +371,12 @@ export function createReviewQueue(bb: BbPluginApi, labeler: Labeler) {
     const sig = summarySig(entry, known.detail);
     const previous = marks.summaries[entry.id];
     try {
-      const parsed = parseReviewSummary(await labeler.complete(target, REVIEW_SYSTEM, reviewPrompt(entry, known.detail), SUMMARY_TIMEOUT_MS));
+      const parsed = parseReviewSummary(await labeler.complete(target, REVIEW_SYSTEM, reviewPrompt(entry, known.detail), 20_000));
       if (!parsed) throw new Error("The model returned no usable JSON.");
       marks.summaries[entry.id] = { sig, risk: parsed.risk, text: parsed.text, at: Date.now() };
     } catch (cause) {
-      bb.log.info(`review summary failed for ${entry.id}: ${message(cause)}`);
+      if (disposed) return;
+      logFailure("summary", entry.id, message(cause));
       // The last head's summary stays on the card until this one succeeds.
       marks.summaries[entry.id] = { sig, risk: previous?.risk ?? null, text: previous?.text ?? null, at: Date.now(), failedAt: Date.now() };
     }
@@ -392,31 +384,21 @@ export function createReviewQueue(bb: BbPluginApi, labeler: Labeler) {
   }
 
   function card(entry: Entry, marks: Marks, reviewedSha: string | null): ReviewCard {
+    const { lines, reviewed, labels, headSha, ...pr } = entry;
     const detail = details.get(entry.id)?.detail ?? null;
-    const sha = detail?.headSha ?? entry.headSha;
+    const sha = currentHead(entry);
     const read = marks.read[entry.id];
     const summary = marks.summaries[entry.id];
     return {
-      id: entry.id,
-      forge: entry.forge,
-      repo: entry.repo,
-      number: entry.number,
-      url: entry.url,
-      title: entry.title,
-      author: entry.author,
-      bot: entry.bot,
-      draft: entry.draft,
-      createdAt: entry.createdAt,
-      updatedAt: entry.updatedAt,
+      ...pr,
       additions: detail?.additions ?? null,
       deletions: detail?.deletions ?? null,
       changedFiles: detail?.changedFiles ?? null,
       risk: summary?.risk ?? null,
       summary: summary?.text ?? null,
-      summarizing: summaryPending.has(entry.id) || (detailPending.has(entry.id) && !summary?.text),
+      summarizing: summaryQueue.pending.has(entry.id) || (detailQueue.pending.has(entry.id) && !summary?.text),
       unread: !read || (read.sha !== null && sha !== null && read.sha !== sha),
       rereview: reviewedSha !== null,
-      scope: entry.scope,
     };
   }
 
@@ -446,9 +428,8 @@ export function createReviewQueue(bb: BbPluginApi, labeler: Labeler) {
   async function markRead(id: string) {
     const entry = find(id);
     const marks = await load();
-    marks.read[id] = { sha: details.get(id)?.detail.headSha ?? entry.headSha ?? null, at: Date.now() };
+    marks.read[id] = { sha: currentHead(entry), at: Date.now() };
     persist(marks);
-    changed();
     return { ok: true };
   }
 
@@ -456,18 +437,14 @@ export function createReviewQueue(bb: BbPluginApi, labeler: Labeler) {
     const entry = find(id);
     await markRead(id);
     const marks = await load();
-    const summary = marks.summaries[id];
     const { reviewedSha } = reviewState(entry, marks);
-    return {
-      prompt: draftPrompt(entry, details.get(id)?.detail ?? null, { risk: summary?.risk ?? null, text: summary?.text ?? null }, reviewedSha),
-    };
+    return { prompt: draftPrompt(entry, details.get(id)?.detail ?? null, marks.summaries[id], reviewedSha) };
   }
 
   async function archive(id: string) {
     const marks = await load();
     marks.archived[id] = Date.now();
     persist(marks);
-    changed();
     return { ok: true };
   }
 
@@ -479,9 +456,8 @@ export function createReviewQueue(bb: BbPluginApi, labeler: Labeler) {
     const result = await host.call("pr_review", { forge: entry.forge, repo: entry.repo, number: entry.number, verdict, body }, { hostId });
     if (result.error) throw new Error(result.error);
     const marks = await load();
-    marks.reviewed[id] = { sha: details.get(id)?.detail.headSha ?? entry.headSha ?? null, at: Date.now() };
+    marks.reviewed[id] = { sha: currentHead(entry), at: Date.now() };
     persist(marks);
-    changed();
     // Re-read which commit the review landed on: the head may have moved since the card last read it.
     void readDetail(entry).finally(changed);
     return { ok: true };
@@ -490,16 +466,14 @@ export function createReviewQueue(bb: BbPluginApi, labeler: Labeler) {
   settings.onChange((next, prev) => {
     if (next.reviewSearchesMe !== prev.reviewSearchesMe || next.reviewSearchesTeam !== prev.reviewSearchesTeam) void refresh();
   });
-  const startupTimer = setTimeout(() => void refresh(), STARTUP_DELAY_MS);
-  const pollTimer = setInterval(() => void refresh(), POLL_MS);
+  const startupTimer = setTimeout(() => void refresh(), 8_000);
+  const pollTimer = setInterval(() => void refresh(), 5 * 60_000);
 
   function dispose() {
     disposed = true;
     clearTimeout(startupTimer);
     clearInterval(pollTimer);
     clearTimeout(changedTimer);
-    detailQueue.length = 0;
-    summaryQueue.length = 0;
   }
 
   return { list, refresh, draft, markRead, archive, submit, dispose };

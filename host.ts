@@ -71,16 +71,25 @@ export default experimental_defineHostEntry({
       }
       return { text: null, model: null, error: lastError };
     },
+    // The data dir may be unwritable or full: report it like a qmd failure instead of throwing.
     index_status: async ({ command }, context) => {
-      const dir = await threadsDir(context.experimental_paths.dataDir);
-      const error = await ensureCollection(command, dir, context.signal);
-      const threadIds = (await readdir(dir)).flatMap((name) => (name.endsWith(".md") ? [name.slice(0, -3)] : []));
-      return { threadIds, error };
+      try {
+        const dir = await threadsDir(context.experimental_paths.dataDir);
+        const error = await ensureCollection(command, dir, context.signal);
+        const threadIds = (await readdir(dir)).flatMap((name) => (name.endsWith(".md") ? [name.slice(0, -3)] : []));
+        return { threadIds, error };
+      } catch (error) {
+        return { threadIds: [], error: String(error) };
+      }
     },
     index_write: async ({ command, docs, remove }, context) => {
-      const dir = await threadsDir(context.experimental_paths.dataDir);
-      for (const doc of docs) await writeFile(join(dir, `${doc.threadId}.md`), doc.markdown);
-      for (const threadId of remove) await rm(join(dir, `${threadId}.md`), { force: true });
+      try {
+        const dir = await threadsDir(context.experimental_paths.dataDir);
+        for (const doc of docs) await writeFile(join(dir, `${doc.threadId}.md`), doc.markdown);
+        for (const threadId of remove) await rm(join(dir, `${threadId}.md`), { force: true });
+      } catch (error) {
+        return { error: String(error) };
+      }
       const update = await run(command, [...QMD_INDEX, "update"], QMD_UPDATE_TIMEOUT_MS, context.signal);
       return { error: update.code === 0 ? null : failure(command, update) };
     },

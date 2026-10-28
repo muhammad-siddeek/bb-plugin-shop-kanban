@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import type { FormEvent, KeyboardEvent } from "react";
+import { useEffect, useState } from "react";
+import type { FormEvent } from "react";
 import { experimental_Icon as Icon, useBbContext, useBbNavigate } from "@get-bb/plugin-sdk/app";
 import { PLUGIN_SLUG } from "../brand";
 import { formatShortAge, type ReviewCard, type ReviewScope } from "./model";
@@ -86,12 +86,6 @@ function ReviewRow({ review, now, unread, actions }: { review: ReviewCard; now: 
   const sendReason = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (reason.trim()) void submit("request_changes", reason.trim());
-  };
-
-  const reasonKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
-    if (event.key !== "Escape") return;
-    event.preventDefault();
-    setDeclining(false);
   };
 
   const forge = FORGE_NAME[review.forge];
@@ -186,7 +180,11 @@ function ReviewRow({ review, now, unread, actions }: { review: ReviewCard; now: 
                 autoFocus
                 value={reason}
                 onChange={(event) => setReason(event.target.value)}
-                onKeyDown={reasonKeyDown}
+                onKeyDown={(event) => {
+                  if (event.key !== "Escape") return;
+                  event.preventDefault();
+                  setDeclining(false);
+                }}
                 placeholder="What needs to change?"
                 aria-label="What needs to change"
                 disabled={pending !== null}
@@ -293,8 +291,8 @@ export function ReviewSection({ reviews, now }: { reviews: ReviewsApi; now: numb
     });
   }, [state]);
 
-  const listed = useMemo(() => (state?.reviews ?? []).filter((review) => !hidden.has(review.id)), [state, hidden]);
   if (!state || state.scopes.length === 0) return null;
+  const listed = state.reviews.filter((review) => !hidden.has(review.id));
 
   const problems = [
     reviews.error,
@@ -314,7 +312,6 @@ export function ReviewSection({ reviews, now }: { reviews: ReviewsApi; now: numb
     if (isNew(review)) unread[review.scope] += 1;
   }
   const scoped = listed.filter((review) => review.scope === scope);
-  const newCount = unread[scope];
   const shown = showAll ? scoped : scoped.slice(0, SHOWN_MAX);
 
   const markRead = (id: string) => setReadLocally((current) => (current.has(id) ? current : new Set([...current, id])));
@@ -385,7 +382,7 @@ export function ReviewSection({ reviews, now }: { reviews: ReviewsApi; now: numb
           ) : null}
         </button>
         {state.scopes.length > 1 ? <ScopeToggle scopes={state.scopes} active={scope} counts={counts} unread={unread} onSelect={selectScope} /> : null}
-        {newCount > 0 ? <span className="text-[10px] font-medium text-sky-500">{newCount} new</span> : null}
+        {unread[scope] > 0 ? <span className="text-[10px] font-medium text-sky-500">{unread[scope]} new</span> : null}
         <span className="ml-auto flex items-center gap-1">
           {state.refreshing ? <Spinner /> : null}
           {problems.length > 0 ? (

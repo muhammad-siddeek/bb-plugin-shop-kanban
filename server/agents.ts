@@ -1,11 +1,12 @@
+import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { PLUGIN_NAME, PLUGIN_SLUG, TOOL_PREFIX } from "../brand";
 import { COLUMN_IDS, COLUMNS, columnSchema, type BoardTask, type Column, type Result } from "./schema";
 
 type BoardApi = {
   listBoard(): Promise<{ columns: unknown[]; tasks: BoardTask[] }>;
-  spawnTask(input: { shortName: string; prompt: string; projectId?: string; parentThreadId?: string; column?: Column; showOnBoard?: boolean }): Promise<BoardTask>;
-  updateTask(input: { threadId: string; column?: Column; shortName?: string; note?: string; result?: Result | null; showOnBoard?: boolean; showChildren?: boolean }): Promise<BoardTask>;
+  spawnTask(input: { shortName: string; prompt: string; projectId?: string; parentThreadId?: string; column?: Column }): Promise<BoardTask>;
+  updateTask(input: { threadId: string; column?: Column; shortName?: string; note?: string; result?: Result | null }): Promise<BoardTask>;
   markTaskResult(threadId: string, success: boolean, summary: string): Promise<{ task: BoardTask; result: Result }>;
   removeTask(threadId: string, options?: { archiveThread?: boolean }): Promise<boolean>;
 };
@@ -16,8 +17,6 @@ const TOOLS = {
   createTheoryTasks: `${TOOL_PREFIX}_create_theory_tasks`,
   markResult: `${TOOL_PREFIX}_mark_result`,
 };
-
-const NO_THREAD_ID = "No current thread id was available; pass threadId explicitly.";
 
 /**
  * Opens the board instructions appended to every spawned thread's prompt (after a `---` rule). Followed by
@@ -37,7 +36,7 @@ export function toolHelp(titleChain: string): string {
   ].join("\n");
 }
 
-export function registerAgentTools(bb: any, { spawnTask, updateTask, markTaskResult }: BoardApi) {
+export function registerAgentTools(bb: BbPluginApi, { spawnTask, updateTask, markTaskResult }: BoardApi) {
   bb.agents.registerTool({
     name: TOOLS.moveCard,
     description: "Move the current or specified thread to another column of the Kanban board as work progresses.",
@@ -57,19 +56,15 @@ export function registerAgentTools(bb: any, { spawnTask, updateTask, markTaskRes
         .max(40)
         .optional()
         .describe("Short thread title describing the whole thread's goal, not just the latest step."),
-      showChildren: z.boolean().optional().describe("Deprecated; the board only shows top-level non-archived threads."),
     }),
-    async execute(args: any, context: any) {
-      const threadId = args.threadId ?? context.threadId;
-      if (!threadId) return NO_THREAD_ID;
+    async execute(args, context) {
       const task = await updateTask({
-        threadId,
+        threadId: args.threadId ?? context.threadId,
         column: args.column,
         note: args.note,
         shortName: args.shortName,
-        showChildren: args.showChildren,
       });
-      return `Moved ${task.titleChain} to ${COLUMNS[args.column as Column].title}.`;
+      return `Moved ${task.titleChain} to ${COLUMNS[args.column].title}.`;
     },
   });
 
@@ -84,11 +79,9 @@ export function registerAgentTools(bb: any, { spawnTask, updateTask, markTaskRes
       prompt: z.string().min(1).max(12_000).describe("Initial prompt/progress description for the thread."),
       parentThreadId: z.string().optional().describe("Parent thread id. Omit to use the current thread."),
       column: columnSchema.optional(),
-      showOnBoard: z.boolean().optional().describe("Deprecated; the board only shows top-level non-archived threads."),
     }),
-    async execute(args: any, context: any) {
-      const parentThreadId = args.parentThreadId ?? context.threadId ?? undefined;
-      const task = await spawnTask({ ...args, parentThreadId });
+    async execute(args, context) {
+      const task = await spawnTask({ ...args, parentThreadId: args.parentThreadId ?? context.threadId });
       return `Spawned ${task.titleChain} as @thread:${task.threadId}.`;
     },
   });
@@ -102,7 +95,6 @@ export function registerAgentTools(bb: any, { spawnTask, updateTask, markTaskRes
     presentation: { label: { pending: "Spawning theory threads", completed: "Spawned theory threads" }, icon: { glyph: "Lightbulb" } },
     parameters: z.object({
       parentThreadId: z.string().optional().describe("Investigation thread. Omit to use current thread."),
-      showOnBoard: z.boolean().optional().describe("Deprecated; the board only shows top-level non-archived threads."),
       theories: z
         .array(
           z.object({
@@ -118,11 +110,9 @@ export function registerAgentTools(bb: any, { spawnTask, updateTask, markTaskRes
         .min(1)
         .max(12),
     }),
-    async execute(args: any, context: any) {
-      const parentThreadId = args.parentThreadId ?? context.threadId ?? undefined;
-      if (parentThreadId) {
-        await updateTask({ threadId: parentThreadId, column: "wip", note: `Spawned ${args.theories.length} theory thread(s).` });
-      }
+    async execute(args, context) {
+      const parentThreadId = args.parentThreadId ?? context.threadId;
+      await updateTask({ threadId: parentThreadId, column: "wip", note: `Spawned ${args.theories.length} theory thread(s).` });
       const spawned: BoardTask[] = [];
       for (const theory of args.theories) {
         const prompt =
@@ -133,15 +123,7 @@ export function registerAgentTools(bb: any, { spawnTask, updateTask, markTaskRes
             "Do not assume another theory thread will do your work.",
             `When done, call ${TOOLS.markResult} with success=true if the theory worked, otherwise success=false, and include a concise summary.`,
           ].join("\n\n");
-        spawned.push(
-          await spawnTask({
-            shortName: theory.shortName,
-            prompt,
-            parentThreadId,
-            column: "wip",
-            showOnBoard: args.showOnBoard === true,
-          }),
-        );
+        spawned.push(await spawnTask({ shortName: theory.shortName, prompt, parentThreadId, column: "wip" }));
       }
       return `Spawned ${spawned.length} theory thread(s): ${spawned
         .map((task) => `${task.titleChain} (@thread:${task.threadId})`)
@@ -164,10 +146,8 @@ export function registerAgentTools(bb: any, { spawnTask, updateTask, markTaskRes
         .max(2_000)
         .describe("Final progress description: how far the work got and why it is done or blocked."),
     }),
-    async execute(args: any, context: any) {
-      const threadId = args.threadId ?? context.threadId;
-      if (!threadId) return NO_THREAD_ID;
-      const { task, result } = await markTaskResult(threadId, args.success, args.summary);
+    async execute(args, context) {
+      const { task, result } = await markTaskResult(args.threadId ?? context.threadId, args.success, args.summary);
       return `Marked ${task.titleChain} as ${result}: ${args.summary}`;
     },
   });
@@ -188,7 +168,7 @@ export function registerAgentTools(bb: any, { spawnTask, updateTask, markTaskRes
   }));
 }
 
-export function registerCli(bb: any, { listBoard, spawnTask, updateTask, markTaskResult, removeTask }: BoardApi) {
+export function registerCli(bb: BbPluginApi, { listBoard, spawnTask, updateTask, markTaskResult, removeTask }: BoardApi) {
   const cli = `bb ${PLUGIN_SLUG}`;
   const commands = [
     { name: "list", summary: "List threads on the Kanban board", usage: `${cli} list [--json]` },
@@ -196,7 +176,6 @@ export function registerCli(bb: any, { listBoard, spawnTask, updateTask, markTas
     { name: "move", summary: "Move a thread", usage: `${cli} move <thread-id> <column> [note] [--json]` },
     { name: "success", summary: "Mark a thread done", usage: `${cli} success <thread-id> <summary> [--json]` },
     { name: "fail", summary: "Mark a thread blocked", usage: `${cli} fail <thread-id> <summary> [--json]` },
-    { name: "children", summary: "Show or hide a parent's child threads", usage: `${cli} children <parent-thread-id> <show|hide> [--json]` },
     { name: "remove", summary: "Archive/remove a thread from the board", usage: `${cli} remove <thread-id> [--json]` },
   ];
   const usage = [
@@ -243,12 +222,6 @@ export function registerCli(bb: any, { listBoard, spawnTask, updateTask, markTas
           if (!threadId || !summary) return usageError;
           const { task, result } = await markTaskResult(threadId, command === "success", summary);
           return reply(task, `Marked ${task.titleChain} ${result}`);
-        }
-        if (command === "children") {
-          const [, threadId, mode] = args;
-          if (!threadId || (mode !== "show" && mode !== "hide")) return usageError;
-          const task = await updateTask({ threadId, showChildren: mode === "show" });
-          return reply(task, `${mode === "show" ? "Showing" : "Hiding"} child threads for ${task.titleChain}`);
         }
         if (command === "remove") {
           const [, threadId] = args;

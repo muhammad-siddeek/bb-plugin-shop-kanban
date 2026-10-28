@@ -1,20 +1,16 @@
 import { z } from "zod";
-import type { Forge, ForgePr, ForgePrDetail } from "../contract";
+import type { Forge, ForgePr } from "../contract";
 import { failure, run } from "./run";
 
 // Pull requests through the forge CLIs the user already signed in to: `dt` for Delta, `gh` for GitHub. Both speak
 // GitHub's REST shapes, so one set of schemas reads either.
 
 const CLI: Record<Forge, string> = { delta: "dt", github: "gh" };
-const API_TIMEOUT_MS = 30_000;
-const REVIEW_TIMEOUT_MS = 60_000;
-const FILES_PAGE = 100;
 /** Reviews read per pull request; the API lists them oldest first and cannot sort. */
 const REVIEWS_PAGE = 100;
 /** Diff kept per file and per pull request: enough for a model's first read, not for a review. */
 const PATCH_FILE_MAX = 2_000;
 const PATCH_TOTAL_MAX = 12_000;
-const BODY_MAX = 8_000;
 /** Lockfiles, snapshots and generated dumps say little about intent and would crowd out the real change. */
 const NOISY_PATH =
   /(?:^|\/)(?:[^/]*\.lock|package-lock\.json|pnpm-lock\.yaml|go\.sum|schema\.json|schema\.graphql|[^/]*\.snap|[^/]*\.min\.(?:js|css))$/;
@@ -71,8 +67,6 @@ const filesSchema = z.array(
     .loose(),
 );
 
-const meSchema = z.object({ id: z.number() }).loose();
-
 /** Chronological, oldest first. */
 const reviewsSchema = z.array(
   z
@@ -96,10 +90,10 @@ type ApiResult<T> = { ok: true; value: T } | { ok: false; error: string; missing
 async function api<T>(forge: Forge, repo: string | null, endpoint: string, schema: z.ZodType<T>, signal: AbortSignal): Promise<ApiResult<T>> {
   const command = CLI[forge];
   const args = forge === "delta" ? ["api", "-R", repo ?? "", endpoint] : ["api", endpoint];
-  const result = await run(command, args, API_TIMEOUT_MS, signal);
-  if (result.code !== 0) {
-    return { ok: false, error: failure(command, result), missing: result.code === -1 && result.stderr.includes("ENOENT") };
-  }
+  const result = await run(command, args, 30_000, signal);
+  // Code -1: the CLI could not start, i.e. it is not installed here (Node says ENOENT, Bun "Executable not found").
+  if (result.code === -1) return { ok: false, error: `${command} is not installed on this host.`, missing: true };
+  if (result.code !== 0) return { ok: false, error: failure(command, result), missing: false };
   try {
     return { ok: true, value: schema.parse(JSON.parse(result.stdout)) };
   } catch {
@@ -111,11 +105,7 @@ function clip(text: string, max: number): string {
   return text.length <= max ? text : `${text.slice(0, max)}\n…`;
 }
 
-export async function prSearch(
-  input: { forge: Forge; repo: string | null; query: string; limit: number },
-  signal: AbortSignal,
-): Promise<{ prs: ForgePr[]; total: number; error: string | null; missing: boolean }> {
-  if (input.forge === "delta" && !input.repo) return { prs: [], total: 0, error: "A Delta search needs a repository.", missing: false };
+export async function prSearch(input: { forge: Forge; repo: string | null; query: string; limit: number }, signal: AbortSignal) {
   const params = `q=${encodeURIComponent(input.query)}&sort=updated&order=desc&per_page=${input.limit}`;
   const endpoint = input.forge === "delta" ? `/api/v3/search/issues?${params}` : `search/issues?${params}`;
   const result = await api(input.forge, input.repo, endpoint, searchSchema, signal);
@@ -152,7 +142,7 @@ export async function prSearch(
 async function myId(forge: Forge, repo: string, signal: AbortSignal): Promise<number | null> {
   const known = myIds.get(forge);
   if (known !== undefined) return known;
-  const result = await api(forge, repo, forge === "delta" ? "/api/v3/user" : "user", meSchema, signal);
+  const result = await api(forge, repo, forge === "delta" ? "/api/v3/user" : "user", z.object({ id: z.number() }).loose(), signal);
   if (!result.ok) return null;
   myIds.set(forge, result.value.id);
   return result.value.id;
@@ -166,14 +156,11 @@ async function reviewedSha(forge: Forge, repo: string, base: string, signal: Abo
   return mine.at(-1)?.commit_id ?? null;
 }
 
-export async function prDetail(
-  input: { forge: Forge; repo: string; number: number },
-  signal: AbortSignal,
-): Promise<{ detail: ForgePrDetail | null; error: string | null }> {
+export async function prDetail(input: { forge: Forge; repo: string; number: number }, signal: AbortSignal) {
   const base = `repos/${input.repo}/pulls/${input.number}`;
   const [pull, files, reviewed] = await Promise.all([
     api(input.forge, input.repo, base, pullSchema, signal),
-    api(input.forge, input.repo, `${base}/files?per_page=${FILES_PAGE}`, filesSchema, signal),
+    api(input.forge, input.repo, `${base}/files?per_page=100`, filesSchema, signal),
     reviewedSha(input.forge, input.repo, base, signal),
   ]);
   if (!pull.ok) return { detail: null, error: pull.error };
@@ -193,7 +180,7 @@ export async function prDetail(
     detail: {
       headSha: pull.value.head.sha,
       reviewedSha: reviewed,
-      body: clip((pull.value.body ?? "").trim(), BODY_MAX),
+      body: clip((pull.value.body ?? "").trim(), 8_000),
       additions: pull.value.additions ?? null,
       deletions: pull.value.deletions ?? null,
       changedFiles: pull.value.changed_files ?? null,
@@ -207,11 +194,11 @@ export async function prDetail(
 export async function prReview(
   input: { forge: Forge; repo: string; number: number; verdict: "approve" | "request_changes"; body: string },
   signal: AbortSignal,
-): Promise<{ error: string | null }> {
+) {
   const command = CLI[input.forge];
   const args = ["pr", "review", String(input.number), "-R", input.repo, input.verdict === "approve" ? "--approve" : "--request-changes"];
   const body = input.body.trim();
   if (body) args.push("--body", body);
-  const result = await run(command, args, REVIEW_TIMEOUT_MS, signal);
+  const result = await run(command, args, 60_000, signal);
   return { error: result.code === 0 ? null : failure(command, result) };
 }

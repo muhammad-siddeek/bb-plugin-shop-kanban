@@ -65,10 +65,7 @@ const boardTaskSchema = z.object({
   description: z.string().nullable(),
   result: resultSchema.nullable(),
   note: z.string().nullable(),
-  showOnBoard: z.boolean(),
-  showChildren: z.boolean(),
   childCount: z.number(),
-  hiddenChildCount: z.number(),
   runningChildCount: z.number(),
   statusReason: z.string().nullable(),
   /** bb's unread state: new activity since the user last opened the thread. */
@@ -177,19 +174,6 @@ export const rpcContract = {
       projectId: z.string().optional(),
       parentThreadId: z.string().optional(),
       column: columnSchema.optional(),
-      showOnBoard: z.boolean().optional(),
-    }),
-    output: boardTaskSchema,
-  },
-  board_update_task: {
-    input: z.object({
-      threadId: z.string(),
-      column: columnSchema.optional(),
-      shortName: shortNameInput.optional(),
-      note: z.string().trim().max(2_000).optional(),
-      result: resultSchema.nullable().optional(),
-      showOnBoard: z.boolean().optional(),
-      showChildren: z.boolean().optional(),
     }),
     output: boardTaskSchema,
   },
@@ -225,8 +209,6 @@ export type StoredTask = {
   description: string | null;
   result: Result | null;
   note: string | null;
-  showOnBoard: boolean;
-  showChildren: boolean;
   createdAt: string;
   updatedAt: string;
 };

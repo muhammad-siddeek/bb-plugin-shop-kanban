@@ -129,23 +129,6 @@ export type ThreadDetails = {
   userPrompts: string[];
 };
 
-/** Model-written card label: "[category] intent" title plus a summary of the latest interaction. */
-export type CardLabel = {
-  titleSig: string;
-  category: string;
-  intent: string;
-  summarySig: string;
-  summary: string | null;
-  needsInput: boolean | null;
-  failedAt?: number;
-  /** Title the board last wrote to the bb thread, to tell our renames from the user's. */
-  appliedTitle?: string;
-  /** The title our last rename replaced; seeing it again just means a stale snapshot. */
-  replacedTitle?: string | null;
-  /** The user renamed the thread themselves; stop syncing and show their title. */
-  userTitled?: boolean;
-};
-
 export type LabelView = { title: string | null; summary: string | null; needsInput: boolean | null };
 
 type Derived = { column: Column; reason: string; description: string | null; runningChildren: number };

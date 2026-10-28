@@ -2,22 +2,25 @@ import { useEffect, useRef, useState } from "react";
 import type { KeyboardEvent, PointerEvent } from "react";
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
 import { PLUGIN_NAME } from "../brand";
-import {
-  BOTTOM_BOARD_HEIGHT_VAR,
-  BOTTOM_BOARD_OPEN_CLASS,
-  COLUMN_META,
-  PANEL_KEYBOARD_LARGE_STEP,
-  PANEL_KEYBOARD_STEP,
-  PANEL_MIN_HEIGHT,
-  PLUGIN_ICON,
-  clampPanelHeight,
-  defaultPanelHeight,
-  maxPanelHeight,
-} from "./model";
-import { useBoard, useReviews, useTaskStatusNotifications } from "./hooks";
+import { BOTTOM_BOARD_HEIGHT_VAR, BOTTOM_BOARD_OPEN_CLASS, COLUMN_META } from "./model";
+import { useBoard, useReviews } from "./hooks";
 import { IconButton } from "./primitives";
 import { BoardView } from "./column";
 import { ThreadSearch } from "./search";
+
+const PLUGIN_ICON = "ListTodo";
+const DEFAULT_PANEL_MIN_HEIGHT = 320;
+const PANEL_MIN_HEIGHT = 240;
+const PANEL_KEYBOARD_STEP = 24;
+const PANEL_KEYBOARD_LARGE_STEP = 96;
+
+function maxPanelHeight(): number {
+  return Math.max(PANEL_MIN_HEIGHT, Math.round(window.innerHeight * 0.9));
+}
+
+function clampPanelHeight(value: number): number {
+  return Math.min(Math.max(value, PANEL_MIN_HEIGHT), maxPanelHeight());
+}
 
 /** Height updater for a resize-handle key, or null when the key does not resize the panel. */
 function keyboardResize(key: string): ((height: number) => number) | null {
@@ -50,12 +53,13 @@ function CountBadge({ column, count }: { column: "blocked" | "done"; count: numb
 
 export function BottomBoardOverlay() {
   const [open, setOpen] = useState(true);
-  const [panelHeight, setPanelHeight] = useState(defaultPanelHeight);
+  const [panelHeight, setPanelHeight] = useState(() =>
+    clampPanelHeight(Math.max(DEFAULT_PANEL_MIN_HEIGHT, Math.round(window.innerHeight * 0.48))),
+  );
   const resizeCleanupRef = useRef<() => void>(() => {});
   const api = useBoard();
   const reviews = useReviews();
   const { board, refetch } = api;
-  useTaskStatusNotifications();
   const blockedTasks = board?.tasks.filter((task) => task.column === "blocked").length ?? 0;
   const doneTasks = board?.tasks.filter((task) => task.column === "done").length ?? 0;
   const [refreshing, setRefreshing] = useState(false);

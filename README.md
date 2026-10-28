@@ -208,7 +208,6 @@ bb shop-kanban add <short-name> -- <prompt> [--json]
 bb shop-kanban move <thread-id> <column> [note] [--json]
 bb shop-kanban success <thread-id> <summary> [--json]
 bb shop-kanban fail <thread-id> <summary> [--json]
-bb shop-kanban children <parent-thread-id> <show|hide> [--json]
 bb shop-kanban remove <thread-id> [--json]
 ```
 
