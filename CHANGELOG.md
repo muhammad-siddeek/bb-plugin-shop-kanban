@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.10.1
 
 - The card tooltip shows only the harness session: harness, model and
   thinking level, then tokens and context share, then cost, each on its own
