@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.0
 
 - A card's cost now covers the thread's whole tree: the thread, every
   descendant thread (hidden and archived ones included) and their harness
