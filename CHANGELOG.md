@@ -25,6 +25,33 @@
   commits land after your review, then returns marked `re-review`, with a
   draft that asks what changed since the commit you reviewed.
 - The board's refresh button re-reads the review searches too.
+- Machines without the review tools stay quiet. When no persistent host is
+  connected, or `dt` or `gh` is not installed or not signed in there, those
+  searches are skipped without a warning; hover the Reviews header for the
+  reason (for example ``run `gh auth login` ``). With nothing to list, the
+  section stays hidden. Other failures still show behind the amber icon.
+- Missing tools say how to fix them, once. A missing labeler CLI is logged
+  once an hour with the `labelerCommand` hint, and labels retry right after
+  a settings change; a missing qmd shows how to install it or set
+  `searchCommand` under the search bar. Host commands get `HOME` even when
+  the bb daemon started without one, so `gh`, `dt` and `qmd` find their
+  config.
+- A host command that hangs (ignores its stop signal, or leaves a background
+  process holding its output) is killed a second after its timeout, so it
+  can't hold up labels, search, reviews or costs. Threads on a disconnected
+  host count the cost bb reports instead of waiting on the host.
+- Archiving a thread drops its board state and label from plugin storage, so
+  storage stays bounded by the threads you keep. Corrupt stored state is
+  dropped and rebuilt instead of breaking the board.
+- The board and the review queue stop polling while bb's window is hidden
+  and read again when it comes back. One board read and one search request
+  are in flight at a time.
+- The cost tooltip wraps instead of cutting off a long line such as
+  `$185.13 spent across 47 threads (… estimated)`.
+- `bb shop-kanban remove` exits 1 when nothing was archived. The
+  `bb shop-kanban children` command, a no-op since child threads always roll
+  up into their parent, is gone; agent tools ignore the old `showOnBoard`
+  and `showChildren` inputs.
 
 ## 0.8.0
 

@@ -36,9 +36,9 @@ Columns are derived from live thread state; you never drag threads around.
   `~/.bb/pi-bridge-sessions`). For omp, subagents at every depth (nested
   tasks, background tasks, eval agents, advisors) count; omp itself reports
   only a session's own replies and its direct tasks, and Pi reports nothing.
-  Other harnesses count what they report to bb. A fork doesn't count the
-  entries it copied from its source while the source's transcript is still
-  there.
+  Other harnesses count what they report to bb, and so do threads on a
+  disconnected host. A fork doesn't count the entries it copied from its
+  source while the source's transcript is still there.
 - A `~` in front of the cost means part of it is estimated; the tooltip says
   how much. Replies a harness saved with tokens but no price are priced at
   the average rate, per token bucket, that the same provider and model
@@ -76,7 +76,8 @@ bb plugin config shop-kanban set labelerModels anthropic/claude-haiku-4-5
 ```
 
 With labels off, or when the CLI is unavailable, threads use heuristic titles
-and an excerpt of the latest message.
+and an excerpt of the latest message. A missing CLI is logged once an hour
+with this hint, and labels are retried right after either setting changes.
 
 ## Thread search
 
@@ -150,8 +151,11 @@ requesting changes removes the card at once. A pull request you reviewed,
 from the board or anywhere else, stays hidden until commits land after your
 review; it then comes back marked `re-review`, and its draft asks what changed
 since the commit you reviewed. Errors show on the card, and failed searches
-behind an amber icon in the section header. The section shows 8 cards with a
-"Show more" button, and remembers whether it is collapsed.
+behind an amber icon in the section header. A search that can't run here,
+because no persistent host is connected or `dt` or `gh` is missing or signed
+out, is skipped quietly: hover the Reviews header to see why. With nothing to
+list, the section stays hidden. The section shows 8 cards with a "Show more"
+button, and remembers whether it is collapsed.
 
 The searches run through the forge CLIs you already signed in to, `dt` for
 Delta and `gh` for GitHub, on the same connected persistent host as thread
@@ -194,7 +198,7 @@ risk chip and drafts carry no first read.
 Agents get four tools for tracking their own work on the board:
 
 - `shop_kanban_move_card`: move the current or a given thread to another column.
-- `shop_kanban_spawn_task`: spawn a child thread.
+- `shop_kanban_spawn_task`: spawn a child thread of the current one; it starts in WIP.
 - `shop_kanban_create_theory_tasks`: spawn one independent thread per theory.
 - `shop_kanban_mark_result`: mark a thread done (success) or blocked (failure).
 
@@ -208,7 +212,7 @@ bb shop-kanban add <short-name> -- <prompt> [--json]
 bb shop-kanban move <thread-id> <column> [note] [--json]
 bb shop-kanban success <thread-id> <summary> [--json]
 bb shop-kanban fail <thread-id> <summary> [--json]
-bb shop-kanban remove <thread-id> [--json]
+bb shop-kanban remove <thread-id> [--json]   # archives the thread; exits 1 if nothing was archived
 ```
 
 ## Install

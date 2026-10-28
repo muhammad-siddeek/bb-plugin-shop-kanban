@@ -22,4 +22,6 @@ Titles, summaries, and the Blocked-or-Done call for finished replies come from a
 - For thread search: [qmd](https://github.com/tobi/qmd) (`npm install -g @tobilu/qmd`) on a connected persistent host.
 - For the review queue: `dt` (Delta) and/or `gh` (GitHub), signed in, on that same host.
 
+Each is optional. The board works without any of them: without a labeler, threads keep heuristic titles; search shows how to install qmd when you use it; and review searches that can't run are skipped quietly, with the reason on hover over the Reviews header.
+
 If you replace bb's omp agent with a custom ACP agent entry, bb draws it with a generic toolbox glyph. The plugin draws bb's omp mark for it instead, in bb's sidebar and pickers as well as on the board.
