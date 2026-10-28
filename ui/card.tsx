@@ -113,6 +113,16 @@ function TaskStatusMark({ column, unread }: { column: BoardColumn; unread: boole
   );
 }
 
+/** A "· text" fact after the footer's time. */
+function FooterNote({ tone, title, text }: { tone: string; title: string; text: string }) {
+  return (
+    <span className={`min-w-0 truncate text-[10.5px] font-medium ${tone}`} title={title}>
+      <span className="text-muted-foreground/50" aria-hidden>· </span>
+      {text}
+    </span>
+  );
+}
+
 export function TaskCard({ task, now, unread, selected, invertedTheme, provider, onArchive, onOpen }: {
   task: BoardTask;
   now: number;
@@ -262,18 +272,8 @@ export function TaskCard({ task, now, unread, selected, invertedTheme, provider,
               {formatRelativeTime(activity, now)}
             </time>
           ) : null}
-          {reason ? (
-            <span className={`min-w-0 truncate text-[10.5px] font-medium opacity-90 ${meta.title}`} title={reason}>
-              <span className="text-muted-foreground/50" aria-hidden>· </span>
-              {reason}
-            </span>
-          ) : null}
-          {task.missingThread ? (
-            <span className="min-w-0 truncate text-[10.5px] font-medium text-rose-500" title="This BB thread no longer exists">
-              <span className="text-muted-foreground/50" aria-hidden>· </span>
-              no thread
-            </span>
-          ) : null}
+          {reason ? <FooterNote tone={`opacity-90 ${meta.title}`} title={reason} text={reason} /> : null}
+          {task.missingThread ? <FooterNote tone="text-rose-500" title="This BB thread no longer exists" text="no thread" /> : null}
         </div>
         <div className="flex shrink-0 items-center">
           <HarnessMeta provider={provider} session={task.session} />

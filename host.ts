@@ -27,8 +27,6 @@ const LABELER_FLAGS = [
  */
 const QMD_INDEX = ["--index", "shop-kanban"];
 const QMD_COLLECTION = "threads";
-/** One `<threadId>.md` per thread, under the plugin's host data dir. */
-const THREADS_DIR = "threads";
 const QMD_UPDATE_TIMEOUT_MS = 120_000;
 const QMD_SEARCH_TIMEOUT_MS = 10_000;
 
@@ -48,9 +46,9 @@ async function ensureCollection(command: string, dir: string, signal: AbortSigna
   return add.code === 0 ? null : failure(command, add);
 }
 
-/** The exported thread files' directory, created on first use. */
+/** The exported thread files' directory (one `<threadId>.md` per thread), created on first use. */
 async function threadsDir(dataDir: string): Promise<string> {
-  const dir = join(dataDir, THREADS_DIR);
+  const dir = join(dataDir, "threads");
   await mkdir(dir, { recursive: true });
   return dir;
 }
@@ -70,7 +68,8 @@ export default experimental_defineHostEntry({
         const text = result.stdout.trim();
         if (result.code === 0 && text) return { text, model, error: null };
         lastError = failure(command, result);
-        if (context.signal.aborted) break;
+        // A CLI that cannot start fails the same way for every model.
+        if (result.code === -1 || context.signal.aborted) break;
       }
       return { text: null, model: null, error: lastError };
     },

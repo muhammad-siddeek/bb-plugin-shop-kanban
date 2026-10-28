@@ -1,4 +1,5 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
+import { z } from "zod";
 import { hostContract } from "../contract";
 import { TOOL_HELP_LEAD } from "./agents";
 import { commandMissing, indexHostId } from "./hosts";
@@ -39,7 +40,8 @@ const NO_HOST =
   "Thread search keeps its index on a connected persistent bb host, and none is connected (ephemeral hosts are skipped).";
 
 /** Which threads the index holds on `hostId`: thread id → the exported `updatedAt`, or null when exported mid-run. */
-type IndexState = { hostId: string | null; synced: Record<string, number | null> };
+const indexStateSchema = z.object({ hostId: z.string().nullable(), synced: z.record(z.string(), z.number().nullable()) });
+type IndexState = z.infer<typeof indexStateSchema>;
 
 function clip(text: string, max: number): string {
   return text.length <= max ? text : `${text.slice(0, max).trimEnd()}${ELLIPSIS}`;
@@ -115,8 +117,8 @@ export function createSearchIndex(bb: BbPluginApi, reader: ThreadReader) {
 
   async function loadState(): Promise<IndexState> {
     if (state) return state;
-    const raw = await safe(async () => bb.storage.kv.get<IndexState>(INDEX_KEY));
-    state = raw && typeof raw === "object" && raw.synced ? raw : { hostId: null, synced: {} };
+    const raw = await safe(() => bb.storage.kv.get<unknown>(INDEX_KEY));
+    state = indexStateSchema.safeParse(raw).data ?? { hostId: null, synced: {} };
     return state;
   }
 
@@ -164,7 +166,7 @@ export function createSearchIndex(bb: BbPluginApi, reader: ThreadReader) {
       syncError = NO_HOST;
       return;
     }
-    const status = await safe(async () => host.call("index_status", { command }, { hostId, timeoutMs: INDEX_CALL_TIMEOUT_MS }));
+    const status = await safe(() => host.call("index_status", { command }, { hostId, timeoutMs: INDEX_CALL_TIMEOUT_MS }));
     if (!status || status.error) {
       syncError = explain(command, status?.error ?? "The host could not read the search index.");
       return;
@@ -192,7 +194,7 @@ export function createSearchIndex(bb: BbPluginApi, reader: ThreadReader) {
       const docs = await exportThreads(stale.slice(offset, offset + size));
       offset += size;
       const dropping = remove.splice(0, REMOVE_BATCH);
-      const write = await safe(async () =>
+      const write = await safe(() =>
         host.call(
           "index_write",
           { command, docs: docs.map(({ thread, markdown }) => ({ threadId: thread.id, markdown })), remove: dropping },
@@ -220,16 +222,13 @@ export function createSearchIndex(bb: BbPluginApi, reader: ThreadReader) {
       return;
     }
     syncing = true;
-    try {
-      do {
-        syncAgain = false;
-        await sync().catch((cause) => {
-          syncError = cause instanceof Error ? cause.message : String(cause);
-        });
-      } while (syncAgain);
-    } finally {
-      syncing = false;
-    }
+    do {
+      syncAgain = false;
+      await sync().catch((cause) => {
+        syncError = cause instanceof Error ? cause.message : String(cause);
+      });
+    } while (syncAgain && !disposed);
+    syncing = false;
   }
 
   /** Debounced sync; thread events arrive in bursts. */
@@ -260,7 +259,7 @@ export function createSearchIndex(bb: BbPluginApi, reader: ThreadReader) {
       scheduleSync(0);
       return respond(syncError);
     }
-    const found = await safe(async () => host.call("index_search", { command, query, limit: SEARCH_LIMIT }, { hostId }));
+    const found = await safe(() => host.call("index_search", { command, query, limit: SEARCH_LIMIT }, { hostId }));
     if (!found) return respond("The host could not run the search.");
     if (found.error) return respond(explain(command, found.error));
     const threads = await reader.threadsById(found.hits.map((hit) => hit.threadId));
@@ -281,6 +280,7 @@ export function createSearchIndex(bb: BbPluginApi, reader: ThreadReader) {
   settings.onChange((next, prev) => {
     if (next.searchCommand !== prev.searchCommand) scheduleSync(0);
   });
+  // A timer of its own: a search or a settings change in the meantime must still sync at once.
   const startupTimer = setTimeout(() => scheduleSync(0), STARTUP_DELAY_MS);
   const intervalTimer = setInterval(() => scheduleSync(0), SYNC_INTERVAL_MS);
 

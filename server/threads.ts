@@ -37,14 +37,14 @@ export function createThreadReader(bb: BbPluginApi) {
   const cappedLogged = new Set<boolean>();
 
   function getThread(threadId: string): Promise<ThreadResponse | null> {
-    return safe(async () => await bb.sdk.threads.get({ threadId }));
+    return safe(() => bb.sdk.threads.get({ threadId }));
   }
 
   async function titleChainForParent(parentThreadId: string | undefined) {
     if (!parentThreadId) return { titleChain: null as string | null, projectId: null as string | null };
     const [thread, meta] = await Promise.all([
       getThread(parentThreadId),
-      safe(async () => await bb.sdk.threads.getPluginMetadata({ threadId: parentThreadId })),
+      safe(() => bb.sdk.threads.getPluginMetadata({ threadId: parentThreadId })),
     ]);
     return {
       titleChain:
@@ -56,8 +56,8 @@ export function createThreadReader(bb: BbPluginApi) {
   }
 
   function turnRequests(threadId: string, order: "asc" | "desc", limit: number): Promise<ThreadEvent[] | null> {
-    return safe(async () =>
-      await bb.sdk.threads.events.list({ threadId, order, limit: String(limit), types: ["client/turn/requested"] }),
+    return safe(() =>
+      bb.sdk.threads.events.list({ threadId, order, limit: String(limit), types: ["client/turn/requested"] }),
     );
   }
 
@@ -115,15 +115,8 @@ export function createThreadReader(bb: BbPluginApi) {
    */
   async function listAllThreads(archived = false): Promise<LiveThread[] | null> {
     const all: LiveThread[] = [];
-    for (let offset = 0; ; offset += PAGE) {
-      if (offset >= MAX_THREADS) {
-        if (!cappedLogged.has(archived)) bb.log.info(`listing stopped at ${MAX_THREADS} ${archived ? "archived" : "open"} threads`);
-        cappedLogged.add(archived);
-        return all;
-      }
-      const page = await safe(async () =>
-        await bb.sdk.threads.list({ archived, includeHidden: true, limit: PAGE, offset }),
-      );
+    for (let offset = 0; offset < MAX_THREADS; offset += PAGE) {
+      const page = await safe(() => bb.sdk.threads.list({ archived, includeHidden: true, limit: PAGE, offset }));
       if (page === null) return offset === 0 ? null : all;
       for (const row of page) {
         const thread = toLiveThread(row);
@@ -131,6 +124,9 @@ export function createThreadReader(bb: BbPluginApi) {
       }
       if (page.length < PAGE) return all;
     }
+    if (!cappedLogged.has(archived)) bb.log.info(`listing stopped at ${MAX_THREADS} ${archived ? "archived" : "open"} threads`);
+    cappedLogged.add(archived);
+    return all;
   }
 
   /** Visit every `types` event after `afterSeq`, oldest first; the last seq read, or null when a read fails. */
@@ -141,8 +137,8 @@ export function createThreadReader(bb: BbPluginApi) {
     visit: (event: ThreadEvent) => void,
   ): Promise<{ afterSeq: string | null } | null> {
     for (let page = 0; page < MAX_EVENT_PAGES; page += 1) {
-      const events = await safe(async () =>
-        await bb.sdk.threads.events.list({
+      const events = await safe(() =>
+        bb.sdk.threads.events.list({
           threadId,
           order: "asc",
           limit: String(EVENT_PAGE),
@@ -179,7 +175,7 @@ export function createThreadReader(bb: BbPluginApi) {
     for (let start = 0; start < ids.length; start += IDS_PAGE) {
       const threadIds = ids.slice(start, start + IDS_PAGE);
       const lists = await Promise.all(
-        [false, true].map((archived) => safe(async () => await bb.sdk.threads.list({ threadIds, archived, includeHidden: true }))),
+        [false, true].map((archived) => safe(() => bb.sdk.threads.list({ threadIds, archived, includeHidden: true }))),
       );
       for (const row of lists.flatMap((list) => list ?? [])) {
         const thread = toLiveThread(row);
@@ -191,8 +187,8 @@ export function createThreadReader(bb: BbPluginApi) {
 
   /** Every descendant of a thread, hidden included and archived ones on request; null when the read fails. */
   async function listDescendants(threadId: string, includeArchived = false): Promise<LiveThread[] | null> {
-    const result = await safe(async () =>
-      await bb.sdk.threads.experimental_listDescendants({ threadIds: [threadId], includeHidden: true, includeArchived }),
+    const result = await safe(() =>
+      bb.sdk.threads.experimental_listDescendants({ threadIds: [threadId], includeHidden: true, includeArchived }),
     );
     if (result === null) return null;
     const ids = result.threads.find((entry) => entry.threadId === threadId)?.descendantIds ?? [];

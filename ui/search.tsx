@@ -20,36 +20,36 @@ export function ThreadSearch({ maxListHeight }: { maxListHeight: number }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
-  const [response, setResponse] = useState<SearchResponse | null>(null);
-  const [pending, setPending] = useState(false);
+  // The last answer and the query it answers; while a newer query waits, its results stay up.
+  const [answer, setAnswer] = useState<{ query: string; response: SearchResponse } | null>(null);
+  // One search at a time: a slow qmd can't stack a request per pause in typing.
+  const [inFlight, setInFlight] = useState(false);
   const [active, setActive] = useState(0);
   const trimmed = query.trim();
-  const results = trimmed ? response?.results ?? [] : [];
+  const response = trimmed ? answer?.response ?? null : null;
+  const results = response?.results ?? [];
+  const pending = trimmed !== "" && answer?.query !== trimmed;
+
+  const changeQuery = (value: string) => {
+    setQuery(value);
+    if (!value.trim()) setAnswer(null);
+  };
 
   useEffect(() => {
-    if (!trimmed) {
-      setResponse(null);
-      setPending(false);
-      return;
-    }
-    let current = true;
-    setPending(true);
+    if (!pending || inFlight) return;
     const timer = window.setTimeout(() => {
+      setInFlight(true);
       rpc
         .call("board_search", { query: trimmed })
         .catch((cause: unknown): SearchResponse => ({ results: [], indexed: 0, indexing: false, error: errorMessage(cause) }))
         .then((next) => {
-          if (!current) return;
-          setResponse(next);
+          setAnswer({ query: trimmed, response: next });
           setActive(0);
-          setPending(false);
+          setInFlight(false);
         });
     }, SEARCH_DEBOUNCE_MS);
-    return () => {
-      current = false;
-      window.clearTimeout(timer);
-    };
-  }, [rpc, trimmed]);
+    return () => window.clearTimeout(timer);
+  }, [rpc, trimmed, pending, inFlight]);
 
   useEffect(() => {
     if (!open) return;
@@ -71,7 +71,7 @@ export function ThreadSearch({ maxListHeight }: { maxListHeight: number }) {
       event.preventDefault();
       if (open && trimmed) setOpen(false);
       else {
-        setQuery("");
+        changeQuery("");
         inputRef.current?.blur();
       }
       return;
@@ -114,7 +114,7 @@ export function ThreadSearch({ maxListHeight }: { maxListHeight: number }) {
           aria-autocomplete="list"
           value={query}
           onChange={(event) => {
-            setQuery(event.target.value);
+            changeQuery(event.target.value);
             setOpen(true);
           }}
           onFocus={() => setOpen(true)}
@@ -133,7 +133,7 @@ export function ThreadSearch({ maxListHeight }: { maxListHeight: number }) {
             aria-label="Clear search"
             title="Clear search"
             onClick={() => {
-              setQuery("");
+              changeQuery("");
               inputRef.current?.focus();
             }}
             className="inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"

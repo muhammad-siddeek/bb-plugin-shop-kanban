@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { KeyboardEvent, PointerEvent } from "react";
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
 import { PLUGIN_NAME } from "../brand";
-import { BOTTOM_BOARD_HEIGHT_VAR, BOTTOM_BOARD_OPEN_CLASS, COLUMN_META } from "./model";
+import { BOTTOM_BOARD_HEIGHT_VAR, BOTTOM_BOARD_OPEN_CLASS, COLUMN_META, type BoardColumn } from "./model";
 import { useBoard, useReviews } from "./hooks";
 import { IconButton } from "./primitives";
 import { BoardView } from "./column";
@@ -11,8 +11,15 @@ import { ThreadSearch } from "./search";
 const PLUGIN_ICON = "ListTodo";
 const DEFAULT_PANEL_MIN_HEIGHT = 320;
 const PANEL_MIN_HEIGHT = 240;
-const PANEL_KEYBOARD_STEP = 24;
-const PANEL_KEYBOARD_LARGE_STEP = 96;
+/** Resize-handle keys and how far each moves the panel edge; Home/End jump to the limits. */
+const KEY_STEPS: Partial<Record<string, number>> = {
+  ArrowUp: 24,
+  ArrowDown: -24,
+  PageUp: 96,
+  PageDown: -96,
+  Home: -Infinity,
+  End: Infinity,
+};
 
 function maxPanelHeight(): number {
   return Math.max(PANEL_MIN_HEIGHT, Math.round(window.innerHeight * 0.9));
@@ -20,26 +27,6 @@ function maxPanelHeight(): number {
 
 function clampPanelHeight(value: number): number {
   return Math.min(Math.max(value, PANEL_MIN_HEIGHT), maxPanelHeight());
-}
-
-/** Height updater for a resize-handle key, or null when the key does not resize the panel. */
-function keyboardResize(key: string): ((height: number) => number) | null {
-  switch (key) {
-    case "ArrowUp":
-      return (height) => clampPanelHeight(height + PANEL_KEYBOARD_STEP);
-    case "ArrowDown":
-      return (height) => clampPanelHeight(height - PANEL_KEYBOARD_STEP);
-    case "PageUp":
-      return (height) => clampPanelHeight(height + PANEL_KEYBOARD_LARGE_STEP);
-    case "PageDown":
-      return (height) => clampPanelHeight(height - PANEL_KEYBOARD_LARGE_STEP);
-    case "Home":
-      return () => PANEL_MIN_HEIGHT;
-    case "End":
-      return () => maxPanelHeight();
-    default:
-      return null;
-  }
 }
 
 function CountBadge({ column, count }: { column: "blocked" | "done"; count: number }) {
@@ -60,8 +47,7 @@ export function BottomBoardOverlay() {
   const api = useBoard();
   const reviews = useReviews();
   const { board, refetch } = api;
-  const blockedTasks = board?.tasks.filter((task) => task.column === "blocked").length ?? 0;
-  const doneTasks = board?.tasks.filter((task) => task.column === "done").length ?? 0;
+  const count = (column: BoardColumn) => board?.tasks.filter((task) => task.column === column).length ?? 0;
   const [refreshing, setRefreshing] = useState(false);
   const refreshTimerRef = useRef<number | undefined>(undefined);
 
@@ -104,10 +90,10 @@ export function BottomBoardOverlay() {
   };
 
   const handleResizeKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    const resize = keyboardResize(event.key);
-    if (!resize) return;
+    const step = KEY_STEPS[event.key];
+    if (step === undefined) return;
     event.preventDefault();
-    setPanelHeight(resize);
+    setPanelHeight((height) => clampPanelHeight(height + step));
   };
 
   useEffect(() => {
@@ -123,18 +109,14 @@ export function BottomBoardOverlay() {
     return () => window.removeEventListener("resize", handleResize);
   }, []);
 
+  // Pads bb's page (see app.tsx) so the panel never covers its bottom.
   useEffect(() => {
     if (!open) return;
     const root = document.documentElement;
     root.classList.add(BOTTOM_BOARD_OPEN_CLASS);
-    return () => root.classList.remove(BOTTOM_BOARD_OPEN_CLASS);
-  }, [open]);
-
-  useEffect(() => {
-    if (!open) return;
-    const root = document.documentElement;
     root.style.setProperty(BOTTOM_BOARD_HEIGHT_VAR, `${panelHeight}px`);
     return () => {
+      root.classList.remove(BOTTOM_BOARD_OPEN_CLASS);
       root.style.removeProperty(BOTTOM_BOARD_HEIGHT_VAR);
     };
   }, [open, panelHeight]);
@@ -152,8 +134,8 @@ export function BottomBoardOverlay() {
           <Icon name={PLUGIN_ICON} className="size-3.5" aria-hidden />
         </span>
         <span className="tracking-tight">{PLUGIN_NAME}</span>
-        <CountBadge column="blocked" count={blockedTasks} />
-        <CountBadge column="done" count={doneTasks} />
+        <CountBadge column="blocked" count={count("blocked")} />
+        <CountBadge column="done" count={count("done")} />
         <Icon name="ChevronUp" className="size-3.5 text-muted-foreground transition-transform duration-150 group-hover:-translate-y-px group-hover:text-foreground" aria-hidden />
       </button>
     );
@@ -194,7 +176,7 @@ export function BottomBoardOverlay() {
             {board.tasks.length} thread{board.tasks.length === 1 ? "" : "s"}
           </span>
         ) : null}
-        <CountBadge column="blocked" count={blockedTasks} />
+        <CountBadge column="blocked" count={count("blocked")} />
         <div className="ml-3 min-w-0">
           {/* Header (40px) plus a little breathing room below the list. */}
           <ThreadSearch maxListHeight={panelHeight - 56} />

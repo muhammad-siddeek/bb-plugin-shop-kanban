@@ -211,8 +211,7 @@ export function BoardView({ api, reviews }: { api: BoardApi; reviews: ReviewsApi
   useEffect(() => {
     // Drop local overrides once the server agrees, so later activity can mark the card unread again.
     if (!board || readLocally.size === 0) return;
-    const stillUnread = new Set(board.tasks.filter((task) => task.unread).map((task) => task.threadId));
-    const next = new Set([...readLocally].filter((id) => stillUnread.has(id)));
+    const next = new Set(board.tasks.filter((task) => task.unread && readLocally.has(task.threadId)).map((task) => task.threadId));
     if (next.size !== readLocally.size) setReadLocally(next);
   }, [board, readLocally]);
   const now = useNow(CLOCK_TICK_MS);
@@ -250,12 +249,7 @@ export function BoardView({ api, reviews }: { api: BoardApi; reviews: ReviewsApi
           <span className="min-w-0 flex-1 truncate" title={error}>{error}</span>
         </div>
       ) : null}
-      {board === null ? (
-        <div role="status" aria-live="polite" className="flex flex-1 items-center justify-center gap-2.5 text-xs font-medium text-muted-foreground">
-          <span className="inline-flex size-4 animate-spin rounded-full border-2 border-muted-foreground/20 border-t-muted-foreground/80" aria-hidden />
-          Loading board…
-        </div>
-      ) : (
+      {board ? (
         <div data-board-scroll="" className="grid min-h-0 flex-1 auto-cols-[minmax(250px,1fr)] grid-flow-col gap-2.5 overflow-x-auto overscroll-x-contain p-3 [scrollbar-width:thin]">
           {board.columns.map((column) => (
             <BoardColumnView
@@ -275,6 +269,12 @@ export function BoardView({ api, reviews }: { api: BoardApi; reviews: ReviewsApi
               addForm={column.id === "queue" && adding ? <AddTaskForm onAdd={addTask} onCancel={() => setAdding(false)} onError={report} /> : null}
             />
           ))}
+        </div>
+      ) : error ? null : (
+        // Before the first board arrives; if reads fail, only the error above shows while they retry.
+        <div role="status" aria-live="polite" className="flex flex-1 items-center justify-center gap-2.5 text-xs font-medium text-muted-foreground">
+          <span className="inline-flex size-4 animate-spin rounded-full border-2 border-muted-foreground/20 border-t-muted-foreground/80" aria-hidden />
+          Loading board…
         </div>
       )}
     </div>

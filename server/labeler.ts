@@ -1,4 +1,5 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
+import { z } from "zod";
 import { hostContract } from "../contract";
 import { LABEL_PROMPT_VERSION, LABEL_SYSTEM, hashText, labelPrompt, parseLabel } from "./labels";
 import type { LabelView, LiveThread, ThreadDetails } from "./status";
@@ -12,28 +13,28 @@ import { safe } from "./text";
 const LABELS_KEY = "labels-v2";
 const LABEL_CONCURRENCY = 2;
 const LABEL_TIMEOUT_MS = 12_000;
-const LABEL_RETRY_MS = 10 * 60_000;
+/** How long a failed label refresh or thread rename waits before it is tried again. */
+const RETRY_MS = 10 * 60_000;
 /** The same log line is written at most once per this interval. */
 const LOG_INTERVAL_MS = 60 * 60_000;
 /** Let bb's own titler finish on brand-new threads before taking over. */
 const TITLE_SETTLE_MS = 60_000;
 
-/** Model-written card label: "[category] intent" title plus a summary of the latest interaction. */
-type CardLabel = {
-  titleSig: string;
-  category: string;
-  intent: string;
-  summarySig: string;
-  summary: string | null;
-  needsInput: boolean | null;
+const cardLabelSchema = z.object({
+  titleSig: z.string(),
+  category: z.string(),
+  intent: z.string(),
+  summarySig: z.string(),
+  summary: z.string().nullable(),
+  needsInput: z.boolean().nullable(),
   /** Title the board last wrote to the bb thread, to tell our renames from the user's. */
-  appliedTitle?: string;
+  appliedTitle: z.string().optional(),
   /** The title our last rename replaced; seeing it again just means a stale snapshot. */
-  replacedTitle?: string | null;
+  replacedTitle: z.string().nullable().optional(),
   /** The user renamed the thread themselves; stop syncing and show their title. */
-  userTitled?: boolean;
-};
-type Labels = Record<string, CardLabel>;
+  userTitled: z.boolean().optional(),
+});
+type Labels = Record<string, z.infer<typeof cardLabelSchema>>;
 /** What a queued refresh writes: the signatures it labels and the title the model is shown. */
 type LabelJob = { titleSig: string; summarySig: string; currentTitle: string | null };
 
@@ -74,20 +75,14 @@ export function createLabeler(bb: BbPluginApi, onChange: () => void) {
   const renaming = new Set<string>();
   /**
    * Threads whose last refresh failed, with the `titleSig|summarySig` it tried. They keep showing their last label
-   * and retry after LABEL_RETRY_MS, or at once when the thread moves on. Kept in memory: a restart retries.
+   * and retry after RETRY_MS, or at once when the thread moves on. Kept in memory: a restart retries.
    */
   const failures = new Map<string, { at: number; sig: string }>();
   let changedTimer: ReturnType<typeof setTimeout> | undefined;
-  let fallbackHostId: string | null = null;
   let enabled = true;
   const loggedAt = new Map<string, number>();
 
-  void settings.get().then(
-    (values) => {
-      enabled = config(values).models.length > 0;
-    },
-    () => {},
-  );
+  void settings.get().then((values) => (enabled = config(values).models.length > 0), () => {});
   settings.onChange((next) => {
     enabled = config(next).models.length > 0;
     // The user may have just fixed the command: retry failed threads right away.
@@ -99,13 +94,22 @@ export function createLabeler(bb: BbPluginApi, onChange: () => void) {
   function logQuietly(line: string) {
     const now = Date.now();
     if (now - (loggedAt.get(line) ?? 0) < LOG_INTERVAL_MS) return;
+    for (const [key, at] of loggedAt) if (now - at >= LOG_INTERVAL_MS) loggedAt.delete(key);
     loggedAt.set(line, now);
     bb.log.info(line);
   }
 
-  /** One shared promise, so concurrent first loads mutate and persist the same record. */
+  /** One shared promise, so concurrent first loads mutate and persist the same record. Bad entries are dropped. */
   function load(): Promise<Labels> {
-    labels ??= safe(async () => bb.storage.kv.get<Labels>(LABELS_KEY)).then((raw) => (raw && typeof raw === "object" ? raw : {}));
+    labels ??= safe(() => bb.storage.kv.get<unknown>(LABELS_KEY)).then((raw) => {
+      const all: Labels = {};
+      if (!raw || typeof raw !== "object") return all;
+      for (const [id, value] of Object.entries(raw)) {
+        const parsed = cardLabelSchema.safeParse(value);
+        if (parsed.success) all[id] = parsed.data;
+      }
+      return all;
+    });
     return labels;
   }
 
@@ -178,19 +182,21 @@ export function createLabeler(bb: BbPluginApi, onChange: () => void) {
     void (async () => {
       try {
         await bb.sdk.threads.update({ threadId: thread.id, title });
-        all[thread.id] = { ...all[thread.id], appliedTitle: title, replacedTitle: thread.title };
+        // The label may have been forgotten (thread archived) while the rename was in flight.
+        const latest = all[thread.id];
+        if (latest) all[thread.id] = { ...latest, appliedTitle: title, replacedTitle: thread.title };
         persist();
         renaming.delete(thread.id);
       } catch (error) {
         logQuietly(`thread rename failed: ${message(error)}`);
         // Every board render would retry it; wait instead.
-        setTimeout(() => renaming.delete(thread.id), LABEL_RETRY_MS).unref?.();
+        setTimeout(() => renaming.delete(thread.id), RETRY_MS).unref?.();
       }
     })();
   }
 
   async function relabel(thread: LiveThread, details: ThreadDetails, running: boolean, job: LabelJob, all: Labels) {
-    const hostId = thread.hostId ?? (fallbackHostId ??= await connectedHostId(bb));
+    const hostId = thread.hostId ?? (await connectedHostId(bb));
     try {
       if (!hostId) throw new Error("No connected bb host to run the labeler on.");
       const categories = Array.from(new Set(Object.values(all).map((entry) => entry.category).filter(Boolean))).slice(0, 30);
@@ -221,8 +227,6 @@ export function createLabeler(bb: BbPluginApi, onChange: () => void) {
       failures.delete(thread.id);
       persist();
     } catch (error) {
-      // Usually the CLI or the host failing, not this thread: look the fallback host up again next time.
-      fallbackHostId = null;
       logQuietly(`labeler failed${hostId ? ` on host ${hostId}` : ""}: ${message(error)}`);
       failures.set(thread.id, { at: Date.now(), sig: `${job.titleSig}|${job.summarySig}` });
     } finally {
@@ -245,7 +249,7 @@ export function createLabeler(bb: BbPluginApi, onChange: () => void) {
     const title = labeled ? `[${labeled.category}] ${labeled.intent}` : null;
     const fresh = labeled?.titleSig === titleSig && labeled.summarySig === summarySig;
     const failure = failures.get(thread.id);
-    const backingOff = failure?.sig === `${titleSig}|${summarySig}` && Date.now() - failure.at < LABEL_RETRY_MS;
+    const backingOff = failure?.sig === `${titleSig}|${summarySig}` && Date.now() - failure.at < RETRY_MS;
     const worthLabeling = running || Boolean(details.output?.trim()) || Boolean(details.lastUserPrompt);
 
     if (enabled && !fresh && !backingOff && worthLabeling && !labelInFlight.has(thread.id)) {

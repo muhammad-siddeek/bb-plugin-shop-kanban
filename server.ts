@@ -1,11 +1,5 @@
-// Board server: every non-archived, visible, top-level BB thread is a card, and its
-// column is derived from live thread state rather than the column an agent last reported.
-//
-//   WIP      the thread (or any descendant) is currently running
-//   Blocked  not running, and it needs the user: a pending interaction, an error,
-//            a failed result, or a last message that asks a question / requests input
-//   Done     not running, and the last message reports completion
-//   Queue    not started yet (pending, queued work waiting, or no turn finished)
+// Board server: every non-archived, visible, top-level BB thread is a card. Its column is derived from live thread
+// state (deriveStatus in server/status.ts), not from the column an agent last reported.
 
 import type { BbPluginApi, PluginThreadEventName, PluginThreadEventPayloads } from "@get-bb/plugin-sdk";
 import { z } from "zod";
@@ -65,12 +59,6 @@ function iso(ms: number | null): string {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-/** Fallback title until the labeler has run: "[category] thread title". */
-function threadTitle(thread: LiveThread, stored: StoredTask | undefined): string {
-  const base = stored?.titleChain || thread.title || (thread.titleFallback ? compactTitle(thread.titleFallback) : null) || thread.id;
-  return categorizedTitle(base, thread.titleFallback ?? "");
 }
 
 /** Depth-first walk of `children` below `id`, guarding against cycles. */
@@ -168,7 +156,13 @@ export default async function plugin(bb: BbPluginApi) {
     ]);
     const label = labels.view(thread, details, running, all);
     const derived = deriveStatus(thread, details, stored, descendants, label);
-    const title = label.title ?? threadTitle(thread, stored);
+    // Until the labeler has run: "[category] thread title".
+    const title =
+      label.title ??
+      categorizedTitle(
+        stored?.titleChain || thread.title || (thread.titleFallback ? compactTitle(thread.titleFallback) : null) || thread.id,
+        thread.titleFallback ?? "",
+      );
     return {
       threadId: thread.id,
       shortName: stored?.shortName ?? cleanShortName(title),
@@ -352,18 +346,18 @@ export default async function plugin(bb: BbPluginApi) {
     // Every BB thread is a card, so archiving works for threads the plugin never tracked.
     const archived = options.archiveThread === true && (await safe(() => bb.sdk.threads.archive({ threadId }))) !== null;
     const { previous } = await editTask(threadId, () => undefined);
-    if (!previous) {
-      if (archived) publishBoardChanged();
-      return archived;
+    if (previous) {
+      await safe(() =>
+        bb.sdk.threads.updatePluginMetadata({
+          threadId,
+          set: { boardTask: false, updatedAt: nowIso() },
+          remove: ["shortName", "titleChain", "column", "result", "note"],
+        }),
+      );
+    } else if (archived) {
+      publishBoardChanged();
     }
-    await safe(() =>
-      bb.sdk.threads.updatePluginMetadata({
-        threadId,
-        set: { boardTask: false, updatedAt: nowIso() },
-        remove: ["shortName", "titleChain", "column", "result", "note"],
-      }),
-    );
-    return true;
+    return archived || previous !== undefined;
   }
 
   bb.rpc.register(rpcContract, {

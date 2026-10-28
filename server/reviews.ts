@@ -4,7 +4,7 @@ import { hostContract, type Forge, type ForgePr, type ForgePrDetail } from "../c
 import { indexHostId } from "./hosts";
 import { hashText } from "./labels";
 import { REVIEW_SUMMARY_VERSION, REVIEW_SYSTEM, draftPrompt, parseReviewSummary, reviewPrompt } from "./review-prompt";
-import { reviewRiskSchema, reviewScopeSchema, type ReviewCard, type ReviewScope, type ReviewSource, type ReviewState } from "./schema";
+import { reviewRiskSchema, type ReviewCard, type ReviewScope, type ReviewSource, type ReviewState } from "./schema";
 import { safe } from "./text";
 
 // Review queue: open pull requests waiting on the user's review, read through the forge CLIs (`dt`, `gh`) on the
@@ -13,7 +13,6 @@ import { safe } from "./text";
 // model writes each one a "[risk] what, why" first read, cached per head commit. Read, archived and reviewed
 // marks and the summaries live in KV.
 
-export const REVIEWS_CHANGED = "reviews-changed";
 const MARKS_KEY = "reviews-v1";
 /** Newest pull requests read per search. */
 const SEARCH_LIMIT = 30;
@@ -62,56 +61,51 @@ const marksSchema = z.object({
 type Marks = z.infer<typeof marksSchema>;
 
 /**
- * Setting lines as searches: `delta: <query>` or `github: <query>` in GitHub search syntax. `is:pr is:open` is
- * implied, GitHub skips archived repositories, and a Delta line without `repo:` searches shop/world. Blank lines
- * and `#` comments are skipped; anything else is returned as invalid.
+ * A setting line as a search: `delta: <query>` or `github: <query>` in GitHub search syntax. `is:pr is:open` is
+ * implied, GitHub skips archived repositories, and a Delta line without `repo:` searches shop/world. Null for any
+ * other line.
  */
-function parseSearches(value: string, scope: ReviewScope): { searches: Search[]; invalid: string[] } {
-  const searches: Search[] = [];
-  const invalid: string[] = [];
-  for (const raw of value.split(/\r?\n/u)) {
-    const line = raw.trim();
-    if (!line || line.startsWith("#")) continue;
-    const match = line.match(/^(delta|github)\s*:\s*(\S.*)$/iu);
-    if (!match || line.length > 900) {
-      invalid.push(line);
-      continue;
-    }
-    const forge = match[1].toLowerCase() as Forge;
-    const query = match[2].trim();
-    const named = query.match(/(?:^|\s)repo:(\S+)/u)?.[1] ?? null;
-    const implied = [
-      forge === "delta" && !named ? `repo:${DELTA_DEFAULT_REPO}` : null,
-      /(?:^|\s)is:pr\b/u.test(query) ? null : "is:pr",
-      /(?:^|\s)is:(?:open|closed|merged|unmerged)\b/u.test(query) ? null : "is:open",
-      forge === "github" && !/(?:^|\s)archived:/u.test(query) ? "archived:false" : null,
-    ].filter((part): part is string => part !== null);
-    searches.push({
-      line,
-      scope,
-      forge,
-      repo: forge === "delta" ? named ?? DELTA_DEFAULT_REPO : null,
-      query: [...implied, query].join(" "),
-    });
-  }
-  return { searches, invalid };
+function parseSearch(line: string, scope: ReviewScope): Search | null {
+  const match = line.match(/^(delta|github)\s*:\s*(\S.*)$/iu);
+  if (!match || line.length > 900) return null;
+  const forge: Forge = match[1].toLowerCase() === "delta" ? "delta" : "github";
+  const query = match[2].trim();
+  const named = query.match(/(?:^|\s)repo:(\S+)/u)?.[1] ?? null;
+  const implied = [
+    forge === "delta" && !named ? `repo:${DELTA_DEFAULT_REPO}` : null,
+    /(?:^|\s)is:pr\b/u.test(query) ? null : "is:pr",
+    /(?:^|\s)is:(?:open|closed|merged|unmerged)\b/u.test(query) ? null : "is:open",
+    forge === "github" && !/(?:^|\s)archived:/u.test(query) ? "archived:false" : null,
+  ].filter((part): part is string => part !== null);
+  return { line, scope, forge, repo: forge === "delta" ? named ?? DELTA_DEFAULT_REPO : null, query: [...implied, query].join(" ") };
 }
 
-type SearchSettings = { reviewSearchesMe: string; reviewSearchesTeam: string };
-const SETTING_KEY: Record<ReviewScope, keyof SearchSettings> = { me: "reviewSearchesMe", team: "reviewSearchesTeam" };
+function failedSource(search: { line: string; scope: ReviewScope }, error: string, missing: boolean): ReviewSource {
+  return { search: search.line, scope: search.scope, count: 0, total: 0, error, missing };
+}
 
-/** Both settings' lines as searches, Me first, and the scopes that have any line. */
-function configuredSearches(values: SearchSettings) {
+/**
+ * Both settings' lines as searches, Me first, the invalid ones as failed sources, and the scopes that have any
+ * line. Blank lines and `#` comments are skipped.
+ */
+function configuredSearches(values: { reviewSearchesMe: string; reviewSearchesTeam: string }) {
   const searches: Search[] = [];
-  const invalid: { line: string; scope: ReviewScope }[] = [];
+  const invalid: ReviewSource[] = [];
   const scopes: ReviewScope[] = [];
-  for (const scope of reviewScopeSchema.options) {
-    const parsed = parseSearches(values[SETTING_KEY[scope]], scope);
-    searches.push(...parsed.searches);
-    invalid.push(...parsed.invalid.map((line) => ({ line, scope })));
-    if (parsed.searches.length + parsed.invalid.length > 0) scopes.push(scope);
+  for (const [scope, value] of [["me", values.reviewSearchesMe], ["team", values.reviewSearchesTeam]] as const) {
+    const lines = value.split(/\r?\n/u).map((line) => line.trim()).filter((line) => line && !line.startsWith("#"));
+    if (lines.length > 0) scopes.push(scope);
+    for (const line of lines) {
+      const search = parseSearch(line, scope);
+      if (search) searches.push(search);
+      else invalid.push(failedSource({ line, scope }, "Start the line with delta: or github:", false));
+    }
   }
   return { searches, invalid, scopes };
+}
+
+function prId(forge: Forge, pr: { repo: string; number: number }): string {
+  return `${forge}:${pr.repo}#${pr.number}`;
 }
 
 function message(cause: unknown): string {
@@ -186,7 +180,7 @@ export function createReviewQueue(bb: BbPluginApi, labeler: Labeler) {
     if (changedTimer) return;
     changedTimer = setTimeout(() => {
       changedTimer = undefined;
-      bb.realtime.publish(REVIEWS_CHANGED, { at: Date.now() });
+      bb.realtime.publish("reviews-changed", { at: Date.now() });
     }, 300);
   }
 
@@ -260,28 +254,18 @@ export function createReviewQueue(bb: BbPluginApi, labeler: Labeler) {
   }
 
   async function runRefresh() {
-    changed();
     const { searches, invalid } = configuredSearches(await settings.get());
-    const failed = (search: { line: string; scope: ReviewScope }, why: string, missing: boolean): ReviewSource => ({
-      search: search.line,
-      scope: search.scope,
-      count: 0,
-      total: 0,
-      error: why,
-      missing,
-    });
-    const invalidSources = invalid.map((line) => failed(line, "Start the line with delta: or github:", false));
     error = null;
     if (searches.length === 0) {
       entries = [];
-      sources = invalidSources;
+      sources = invalid;
       return;
     }
     hostId = await indexHostId(bb, hostId);
     const target = hostId;
     if (!target) {
       // Quiet like a missing CLI; the last list stays up until a host connects again.
-      sources = [...searches.map((search) => failed(search, NO_HOST, true)), ...invalidSources];
+      sources = [...searches.map((search) => failedSource(search, NO_HOST, true)), ...invalid];
       return;
     }
     const results = await Promise.all(
@@ -294,38 +278,34 @@ export function createReviewQueue(bb: BbPluginApi, labeler: Labeler) {
         return { search, open, reviewed };
       }),
     );
-    const marks = await load();
     const next = new Map<string, Entry>();
-    const add = (found: Entry, search: Search) => {
-      const existing = next.get(found.id);
-      if (!existing) {
-        next.set(found.id, found);
-        return;
-      }
-      if (!existing.lines.includes(search.line)) existing.lines.push(search.line);
-      existing.reviewed ||= found.reviewed;
-      if (search.scope === "me") existing.scope = "me";
-    };
-    const nextSources: ReviewSource[] = [];
-    for (const { search, open, reviewed } of results) {
-      if (open.error !== null) {
-        // Keep what this search listed last time instead of flickering it away on a transient failure.
-        for (const entry of entries) {
-          if (entry.lines.includes(search.line)) add({ ...entry, lines: [search.line], scope: search.scope }, search);
+    const searched = results.map(({ search, open, reviewed }): ReviewSource => {
+      const done = new Set(reviewed.prs.map((pr) => prId(search.forge, pr)));
+      const found =
+        open.error === null
+          ? open.prs.map((pr) => {
+              const id = prId(search.forge, pr);
+              return { ...pr, id, forge: search.forge, reviewed: done.has(id) };
+            })
+          : // Keep what this search listed last time instead of flickering it away on a transient failure.
+            entries.filter((entry) => entry.lines.includes(search.line));
+      for (const pr of found) {
+        const existing = next.get(pr.id);
+        if (!existing) {
+          next.set(pr.id, { ...pr, lines: [search.line], scope: search.scope });
+          continue;
         }
-        nextSources.push(failed(search, open.error, open.missing));
-        continue;
+        if (!existing.lines.includes(search.line)) existing.lines.push(search.line);
+        existing.reviewed ||= pr.reviewed;
+        if (search.scope === "me") existing.scope = "me";
       }
-      const done = new Set(reviewed.prs.map((pr) => `${search.forge}:${pr.repo}#${pr.number}`));
-      for (const pr of open.prs) {
-        const id = `${search.forge}:${pr.repo}#${pr.number}`;
-        add({ ...pr, id, forge: search.forge, lines: [search.line], reviewed: done.has(id), scope: search.scope }, search);
-      }
-      nextSources.push({ search: search.line, scope: search.scope, count: open.prs.length, total: open.total, error: reviewed.error, missing: false });
-    }
+      if (open.error !== null) return failedSource(search, open.error, open.missing);
+      return { search: search.line, scope: search.scope, count: open.prs.length, total: open.total, error: reviewed.error, missing: false };
+    });
     entries = [...next.values()].sort((a, b) => (Date.parse(b.updatedAt) || 0) - (Date.parse(a.updatedAt) || 0));
-    sources = [...nextSources, ...invalidSources];
+    sources = [...searched, ...invalid];
     for (const id of details.keys()) if (!next.has(id)) details.delete(id);
+    const marks = await load();
     for (const entry of entries) {
       // Reviewed ones too: their details say whether commits landed after the user's review.
       if (entry.id in marks.archived) continue;
@@ -340,6 +320,7 @@ export function createReviewQueue(bb: BbPluginApi, labeler: Labeler) {
       refreshAgain = true;
       return refreshing;
     }
+    changed();
     refreshing = runRefresh()
       .catch((cause) => {
         error = message(cause);

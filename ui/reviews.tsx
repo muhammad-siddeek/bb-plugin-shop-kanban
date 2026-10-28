@@ -265,17 +265,6 @@ function readCollapsed(): boolean {
   }
 }
 
-/** `set` with `id`; the same set when it is already there, so React skips the render. */
-function withId(set: ReadonlySet<string>, id: string): ReadonlySet<string> {
-  return set.has(id) ? set : new Set([...set, id]);
-}
-
-/** `set` without the ids `keep` rejects; the same set when none go. */
-function kept(set: ReadonlySet<string>, keep: (id: string) => boolean): ReadonlySet<string> {
-  const next = new Set([...set].filter(keep));
-  return next.size === set.size ? set : next;
-}
-
 export function ReviewSection({ reviews, now }: { reviews: ReviewsApi; now: number }) {
   const navigate = useBbNavigate();
   const context = useBbContext();
@@ -284,20 +273,29 @@ export function ReviewSection({ reviews, now }: { reviews: ReviewsApi; now: numb
   const [showAll, setShowAll] = useState(false);
   // Not stored: the board opens on Me every time it is shown.
   const [chosenScope, setChosenScope] = useState<ReviewScope>("me");
-  // Archived, reviewed or opened here: applied at once, before the server's next list round-trips.
-  const [hidden, setHidden] = useState<ReadonlySet<string>>(() => new Set());
-  const [readLocally, setReadLocally] = useState<ReadonlySet<string>>(() => new Set());
+  // Opened ("read"), archived or reviewed ("hidden") here: applied at once, before the server's next list round-trips.
+  const [local, setLocal] = useState<ReadonlyMap<string, "read" | "hidden">>(() => new Map());
+  const mark = (id: string, value: "read" | "hidden" | null) =>
+    setLocal((current) => {
+      if ((current.get(id) ?? null) === value) return current;
+      const next = new Map(current);
+      if (value) next.set(id, value);
+      else next.delete(id);
+      return next;
+    });
 
   useEffect(() => {
-    // Drop local overrides once the server agrees, so a new push can mark the card unread again.
+    // Drop local marks once the server agrees, so a new push can mark the card unread again.
     if (!state) return;
     const listed = new Map(state.reviews.map((review) => [review.id, review]));
-    setHidden((current) => kept(current, (id) => listed.has(id)));
-    setReadLocally((current) => kept(current, (id) => listed.get(id)?.unread === true));
+    setLocal((current) => {
+      const next = new Map([...current].filter(([id, value]) => (value === "hidden" ? listed.has(id) : listed.get(id)?.unread === true)));
+      return next.size === current.size ? current : next;
+    });
   }, [state]);
 
   if (!state || state.scopes.length === 0) return null;
-  const listed = state.reviews.filter((review) => !hidden.has(review.id));
+  const listed = state.reviews.filter((review) => local.get(review.id) !== "hidden");
 
   const problems = [
     ...new Set([
@@ -313,7 +311,7 @@ export function ReviewSection({ reviews, now }: { reviews: ReviewsApi; now: numb
 
   // A scope whose searches were all removed falls back to the one left.
   const scope = state.scopes.includes(chosenScope) ? chosenScope : state.scopes[0];
-  const isNew = (review: ReviewCard) => review.unread && !readLocally.has(review.id);
+  const isNew = (review: ReviewCard) => review.unread && !local.has(review.id);
   const counts: Record<ReviewScope, number> = { me: 0, team: 0 };
   const unread: Record<ReviewScope, number> = { me: 0, team: 0 };
   for (const review of listed) {
@@ -325,27 +323,27 @@ export function ReviewSection({ reviews, now }: { reviews: ReviewsApi; now: numb
 
   const actions: RowActions = {
     onDraft: async (review) => {
-      setReadLocally((current) => withId(current, review.id));
+      mark(review.id, "read");
       const initialPrompt = await reviews.draft(review.id);
       navigate?.toCompose?.({ ...(context?.projectId ? { projectId: context.projectId } : {}), initialPrompt, focusPrompt: true });
     },
     onOpen: async (review) => {
-      setReadLocally((current) => withId(current, review.id));
+      mark(review.id, "read");
       if (!navigate?.openUrl?.(review.url)) window.open(review.url, "_blank", "noopener,noreferrer");
       await reviews.markRead(review.id);
     },
     onArchive: async (review) => {
-      setHidden((current) => withId(current, review.id));
+      mark(review.id, "hidden");
       try {
         await reviews.archive(review.id);
       } catch (cause) {
-        setHidden((current) => kept(current, (id) => id !== review.id));
+        mark(review.id, null);
         throw cause;
       }
     },
     onSubmit: async (review, verdict, body) => {
       await reviews.submit(review.id, verdict, body);
-      setHidden((current) => withId(current, review.id));
+      mark(review.id, "hidden");
     },
   };
 

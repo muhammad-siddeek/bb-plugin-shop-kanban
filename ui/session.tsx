@@ -78,10 +78,9 @@ export function HarnessMeta({ provider, session }: { provider: AgentProvider | n
   const estimate = session?.cost && session.costEstimated > 0 ? formatCost({ amount: session.costEstimated, currency: session.cost.currency }) : null;
   const cost = session?.cost ? `${estimate ? "~" : ""}${formatCost(session.cost)}` : null;
   // The cost covers the thread's descendant threads too; say so when more than one spent.
-  const spent =
-    cost === null || !session
-      ? null
-      : `${cost} spent${session.costThreads > 1 ? ` across ${session.costThreads} threads` : ""}${estimate ? ` (${estimate} estimated)` : ""}`;
+  const spent = session?.cost
+    ? `${cost} spent${session.costThreads > 1 ? ` across ${session.costThreads} threads` : ""}${estimate ? ` (${estimate} estimated)` : ""}`
+    : null;
   const used = session?.usedTokens ?? null;
   const capacity = session?.contextWindow ?? null;
   const fill = used !== null && capacity ? used / capacity : null;
@@ -89,8 +88,6 @@ export function HarnessMeta({ provider, session }: { provider: AgentProvider | n
   if (!provider && cost === null && percent === null && !session?.model) return null;
 
   const tone = fill === null || fill < CONTEXT_WARN ? null : fill < CONTEXT_CRITICAL ? WARN_TONE : CRITICAL_TONE;
-  const ringTone = tone?.ring ?? "";
-  const barTone = tone?.bar ?? "bg-muted-foreground/50";
   const usage = [
     used !== null && capacity ? `${session?.estimated ? "~" : ""}${TOKENS.format(used)} / ${TOKENS.format(capacity)} tokens · ${percent}` : null,
     spent,
@@ -128,7 +125,7 @@ export function HarnessMeta({ provider, session }: { provider: AgentProvider | n
       >
         {cost !== null ? <span>{cost}</span> : null}
         {fill !== null ? (
-          <span className={`inline-flex items-center gap-0.5 ${ringTone}`}>
+          <span className={`inline-flex items-center gap-0.5 ${tone?.ring ?? ""}`}>
             <svg viewBox="0 0 12 12" className="size-3 -rotate-90" aria-hidden>
               <circle cx="6" cy="6" r={RING_RADIUS} fill="none" stroke="currentColor" strokeOpacity={0.25} strokeWidth="2" />
               <circle
@@ -176,11 +173,12 @@ export function HarnessMeta({ provider, session }: { provider: AgentProvider | n
               </span>
             ) : null}
           </div>
-          <div className="whitespace-nowrap tabular-nums">{usage || <span className="text-muted-foreground">No session details yet</span>}</div>
+          {/* Wraps instead of clipping: a tree cost with an estimate outgrows the tooltip's width. */}
+          <div className="tabular-nums">{usage || <span className="text-muted-foreground">No session details yet</span>}</div>
           {details ? <div className="truncate text-[10px] text-muted-foreground">{details}</div> : null}
           {/* Context fill as a hairline along the bottom edge: no extra line of text. */}
           {fill !== null ? (
-            <span className={`absolute bottom-0 left-0 h-[2px] ${barTone}`} style={{ width: `${Math.min(fill, 1) * 100}%` }} aria-hidden />
+            <span className={`absolute bottom-0 left-0 h-[2px] ${tone?.bar ?? "bg-muted-foreground/50"}`} style={{ width: `${Math.min(fill, 1) * 100}%` }} aria-hidden />
           ) : null}
         </div>
       ) : null}

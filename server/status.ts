@@ -82,32 +82,23 @@ const INPUT_REQUEST_PATTERNS: RegExp[] = [
   /\b(cannot|can't|unable to) (proceed|continue) (without|until)\b/i,
 ];
 
-function stripMarkdownNoise(text: string): string {
-  return text
+/** Does the final assistant message ask the user something or wait on them? */
+function asksForInput(output: string): boolean {
+  const cleaned = output
     .replace(/```[\s\S]*?```/g, " ")
     .replace(/`[^`\n]*`/g, "code")
     .replace(/https?:\/\/\S+/g, "link")
-    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1");
-}
-
-function lastParagraphs(text: string, count: number): string {
-  const paragraphs = text
-    .split(/\n\s*\n/u)
-    .map((part) => part.trim())
-    .filter(Boolean);
-  return paragraphs.slice(-count).join("\n\n");
-}
-
-/** Does the final assistant message ask the user something or wait on them? */
-function asksForInput(output: string): boolean {
-  const cleaned = stripMarkdownNoise(output).trim();
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .trim();
   if (!cleaned) return false;
-  if (/\?["'”’)\]*_]*(\s|$)/u.test(lastParagraphs(cleaned, 1))) return true;
-  const tail = lastParagraphs(cleaned, 2).slice(-800);
+  const paragraphs = cleaned.split(/\n\s*\n/u).map((part) => part.trim()).filter(Boolean);
+  if (/\?["'”’)\]*_]*(\s|$)/u.test(paragraphs.at(-1) ?? "")) return true;
+  const tail = paragraphs.slice(-2).join("\n\n").slice(-800);
   return INPUT_REQUEST_PATTERNS.some((pattern) => pattern.test(tail));
 }
 
-function excerpt(text: string | null | undefined, max = 280): string | null {
+/** `text` as one plain line of at most 280 characters. */
+function excerpt(text: string | null): string | null {
   if (!text) return null;
   const cleaned = oneLine(
     text
@@ -118,7 +109,7 @@ function excerpt(text: string | null | undefined, max = 280): string | null {
       .replace(/^\s*[-*]\s+/gmu, ""),
   );
   if (!cleaned) return null;
-  return cleaned.length <= max ? cleaned : `${cleaned.slice(0, max - 1).trimEnd()}${ELLIPSIS}`;
+  return cleaned.length <= 280 ? cleaned : `${cleaned.slice(0, 279).trimEnd()}${ELLIPSIS}`;
 }
 
 export type ThreadDetails = {
@@ -135,6 +126,7 @@ export type LabelView = { title: string | null; summary: string | null; needsInp
 
 type Derived = { column: Column; reason: string; description: string | null; runningChildren: number };
 
+/** The card's column, why, and its description. */
 export function deriveStatus(
   thread: LiveThread,
   details: ThreadDetails,
@@ -144,44 +136,31 @@ export function deriveStatus(
 ): Derived {
   const runningSelf = isRunningSelf(thread);
   const runningChildren = descendants.filter(isRunningSelf).length;
-  const promptText = label.summary ?? excerpt(details.lastUserPrompt);
-  const outputText = label.summary ?? excerpt(details.output);
-  const storedFresh =
-    stored?.note && (details.lastUserInputAt === null || Date.parse(stored.updatedAt) >= details.lastUserInputAt);
+  const reply = excerpt(details.output);
+  const prompt = excerpt(details.lastUserPrompt);
+  const note = stored?.note ?? null;
+  // A note the agent wrote since the user last spoke still describes the thread.
+  const freshNote =
+    stored?.note && (details.lastUserInputAt === null || Date.parse(stored.updatedAt) >= details.lastUserInputAt) ? stored.note : null;
+  const errored = thread.status === "error" || thread.displayStatus === "error" || thread.queuedWork === "failed";
+  const childWaiting = descendants.some((child) => child.hasPendingInteraction);
+  const children = `${runningChildren} child thread${runningChildren === 1 ? "" : "s"} running`;
 
-  if (thread.hasPendingInteraction) {
-    return { column: "blocked", reason: "Waiting for your response", description: outputText ?? stored?.note ?? promptText, runningChildren };
-  }
-
-  if (runningSelf || runningChildren > 0) {
-    const reason = runningSelf ? "Running" : `${runningChildren} child thread${runningChildren === 1 ? "" : "s"} running`;
-    return { column: "wip", reason, description: label.summary ?? (storedFresh ? stored?.note : null) ?? promptText ?? stored?.note ?? null, runningChildren };
-  }
-
-  if (thread.status === "error" || thread.displayStatus === "error" || thread.queuedWork === "failed") {
-    return { column: "blocked", reason: "Errored", description: label.summary ?? stored?.note ?? outputText ?? promptText, runningChildren };
-  }
-
-  if (thread.status === "pending" || thread.queuedWork === "waiting") {
-    return { column: "queue", reason: "Queued", description: promptText ?? stored?.note ?? null, runningChildren };
-  }
-
-  if (descendants.some((child) => child.hasPendingInteraction)) {
-    return { column: "blocked", reason: "A child thread is waiting for your response", description: outputText ?? stored?.note ?? promptText, runningChildren };
-  }
-
-  if (!details.output?.trim()) {
-    return { column: "queue", reason: "Not started", description: promptText ?? stored?.note ?? null, runningChildren };
-  }
-
-  if (storedFresh && stored?.result === "failed") {
-    return { column: "blocked", reason: "Reported failure", description: label.summary ?? stored.note ?? outputText, runningChildren };
-  }
-
-  if (label.needsInput ?? asksForInput(details.output)) {
-    return { column: "blocked", reason: "Asked a question", description: outputText, runningChildren };
-  }
-
-  return { column: "done", reason: "Completed", description: outputText, runningChildren };
+  // The first rule that holds wins. `from` lists the description's sources by preference; the labeler's summary,
+  // when there is one, beats them all.
+  type Rule = [when: () => boolean, column: Column, reason: string, from: (string | null)[]];
+  const rules: Rule[] = [
+    [() => thread.hasPendingInteraction, "blocked", "Waiting for your response", [reply, note, prompt]],
+    [() => runningSelf, "wip", "Running", [freshNote, prompt, note]],
+    [() => runningChildren > 0, "wip", children, [freshNote, prompt, note]],
+    [() => errored, "blocked", "Errored", [note, reply, prompt]],
+    [() => thread.status === "pending" || thread.queuedWork === "waiting", "queue", "Queued", [prompt, note]],
+    [() => childWaiting, "blocked", "A child thread is waiting for your response", [reply, note, prompt]],
+    [() => !details.output?.trim(), "queue", "Not started", [prompt, note]],
+    [() => freshNote !== null && stored?.result === "failed", "blocked", "Reported failure", [note]],
+    [() => label.needsInput ?? asksForInput(details.output ?? ""), "blocked", "Asked a question", [reply]],
+  ];
+  const [, column, reason, from]: Rule = rules.find(([when]) => when()) ?? [() => true, "done", "Completed", [reply]];
+  return { column, reason, description: label.summary ?? from.find((text) => text !== null) ?? null, runningChildren };
 }
 

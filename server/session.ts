@@ -27,10 +27,13 @@ const TRANSCRIPT_SPENDERS: Record<string, Spender> = {
   "acp-omp": { method: "omp_spend", sessionId: sessionIdInput },
   pi: { method: "pi_spend", sessionId: piSessionIdInput },
 };
-/** omp and Pi price transcripts in USD. */
-const TRANSCRIPT_CURRENCY = "USD";
 /** The host's spend methods take at most this many session ids per call. */
 const SESSIONS_PAGE = 500;
+/**
+ * A wedged host would otherwise hold the tree cost for the SDK's 30s default. A host's first call scans its whole
+ * transcript history for the estimate rates (seconds); a call cut short still finishes that scan for the next one.
+ */
+const SPEND_CALL_TIMEOUT_MS = 15_000;
 
 const ACCESS_LABELS: Record<string, string> = { full: "Full access", auto: "Auto", "accept-edits": "Accept edits" };
 
@@ -58,10 +61,7 @@ type SessionSpend = { amount: number; estimated: number };
  * after a failed read so the next refresh reads again.
  */
 type ThreadSpend = { key: number | null | undefined; reported: Cost | null; sessions: ProviderSessions | null };
-
-function spenderFor(thread: LiveThread): Spender | null {
-  return thread.providerId && Object.hasOwn(TRANSCRIPT_SPENDERS, thread.providerId) ? TRANSCRIPT_SPENDERS[thread.providerId] : null;
-}
+type TreeThread = { thread: LiveThread; spender: Spender | null; spend: ThreadSpend };
 
 function labelMap(list: ReadonlyArray<{ id: string; label?: string }> | null | undefined): Map<string, string> {
   return new Map((list ?? []).filter((entry) => entry.label).map((entry) => [entry.id, entry.label!]));
@@ -147,10 +147,9 @@ export function createSessionInfo(bb: BbPluginApi, reader: ThreadReader) {
     return cached(catalogs, id, null, maxAge, () => fetchCatalog(providerId, hostId), false);
   }
 
-  async function threadSpend(thread: LiveThread): Promise<ThreadSpend> {
+  async function threadSpend(thread: LiveThread, spender: Spender | null): Promise<ThreadSpend> {
     const known = spends.get(thread.id);
     if (known && known.key === thread.updatedAt && !isRunningSelf(thread)) return known;
-    const spender = spenderFor(thread);
     const [context, sessions] = await Promise.all([
       safe(() => bb.sdk.threads.context({ threadId: thread.id })),
       spender ? reader.providerSessions(thread.id, known?.sessions ?? null) : null,
@@ -164,15 +163,29 @@ export function createSessionInfo(bb: BbPluginApi, reader: ThreadReader) {
     return spend;
   }
 
-  /** Spend per harness session (keyed `method:id`), from the transcripts on each host; omp's include its subagents. */
-  async function transcriptSpends(groups: Iterable<{ method: SpendMethod; hostId: string; ids: Set<string> }>): Promise<Map<string, SessionSpend>> {
+  /**
+   * Spend per harness session (keyed `method:id`), from the transcripts on each thread's host; omp's include its
+   * subagents. A call to a disconnected host would wait out the SDK's 30s timeout, so its threads are skipped and
+   * count what bb reports; every host is tried when the host list can't be read.
+   */
+  async function transcriptSpends(tree: readonly TreeThread[]): Promise<Map<string, SessionSpend>> {
+    const hosts = await safe(() => bb.sdk.hosts.list());
+    const offline = new Set(hosts?.flatMap((entry) => (entry.status === "connected" ? [] : [entry.id])));
+    const groups = new Map<string, { method: SpendMethod; hostId: string; ids: Set<string> }>();
+    for (const { thread, spender, spend } of tree) {
+      if (!spender || !thread.hostId || offline.has(thread.hostId)) continue;
+      const key = `${spender.method}:${thread.hostId}`;
+      const group = groups.get(key) ?? { method: spender.method, hostId: thread.hostId, ids: new Set<string>() };
+      for (const id of spend.sessions?.ids ?? []) if (spender.sessionId.safeParse(id).success) group.ids.add(id);
+      groups.set(key, group);
+    }
     const bySession = new Map<string, SessionSpend>();
-    for (const { method, hostId, ids } of groups) {
+    for (const { method, hostId, ids } of groups.values()) {
       const list = [...ids];
       for (let start = 0; start < list.length; start += SESSIONS_PAGE) {
         const sessionIds = list.slice(start, start + SESSIONS_PAGE);
         // A failed call or a missing harness finds nothing: those threads count what bb reports.
-        const result = await safe(() => host.call(method, { sessionIds }, { hostId }));
+        const result = await safe(() => host.call(method, { sessionIds }, { hostId, timeoutMs: SPEND_CALL_TIMEOUT_MS }));
         for (const [id, spend] of Object.entries(result?.spends ?? {})) bySession.set(`${method}:${id}`, spend);
       }
     }
@@ -187,47 +200,38 @@ export function createSessionInfo(bb: BbPluginApi, reader: ThreadReader) {
   async function fetchTreeCost(card: LiveThread): Promise<TreeCost | null> {
     const descendants = await reader.listDescendants(card.id, true);
     if (descendants === null) return null;
-    const tree = [card, ...descendants];
-    treeIds.set(card.id, tree.map((thread) => thread.id));
+    treeIds.set(card.id, [card.id, ...descendants.map((thread) => thread.id)]);
     // One thread at a time: a tree can hold hundreds of threads, and nothing waits on this.
-    const read: ThreadSpend[] = [];
-    for (const thread of tree) read.push(await threadSpend(thread));
-    // A call to a disconnected host would wait out the SDK's 30s timeout: its threads count what bb reports. Every
-    // host is tried when the list can't be read.
-    const hosts = await safe(() => bb.sdk.hosts.list());
-    const offline = new Set(hosts?.flatMap((entry) => (entry.status === "connected" ? [] : [entry.id])));
-    const groups = new Map<string, { method: SpendMethod; hostId: string; ids: Set<string> }>();
-    tree.forEach((thread, index) => {
-      const spender = spenderFor(thread);
-      const ids = read[index].sessions?.ids.filter((id) => spender?.sessionId.safeParse(id).success);
-      if (!spender || !thread.hostId || offline.has(thread.hostId) || !ids?.length) return;
-      const key = `${spender.method}:${thread.hostId}`;
-      const group = groups.get(key) ?? { method: spender.method, hostId: thread.hostId, ids: new Set<string>() };
-      for (const id of ids) group.ids.add(id);
-      groups.set(key, group);
-    });
-    const bySession = await transcriptSpends(groups.values());
+    const tree: TreeThread[] = [];
+    for (const thread of [card, ...descendants]) {
+      const provider = thread.providerId ?? "";
+      const spender = Object.hasOwn(TRANSCRIPT_SPENDERS, provider) ? TRANSCRIPT_SPENDERS[provider] : null;
+      tree.push({ thread, spender, spend: await threadSpend(thread, spender) });
+    }
+    const bySession = await transcriptSpends(tree);
 
-    let cost: Cost | null = null;
+    let currency: string | null = null;
+    let amount = 0;
     let estimated = 0;
     let threads = 0;
-    tree.forEach((thread, index) => {
-      const method = spenderFor(thread)?.method;
-      const found = method ? (read[index].sessions?.ids ?? []).flatMap((id) => bySession.get(`${method}:${id}`) ?? []) : [];
-      const spent: SessionSpend & { currency: string } | null =
+    for (const { spender, spend } of tree) {
+      const found = spender ? (spend.sessions?.ids ?? []).flatMap((id) => bySession.get(`${spender.method}:${id}`) ?? []) : [];
+      const spent: (SessionSpend & Cost) | null =
         found.length > 0
           ? {
-              amount: found.reduce((sum, spend) => sum + spend.amount, 0),
-              estimated: found.reduce((sum, spend) => sum + spend.estimated, 0),
-              currency: TRANSCRIPT_CURRENCY,
+              amount: found.reduce((sum, add) => sum + add.amount, 0),
+              estimated: found.reduce((sum, add) => sum + add.estimated, 0),
+              // omp and Pi price transcripts in USD.
+              currency: "USD",
             }
-          : read[index].reported && { ...read[index].reported, estimated: 0 };
-      if (!spent || (cost && spent.currency !== cost.currency)) return;
-      cost = { amount: (cost?.amount ?? 0) + spent.amount, currency: spent.currency };
+          : spend.reported && { ...spend.reported, estimated: 0 };
+      if (!spent || (currency !== null && spent.currency !== currency)) continue;
+      currency = spent.currency;
+      amount += spent.amount;
       estimated += spent.estimated;
       threads += 1;
-    });
-    return { cost, estimated, threads };
+    }
+    return { cost: currency === null ? null : { amount, currency }, estimated, threads };
   }
 
   /**

@@ -129,11 +129,6 @@ function addPriced(map: Map<string, Priced>, model: string, add: Priced) {
   map.set(model, into);
 }
 
-/** A deep copy, so a failed read can't leave a half-updated cache entry. */
-function copyPart(part: Part): Part {
-  return { amount: part.amount, unpriced: new Map([...part.unpriced].map(([key, tokens]) => [key, { ...tokens }])) };
-}
-
 async function entries(dir: string) {
   return readdir(dir, { withFileTypes: true }).catch(() => []);
 }
@@ -207,7 +202,7 @@ async function ompRoot(sessionId: string): Promise<string | null> {
 }
 
 function time(iso: string | undefined): number | null {
-  const at = iso === undefined ? NaN : Date.parse(iso);
+  const at = Date.parse(iso ?? "");
   return Number.isFinite(at) ? at : null;
 }
 
@@ -239,18 +234,17 @@ function lineSpend(line: string): LineSpend | null {
 }
 
 /**
- * Adds the spend in `bytes` (file content from `start`) to `into`, counting complete lines only, and returns
+ * Adds the spend in `bytes` (file content from `into.offset`) to `into`, counting complete lines only, and returns
  * the offset parsed to. Read from the start, the header must open the file and tells whether it is a fork; any
- * other file spends nothing (null). Appended lines are judged against the `into.fork` found then. omp's title
- * slot carries no spend, so its in-place rewrites need no re-read.
+ * other file spends nothing (0). Appended lines are judged against the `into.fork` found then. omp's title slot
+ * carries no spend, so its in-place rewrites need no re-read.
  */
-function parse(path: string, bytes: Buffer, start: number, into: Pick<FileSpend, "fork" | "own" | "copied" | "priced">): number | null {
+function parse(path: string, bytes: Buffer, into: FileSpend): number {
   const end = bytes.lastIndexOf(0x0a) + 1;
-  if (end === 0) return start === 0 ? null : start;
-  if (start === 0) {
+  if (into.offset === 0) {
     const first = parseJson(lineAt(bytes, 0));
     const header = headerSchema.safeParse(titleSlotSchema.safeParse(first).success ? parseJson(lineAt(bytes, bytes.indexOf(0x0a) + 1)) : first);
-    if (!header.success) return null;
+    if (!header.success) return 0;
     const { parentSession, timestamp } = header.data;
     const at = time(timestamp);
     into.fork = parentSession && at !== null ? { source: resolve(dirname(path), parentSession), at } : null;
@@ -275,7 +269,7 @@ function parse(path: string, bytes: Buffer, start: number, into: Pick<FileSpend,
       part.unpriced.set(reply.model, addBuckets(part.unpriced.get(reply.model) ?? buckets(), reply.tokens));
     }
   }
-  return start + end;
+  return into.offset + end;
 }
 
 /** The complete line starting at `from`, without its newline; "" when none does. */
@@ -315,33 +309,29 @@ async function fileSpend(path: string, now: number): Promise<FileSpend | null> {
     known.seenAt = now;
     return known;
   }
-
+  const read = await readChanged(path, info.size, known?.ino === info.ino ? known : undefined).catch(() => null);
+  // A file that read before likely failed in passing (too many open files): keep its figure and read it next time.
+  if (!read && known) return known;
   // Unreadable or corrupt (a bad gzip, too large to load): it spends nothing until it changes.
-  const { bytes, base, previous } = await readChanged(path, info.size, known?.ino === info.ino ? known : undefined).catch(
-    (): Changed => ({ bytes: Buffer.alloc(0), base: 0, previous: null }),
-  );
-  const into = {
-    fork: previous?.fork ?? null,
-    own: previous ? copyPart(previous.own) : { amount: 0, unpriced: new Map() },
-    copied: previous ? copyPart(previous.copied) : { amount: 0, unpriced: new Map() },
-    priced: new Map<string, Priced>(),
+  const { bytes, base, previous } = read ?? { bytes: Buffer.alloc(0), base: 0, previous: null };
+  const part = (): Part => ({ amount: 0, unpriced: new Map() });
+  const spend: FileSpend = previous ?? {
+    ino: 0, size: 0, mtimeMs: 0, seenAt: 0, offset: 0, tail: Buffer.alloc(0),
+    fork: null, own: part(), copied: part(), priced: new Map(),
   };
-  for (const [model, priced] of previous?.priced ?? []) addPriced(into.priced, model, priced);
-  // Null only for a full read that found no header, which leaves `into` as empty as it started.
-  const start = previous?.offset ?? 0;
-  const offset = parse(path, bytes.subarray(start - base), start, into) ?? 0;
+  const offset = parse(path, bytes.subarray(spend.offset - base), spend);
   // Copy the tail: a subarray would pin the whole file's buffer.
   const tail = Buffer.from(bytes.subarray(Math.max(0, offset - base - TAIL_BYTES), offset - base));
-  const spend: FileSpend = { ino: info.ino, size: info.size, mtimeMs: info.mtimeMs, offset, tail, ...into, seenAt: now };
+  Object.assign(spend, { ino: info.ino, size: info.size, mtimeMs: info.mtimeMs, offset, tail, seenAt: now });
   files.set(path, spend);
   return spend;
 }
 
-/** What to parse: `bytes` starts at file offset `base`; what precedes `previous.offset` was parsed into `previous`. */
-type Changed = { bytes: Buffer; base: number; previous: FileSpend | null };
-
-/** Only what was appended when the file just grew under the same inode; otherwise all of it. */
-async function readChanged(path: string, size: number, known: FileSpend | undefined): Promise<Changed> {
+/**
+ * Only what was appended when the file just grew under the same inode; otherwise all of it. `bytes` starts at file
+ * offset `base`; what precedes `previous.offset` was parsed into `previous`.
+ */
+async function readChanged(path: string, size: number, known: FileSpend | undefined): Promise<{ bytes: Buffer; base: number; previous: FileSpend | null }> {
   // Async: a large archive would block the worker's event loop.
   if (path.endsWith(COMPRESSED)) return { bytes: await promisify(gunzip)(await readFile(path)), base: 0, previous: null };
   if (known && known.offset > 0 && size >= known.offset) {
@@ -437,8 +427,7 @@ export function ompSpend(sessionIds: readonly string[]): Promise<Record<string, 
   return spendBy(sessionIds, async (id) => {
     const root = await ompRoot(id);
     if (!root) return [];
-    const subagents = root.endsWith(COMPRESSED) ? root.slice(0, -COMPRESSED.length) : root.slice(0, -SESSION.length);
-    return [root, ...(await transcriptsUnder(subagents))];
+    return [root, ...(await transcriptsUnder(root.slice(0, root.lastIndexOf(SESSION))))];
   });
 }
 

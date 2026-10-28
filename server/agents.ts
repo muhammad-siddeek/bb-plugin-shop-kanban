@@ -176,15 +176,12 @@ export function registerCli(bb: BbPluginApi, { listBoard, spawnTask, updateTask,
   const commands = [
     { name: "list", summary: "List threads on the Kanban board", usage: `${cli} list [--json]` },
     { name: "add", summary: "Spawn a thread on the Kanban board", usage: `${cli} add <short-name> -- <prompt> [--json]` },
-    { name: "move", summary: "Move a thread", usage: `${cli} move <thread-id> <column> [note] [--json]` },
+    { name: "move", summary: "Move a thread", usage: `${cli} move <thread-id> <${COLUMN_IDS.join("|")}> [note] [--json]` },
     { name: "success", summary: "Mark a thread done", usage: `${cli} success <thread-id> <summary> [--json]` },
     { name: "fail", summary: "Mark a thread blocked", usage: `${cli} fail <thread-id> <summary> [--json]` },
     { name: "remove", summary: "Archive/remove a thread from the board", usage: `${cli} remove <thread-id> [--json]` },
   ];
-  const usage = [
-    "Usage:",
-    ...commands.map((command) => `  ${command.usage.replace("<column>", `<${COLUMN_IDS.join("|")}>`)}`),
-  ].join("\n");
+  const usage = ["Usage:", ...commands.map((command) => `  ${command.usage}`)].join("\n");
   bb.cli.register({
     name: PLUGIN_SLUG,
     summary: "Manage the Kanban board of BB threads",
@@ -230,7 +227,9 @@ export function registerCli(bb: BbPluginApi, { listBoard, spawnTask, updateTask,
         if (command === "remove") {
           const [, threadId] = args;
           if (!threadId) return usageError;
-          return reply({ removed: await removeTask(threadId, { archiveThread: true }) }, `Archived ${threadId} from the board`);
+          const removed = await removeTask(threadId, { archiveThread: true });
+          if (!removed) return { exitCode: 1, stderr: `Could not archive thread ${threadId}.` };
+          return reply({ removed }, `Archived ${threadId} from the board`);
         }
         return command === undefined || command === "help" || command === "--help" ? { exitCode: 0, stdout: usage } : usageError;
       } catch (error) {

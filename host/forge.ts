@@ -94,6 +94,8 @@ function failed(command: string, result: RunResult): { error: string; missing: b
   // Code -1: the CLI could not start, i.e. it is not installed here (Node says ENOENT, Bun "Executable not found").
   if (result.code === -1) return { error: `${command} is not installed on this host.`, missing: true };
   if (SIGNED_OUT.test(result.stderr)) return { error: `${command} is not signed in on this host; run \`${command} auth login\`.`, missing: true };
+  // No exit code: `run` stopped it at its timeout or when the call was cancelled.
+  if (result.code === null) return { error: `${command} did not answer in time.`, missing: false };
   return { error: failure(command, result), missing: false };
 }
 
@@ -123,9 +125,8 @@ export async function prSearch(input: { forge: Forge; repo: string | null; query
     // Search rows are issues too; a pull request's page is `/<owner>/<repo>/pull/<n>`.
     const repo = item.html_url.match(/^https?:\/\/[^/]+\/([^/]+\/[^/]+)\/pulls?\/\d+/)?.[1];
     if (!repo) return [];
-    const user = item.user;
-    const brand = user?.service_brand?.display_name;
-    const login = user?.login ?? "";
+    const brand = item.user?.service_brand?.display_name;
+    const login = item.user?.login ?? "";
     // Delta logins are email addresses; their local part is the name people know.
     const author = brand ?? login.replace(/\[bot\]$/, "").replace(/@.*$/, "");
     return [
@@ -135,7 +136,7 @@ export async function prSearch(input: { forge: Forge; repo: string | null; query
         title: item.title,
         url: item.html_url,
         author: author || login || "unknown",
-        bot: Boolean(brand) || user?.type === "Bot" || login.endsWith("[bot]"),
+        bot: Boolean(brand) || item.user?.type === "Bot" || login.endsWith("[bot]"),
         draft: item.draft === true,
         createdAt: item.created_at,
         updatedAt: item.updated_at,
