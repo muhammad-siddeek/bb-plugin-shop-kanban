@@ -139,7 +139,7 @@ function AddTaskForm({ focus, onAdd, onCancel, onError }: {
         className="block min-h-16 w-full resize-none bg-transparent px-1 py-0.5 text-[13px] leading-snug text-foreground outline-none placeholder:text-muted-foreground/60 disabled:cursor-wait disabled:opacity-60 pointer-coarse:text-base"
       />
       <div className="mt-1.5 flex items-center gap-1.5 border-t border-border/50 pt-1.5">
-        <span className="flex min-w-0 items-center gap-1 truncate text-[10px] text-muted-foreground/70 pointer-coarse:hidden" title="Enter to start · Shift+Enter for a new line · Esc to cancel">
+        <span className="flex min-w-0 items-center gap-1 truncate text-[10px] text-muted-foreground/80 pointer-coarse:hidden" title="Enter to start · Shift+Enter for a new line · Esc to cancel">
           <kbd className="rounded border border-border/70 bg-muted/60 px-1 font-sans text-[9px] leading-[14px] text-muted-foreground">↵</kbd>
           <span>start</span>
           <kbd className="ml-1 rounded border border-border/70 bg-muted/60 px-1 font-sans text-[9px] leading-[14px] text-muted-foreground">esc</kbd>
@@ -208,13 +208,13 @@ function BoardColumnView({ column, title, tasks, now, readLocally, selectedThrea
             <button
               type="button"
               onClick={onStartAdding}
-              className="flex w-full shrink-0 items-center justify-center gap-1.5 rounded-lg border border-dashed border-border/60 px-3 py-5 text-[11px] text-muted-foreground/70 transition-colors hover:border-sky-500/50 hover:bg-sky-500/5 hover:text-sky-500 focus-visible:border-sky-500/60 focus-visible:text-sky-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/20"
+              className="flex w-full shrink-0 items-center justify-center gap-1.5 rounded-lg border border-dashed border-border/60 px-3 py-5 text-[11px] text-muted-foreground/90 transition-colors hover:border-sky-500/50 hover:bg-sky-500/5 hover:text-[light-dark(var(--color-sky-700),var(--color-sky-500))] focus-visible:border-sky-500/60 focus-visible:text-[light-dark(var(--color-sky-700),var(--color-sky-500))] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/20"
             >
               <Icon name="Plus" className="size-3.5" aria-hidden />
               New thread
             </button>
           ) : (
-            <div className="flex shrink-0 items-center justify-center rounded-lg border border-dashed border-border/60 px-3 py-5 text-[11px] text-muted-foreground/60">
+            <div className="flex shrink-0 items-center justify-center rounded-lg border border-dashed border-border/60 px-3 py-5 text-[11px] text-muted-foreground/90">
               No threads
             </div>
           )

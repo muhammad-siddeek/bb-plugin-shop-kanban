@@ -81,10 +81,16 @@ export function parseLabel(text: string): { category: string; intent: string; su
   } catch {
     return null;
   }
-  const words = (value: unknown, maxWords: number, maxChars: number) =>
-    typeof value === "string"
-      ? oneLine(value.replace(/[\[\]"]/g, "")).split(" ").slice(0, maxWords).join(" ").slice(0, maxChars).trim()
-      : "";
+  // Whole words only: a title cut mid-word ("check feasibili") reads as a typo.
+  const words = (value: unknown, maxWords: number, maxChars: number) => {
+    if (typeof value !== "string") return "";
+    const kept = oneLine(value.replace(/[\[\]"]/g, "")).split(" ").slice(0, maxWords).join(" ");
+    if (kept.length <= maxChars) return kept.trim();
+    const cut = kept.slice(0, maxChars + 1);
+    const space = cut.lastIndexOf(" ");
+    // One word longer than the limit has no boundary to cut at; keep its first maxChars characters.
+    return (space > 0 ? cut.slice(0, space) : kept.slice(0, maxChars)).trim();
+  };
   const category = words(raw.category, 2, 24).toLowerCase();
   const intent = words(raw.intent, 6, 40).replace(/[.!]+$/u, "");
   const summary = typeof raw.summary === "string" ? oneLine(raw.summary).slice(0, 280) : "";

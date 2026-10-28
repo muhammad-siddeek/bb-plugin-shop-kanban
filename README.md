@@ -29,10 +29,10 @@ Columns are derived from live thread state; you never drag threads around.
   the bb sidebar). Running threads refresh these every 5 seconds, idle
   threads every minute.
 - Resting the pointer anywhere on a card, or tabbing to it, opens a tooltip
-  beside the card (never over it): the summary in full when the card cut it
-  off, harness, model and thinking level, token counts and cost, access mode,
-  service tier and model id, then the footer's time and status. A tap on a
-  touch screen opens the thread.
+  beside the card (never over it) with the harness session: harness, model
+  and thinking level, token counts and cost, access mode, service tier and
+  model id. Threads with no session yet have none. A tap on a touch screen
+  opens the thread.
 - The cost adds up the thread, every descendant thread (hidden and archived
   ones included) and their harness subagents; the tooltip says how many
   threads it spans. omp and Pi threads are read from their transcripts on

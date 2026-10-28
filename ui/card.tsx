@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
-import { COLUMN_META, formatRelativeTime, taskActivityTime, taskCardTitle, type BoardColumn, type BoardTask } from "./model";
+import { ACCENT_TEXT, COLUMN_META, formatRelativeTime, taskActivityTime, taskCardTitle, type BoardColumn, type BoardTask } from "./model";
 import { CardTooltip, HarnessMeta, type AgentProvider } from "./session";
 
 // All marks share one 16px frame so they line up with the 18px title line (mt-px centers them).
@@ -80,7 +80,7 @@ function TaskStatusMark({ column, unread }: { column: BoardColumn; unread: boole
   if (column === "wip") {
     return (
       <span role="img" aria-label="In progress" className={MARK_FRAME}>
-        <span className="block size-3.5 animate-spin rounded-full border-[1.5px] border-amber-500/20 border-t-amber-500 [animation-duration:900ms]" />
+        <span className="block size-3.5 animate-spin rounded-full border-[1.5px] border-amber-500/20 border-t-[light-dark(var(--color-amber-600),var(--color-amber-500))] [animation-duration:900ms]" />
       </span>
     );
   }
@@ -185,13 +185,10 @@ export function TaskCard({ task, now, unread, selected, invertedTheme, provider,
   const tooltipId = useId();
   const [tooltipOpen, setTooltipOpen] = useState(false);
   const tooltipTimer = useRef(0);
-  const textRef = useRef<HTMLSpanElement>(null);
-  // The card shows the whole summary unless the line clamp cut it; then the tooltip repeats it in full.
-  const [summaryCut, setSummaryCut] = useState(false);
+  // The tooltip is the harness session's details; a card with none (a thread not started yet) has no tooltip.
+  const hasSession = provider !== null || task.session !== null;
   const showTooltip = () => {
-    const text = textRef.current;
-    setSummaryCut(text !== null && text.scrollHeight > text.clientHeight + 1);
-    setTooltipOpen(true);
+    if (hasSession) setTooltipOpen(true);
   };
   const hideTooltip = () => {
     window.clearTimeout(tooltipTimer.current);
@@ -211,10 +208,10 @@ export function TaskCard({ task, now, unread, selected, invertedTheme, provider,
   }, [tooltipOpen]);
   const { category, intent } = taskCardTitle(task);
   // Lines 1-2: "[tag] title — summary" as one run of text. Hovering the card hands it the footer's line
-  // too; the footer's facts move to the card's tooltip.
+  // too; the footer's session facts are in the card's tooltip.
   // The 18px lines come from the 12px strut; the 13px title is leading-none so it can't grow a line.
   const text = (
-    <span ref={textRef} className="line-clamp-2 text-[12px] leading-[18px] group-hover:line-clamp-3">
+    <span className="line-clamp-2 text-[12px] leading-[18px] group-hover:line-clamp-3">
       {category ? (
         <span className="mr-1.5 mt-px inline-flex h-4 max-w-[45%] items-center rounded-[4px] bg-muted px-1 align-top text-[9px] font-semibold uppercase leading-none tracking-[0.06em] text-muted-foreground">
           <span className="truncate">{category}</span>
@@ -239,11 +236,6 @@ export function TaskCard({ task, now, unread, selected, invertedTheme, provider,
   const activity = taskActivityTime(task);
   const canOpen = !task.missingThread;
   const reason = task.statusReason && task.column !== "done" && task.statusReason !== "Running" ? task.statusReason : null;
-  const status = [
-    activity !== null ? `Updated ${formatRelativeTime(activity, now)}` : null,
-    reason,
-    task.missingThread ? "This BB thread no longer exists" : null,
-  ].filter(Boolean).join(" · ") || null;
 
   // Selection wins over the column/unread border; the blocked stripe stays either way.
   const borderClass = selected
@@ -324,28 +316,19 @@ export function TaskCard({ task, now, unread, selected, invertedTheme, provider,
           {activity !== null ? (
             <time
               dateTime={new Date(activity).toISOString()}
-              className="shrink-0 whitespace-nowrap text-[10.5px] tabular-nums text-muted-foreground/70"
+              className="shrink-0 whitespace-nowrap text-[10.5px] tabular-nums text-muted-foreground/80"
             >
               {formatRelativeTime(activity, now)}
             </time>
           ) : null}
           {reason ? <FooterNote tone={`opacity-90 ${meta.title}`} text={reason} /> : null}
-          {task.missingThread ? <FooterNote tone="text-rose-500" text="no thread" /> : null}
+          {task.missingThread ? <FooterNote tone={ACCENT_TEXT.rose} text="no thread" /> : null}
         </div>
         <div className="flex shrink-0 items-center">
           <HarnessMeta provider={provider} session={task.session} />
         </div>
       </div>
-      {tooltipOpen ? (
-        <CardTooltip
-          id={tooltipId}
-          anchor={ref}
-          summary={summaryCut ? task.note : null}
-          provider={provider}
-          session={task.session}
-          status={status}
-        />
-      ) : null}
+      {tooltipOpen ? <CardTooltip id={tooltipId} anchor={ref} provider={provider} session={task.session} /> : null}
     </article>
   );
 }

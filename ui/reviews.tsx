@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { experimental_Icon as Icon, useBbContext, useBbNavigate } from "@get-bb/plugin-sdk/app";
 import { PLUGIN_SLUG } from "../brand";
-import { errorMessage, formatShortAge, type ReviewCard, type ReviewScope } from "./model";
+import { ACCENT_BADGE, ACCENT_TEXT, errorMessage, formatShortAge, type ReviewCard, type ReviewScope } from "./model";
 import type { ReviewVerdict, ReviewsApi } from "./hooks";
 
 // Review queue near the top of the Queue column: a two-line card per pull request waiting on the user, toggled
@@ -19,9 +19,9 @@ const SCOPE = {
   team: { label: "Team", hint: "Requested of your teams", empty: "Nothing requested of your teams." },
 } as const;
 const RISK_CHIP = {
-  low: { label: "Low", tone: "bg-emerald-500/15 text-emerald-500" },
-  medium: { label: "Med", tone: "bg-amber-500/15 text-amber-500" },
-  high: { label: "High", tone: "bg-rose-500/15 text-rose-500" },
+  low: { label: "Low", tone: ACCENT_BADGE.emerald },
+  medium: { label: "Med", tone: ACCENT_BADGE.amber },
+  high: { label: "High", tone: ACCENT_BADGE.rose },
 } as const;
 // Same 16px mark frame as thread cards, so both kinds of card line up in the column.
 const MARK_FRAME = "mt-px inline-flex size-4 shrink-0 items-center justify-center";
@@ -120,7 +120,7 @@ function ReviewRow({ review, now, unread, actions }: { review: ReviewCard; now: 
     >
       <div className="flex items-start gap-2">
         <span className={MARK_FRAME} aria-label={unread ? "Pull request, new" : "Pull request"} title={unread ? "New since you last opened it" : "Pull request"}>
-          <Icon name="GitPullRequest" className={`size-3.5 ${unread ? "text-sky-500" : "text-muted-foreground/50"}`} aria-hidden />
+          <Icon name="GitPullRequest" className={`size-3.5 ${unread ? ACCENT_TEXT.sky : "text-muted-foreground/50"}`} aria-hidden />
         </span>
         <div className="min-w-0 flex-1">
           <button
@@ -135,9 +135,9 @@ function ReviewRow({ review, now, unread, actions }: { review: ReviewCard; now: 
             <span className="min-w-0 truncate">{review.title}</span>
           </button>
           <div className="mt-0.5 flex h-5 items-center gap-0.5 pointer-coarse:h-7">
-            <span className="mr-1 min-w-0 flex-1 truncate text-[10.5px] tabular-nums text-muted-foreground/70" title={metaHint}>
+            <span className="mr-1 min-w-0 flex-1 truncate text-[10.5px] tabular-nums text-muted-foreground/80" title={metaHint}>
               {Number.isFinite(updated) ? `${formatShortAge(updated, now)} · ` : ""}
-              {review.rereview ? <span className="font-medium text-sky-500">re-review · </span> : null}
+              {review.rereview ? <span className={`font-medium ${ACCENT_TEXT.sky}`}>re-review · </span> : null}
               {review.author} · {review.repo.split("/").pop()}#{review.number}
               {review.draft ? " · draft" : ""}
             </span>
@@ -159,7 +159,7 @@ function ReviewRow({ review, now, unread, actions }: { review: ReviewCard; now: 
               className={
                 confirming
                   ? `${ACTION} bg-emerald-500 px-1.5 text-[10px] font-semibold text-white hover:bg-emerald-600`
-                  : `${ICON_ACTION} hover:bg-emerald-500/10 hover:text-emerald-500`
+                  : `${ICON_ACTION} hover:bg-emerald-500/10 hover:text-[light-dark(var(--color-emerald-700),var(--color-emerald-500))]`
               }
             >
               {pending === "approve" ? <Spinner /> : confirming ? "Approve?" : <Icon name="Check" className="size-3.5" aria-hidden />}
@@ -171,7 +171,7 @@ function ReviewRow({ review, now, unread, actions }: { review: ReviewCard; now: 
               title="Request changes"
               disabled={pending !== null}
               onClick={() => setDeclining((open) => !open)}
-              className={`${ICON_ACTION} hover:bg-rose-500/10 hover:text-rose-500 ${declining ? "bg-rose-500/10 text-rose-500" : ""}`}
+              className={`${ICON_ACTION} hover:bg-rose-500/10 hover:text-[light-dark(var(--color-rose-700),var(--color-rose-500))] ${declining ? `bg-rose-500/10 ${ACCENT_TEXT.rose}` : ""}`}
             >
               <Icon name="X" className="size-3.5" aria-hidden />
             </button>
@@ -204,7 +204,7 @@ function ReviewRow({ review, now, unread, actions }: { review: ReviewCard; now: 
             </form>
           ) : null}
           {error ? (
-            <p role="alert" className="mb-0.5 line-clamp-2 text-[10.5px] leading-[14px] text-rose-500" title={error}>
+            <p role="alert" className={`mb-0.5 line-clamp-2 text-[10.5px] leading-[14px] ${ACCENT_TEXT.rose}`} title={error}>
               {error}
             </p>
           ) : null}
@@ -251,7 +251,7 @@ function ScopeToggle({ scopes, active, counts, unread, onSelect }: {
             }`}
           >
             {SCOPE[scope].label}
-            <span className={`tabular-nums ${selected ? "text-muted-foreground" : fresh ? "text-sky-500" : "opacity-70"}`}>{counts[scope]}</span>
+            <span className={`tabular-nums ${selected ? "text-muted-foreground" : fresh ? ACCENT_TEXT.sky : "opacity-70"}`}>{counts[scope]}</span>
           </button>
         );
       })}
@@ -383,11 +383,11 @@ export function ReviewSection({ reviews, now }: { reviews: ReviewsApi; now: numb
           ) : null}
         </button>
         {state.scopes.length > 1 ? <ScopeToggle scopes={state.scopes} active={scope} counts={counts} unread={unread} onSelect={selectScope} /> : null}
-        {unread[scope] > 0 ? <span className="text-[10px] font-medium text-sky-500">{unread[scope]} new</span> : null}
+        {unread[scope] > 0 ? <span className={`text-[10px] font-medium ${ACCENT_TEXT.sky}`}>{unread[scope]} new</span> : null}
         <span className="ml-auto flex items-center gap-1">
           {state.refreshing ? <Spinner /> : null}
           {problems.length > 0 ? (
-            <span role="img" aria-label={`Review queue problems: ${problems.join("; ")}`} title={problems.join("\n")} className="inline-flex text-amber-500">
+            <span role="img" aria-label={`Review queue problems: ${problems.join("; ")}`} title={problems.join("\n")} className={`inline-flex ${ACCENT_TEXT.amber}`}>
               <Icon name="AlertCircle" className="size-3.5" aria-hidden />
             </span>
           ) : null}
@@ -396,7 +396,7 @@ export function ReviewSection({ reviews, now }: { reviews: ReviewsApi; now: numb
       {collapsed ? null : (
         <>
           {scoped.length === 0 ? (
-            <p className="px-1 text-[11px] text-muted-foreground/60">{loading ? "Reading pull requests…" : SCOPE[scope].empty}</p>
+            <p className="px-1 text-[11px] text-muted-foreground/90">{loading ? "Reading pull requests…" : SCOPE[scope].empty}</p>
           ) : null}
           {shown.map((review) => (
             <ReviewRow key={review.id} review={review} now={now} unread={isNew(review)} actions={actions} />

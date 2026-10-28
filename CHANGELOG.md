@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- The card tooltip shows only the harness session: harness, model and
+  thinking level, then tokens and context share, then cost, each on its own
+  line, then access mode, service tier and model id. It no longer repeats
+  the summary or the update time and status, and threads with no session yet
+  have no tooltip.
+- Light mode is easier to read: column titles, counts, risk chips, the card
+  footer and empty states use one shade darker on light backgrounds, and
+  dark mode is unchanged. Long titles cut at the last whole word instead of
+  mid-word.
+
 ## 0.10.0
 
 - The title bar's refresh button is gone; the board already updates live,

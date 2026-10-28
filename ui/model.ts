@@ -25,36 +25,36 @@ export const BOTTOM_BOARD_HEIGHT_VAR = `--${PLUGIN_SLUG}-bottom-height`;
 export const BOTTOM_BOARD_COLLAPSED_CLASS = `${PLUGIN_SLUG}-bottom-collapsed`;
 const COLUMNS: BoardColumn[] = ["queue", "wip", "blocked", "done"];
 
+/**
+ * Accent text per hue: the -500 shade on dark, -700 on light, where -500 is too faint to read (about 2:1 on
+ * white). light-dark() follows the nearest bb theme scope (its .light/.dark classes set color-scheme), so the
+ * selected card, drawn in the opposite theme, gets the right shade too.
+ */
+export const ACCENT_TEXT = {
+  sky: "text-[light-dark(var(--color-sky-700),var(--color-sky-500))]",
+  amber: "text-[light-dark(var(--color-amber-700),var(--color-amber-500))]",
+  rose: "text-[light-dark(var(--color-rose-700),var(--color-rose-500))]",
+  emerald: "text-[light-dark(var(--color-emerald-700),var(--color-emerald-500))]",
+} as const;
+
+/** A tinted pill (counts, risk chips): the tint costs contrast, so its text goes one shade darker on light. */
+export const ACCENT_BADGE = {
+  sky: "bg-sky-500/15 text-[light-dark(var(--color-sky-800),var(--color-sky-500))]",
+  amber: "bg-amber-500/15 text-[light-dark(var(--color-amber-800),var(--color-amber-500))]",
+  rose: "bg-rose-500/15 text-[light-dark(var(--color-rose-800),var(--color-rose-500))]",
+  emerald: "bg-emerald-500/15 text-[light-dark(var(--color-emerald-800),var(--color-emerald-500))]",
+} as const;
+
 export const COLUMN_META: Record<BoardColumn, {
   title: string;
   accent: string;
   badge: string;
   outline: string;
 }> = {
-  queue: {
-    title: "text-sky-500",
-    accent: "bg-sky-500",
-    badge: "bg-sky-500/15 text-sky-500",
-    outline: "outline-sky-500",
-  },
-  wip: {
-    title: "text-amber-500",
-    accent: "bg-amber-500",
-    badge: "bg-amber-500/15 text-amber-500",
-    outline: "outline-amber-500",
-  },
-  blocked: {
-    title: "text-rose-500",
-    accent: "bg-rose-500",
-    badge: "bg-rose-500/15 text-rose-500",
-    outline: "outline-rose-500",
-  },
-  done: {
-    title: "text-emerald-500",
-    accent: "bg-emerald-500",
-    badge: "bg-emerald-500/15 text-emerald-500",
-    outline: "outline-emerald-500",
-  },
+  queue: { title: ACCENT_TEXT.sky, accent: "bg-sky-500", badge: ACCENT_BADGE.sky, outline: "outline-sky-500" },
+  wip: { title: ACCENT_TEXT.amber, accent: "bg-amber-500", badge: ACCENT_BADGE.amber, outline: "outline-amber-500" },
+  blocked: { title: ACCENT_TEXT.rose, accent: "bg-rose-500", badge: ACCENT_BADGE.rose, outline: "outline-rose-500" },
+  done: { title: ACCENT_TEXT.emerald, accent: "bg-emerald-500", badge: ACCENT_BADGE.emerald, outline: "outline-emerald-500" },
 };
 
 export function shortNameFromPrompt(prompt: string): string {
