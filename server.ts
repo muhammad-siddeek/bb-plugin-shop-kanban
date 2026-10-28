@@ -17,6 +17,7 @@ import { createSessionInfo } from "./server/session";
 import { createLabeler } from "./server/labeler";
 import { createThreadReader } from "./server/threads";
 import { createSearchIndex } from "./server/search";
+import { createReviewQueue } from "./server/reviews";
 
 export { rpcContract } from "./server/schema";
 
@@ -96,6 +97,7 @@ export default async function plugin(bb: BbPluginApi) {
   const reader = createThreadReader(bb);
   const sessions = createSessionInfo(bb, reader);
   const search = createSearchIndex(bb, reader);
+  const reviews = createReviewQueue(bb, labels);
 
   function publishBoardChanged() {
     bb.realtime.publish(BOARD_CHANGED, { at: Date.now() });
@@ -386,6 +388,15 @@ export default async function plugin(bb: BbPluginApi) {
       return { ok };
     },
     board_search: async ({ query }: { query: string }) => search.search(query),
+    reviews_list: () => reviews.list(),
+    reviews_refresh: async () => {
+      await reviews.refresh();
+      return reviews.list();
+    },
+    reviews_draft: ({ id }) => reviews.draft(id),
+    reviews_mark_read: ({ id }) => reviews.markRead(id),
+    reviews_archive: ({ id }) => reviews.archive(id),
+    reviews_submit: ({ id, verdict, body }) => reviews.submit(id, verdict, body),
   });
 
   const boardApi = { listBoard, spawnTask, updateTask, markTaskResult, removeTask };
@@ -428,6 +439,7 @@ export default async function plugin(bb: BbPluginApi) {
   bb.onDispose(() => {
     labels.dispose();
     search.dispose();
+    reviews.dispose();
     bb.log.info("disposed");
   });
 }

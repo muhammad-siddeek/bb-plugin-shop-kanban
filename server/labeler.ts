@@ -79,6 +79,20 @@ export function createLabeler(bb: BbPluginApi, onChange: () => void) {
     }
   }
 
+  /**
+   * Runs the labeler model on `hostId` and returns its reply; throws when the labeler is off or the model returns
+   * nothing. Shared with the review queue, which writes its pull request summaries with the same model.
+   */
+  async function complete(hostId: string, system: string, prompt: string, timeoutMs: number): Promise<string> {
+    const { labelerCommand, labelerModels } = await settings.get();
+    const command = labelerCommand.trim();
+    const models = labelerModels.split(",").map((model) => model.trim()).filter(Boolean).slice(0, 4);
+    if (!command || models.length === 0) throw new Error("Labeler is turned off in settings.");
+    const result = await host.call("complete", { command, system, prompt, models, timeoutMs }, { hostId });
+    if (!result?.text) throw new Error(result?.error ?? "Labeler returned nothing.");
+    return result.text;
+  }
+
   /** Runs the configured labeler on the thread's host; throws when it is off or returns nothing usable. */
   async function requestLabel(
     thread: LiveThread,
@@ -87,35 +101,26 @@ export function createLabeler(bb: BbPluginApi, onChange: () => void) {
     currentTitle: string | null,
     all: Record<string, CardLabel>,
   ) {
-    const { labelerCommand, labelerModels } = await settings.get();
-    const command = labelerCommand.trim();
-    const models = labelerModels.split(",").map((model) => model.trim()).filter(Boolean).slice(0, 4);
-    if (!command || models.length === 0) throw new Error("Labeler is turned off in settings.");
     const hostId = await resolveHostId(thread);
     if (!hostId) throw new Error("No connected host to run the labeler.");
     const categories = Array.from(new Set(Object.values(all).map((entry) => entry.category).filter(Boolean))).slice(0, 30);
-    const result = await host.call(
-      "complete",
-      {
-        command,
-        system: LABEL_SYSTEM,
-        prompt: labelPrompt({
-          title: thread.title,
-          currentTitle,
-          firstPrompt: details.firstUserPrompt,
-          lastPrompt: details.lastUserPrompt,
-          prompts: details.userPrompts,
-          output: details.output,
-          running,
-          categories,
-        }),
-        models,
-        timeoutMs: 12_000,
-      },
-      { hostId },
+    const text = await complete(
+      hostId,
+      LABEL_SYSTEM,
+      labelPrompt({
+        title: thread.title,
+        currentTitle,
+        firstPrompt: details.firstUserPrompt,
+        lastPrompt: details.lastUserPrompt,
+        prompts: details.userPrompts,
+        output: details.output,
+        running,
+        categories,
+      }),
+      12_000,
     );
-    const parsed = result?.text ? parseLabel(result.text) : null;
-    if (!parsed) throw new Error(result?.error ?? "Labeler returned no usable JSON.");
+    const parsed = parseLabel(text);
+    if (!parsed) throw new Error("Labeler returned no usable JSON.");
     return parsed;
   }
 
@@ -216,5 +221,5 @@ export function createLabeler(bb: BbPluginApi, onChange: () => void) {
     labelQueue.length = 0;
   }
 
-  return { load, view, forget, dispose };
+  return { load, view, forget, complete, dispose };
 }

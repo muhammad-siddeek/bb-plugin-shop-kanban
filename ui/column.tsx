@@ -2,9 +2,10 @@ import { useEffect, useMemo, useState } from "react";
 import type { FormEvent, KeyboardEvent, ReactElement, ReactNode } from "react";
 import { experimental_Icon as Icon, experimental_useCodeTheme, experimental_useProviders, useBbContext, useBbNavigate } from "@get-bb/plugin-sdk/app";
 import { CLOCK_TICK_MS, columnMeta, groupTasksByColumn, isUnread, scrollThreadToLatest, shortNameFromPrompt, type BoardColumn, type BoardTask } from "./model";
-import { useNow, type BoardApi } from "./hooks";
+import { useNow, type BoardApi, type ReviewsApi } from "./hooks";
 import { IconButton } from "./primitives";
 import { TaskCard, type ThemeScope } from "./card";
+import { ReviewSection } from "./reviews";
 import type { AgentProvider } from "./session";
 
 function AddTaskForm({ onAdd, onCancel, onError }: {
@@ -96,7 +97,7 @@ function ColumnEmpty({ children }: { children: ReactNode }) {
   );
 }
 
-function BoardColumnView({ column, title, tasks, now, readLocally, selectedThreadId, invertedTheme, providersById, onArchive, onOpen, onStartAdding, addForm }: {
+function BoardColumnView({ column, title, tasks, now, readLocally, selectedThreadId, invertedTheme, providersById, onArchive, onOpen, onStartAdding, lead, addForm }: {
   column: BoardColumn;
   title: string;
   tasks: BoardTask[];
@@ -108,6 +109,8 @@ function BoardColumnView({ column, title, tasks, now, readLocally, selectedThrea
   onArchive: (threadId: string) => void;
   onOpen: (threadId: string) => void;
   onStartAdding: (() => void) | null;
+  /** Rendered above the column's cards: the review queue in Queue. */
+  lead: ReactElement | null;
   /** The new-task form; non-null only while it is open. */
   addForm: ReactElement | null;
 }) {
@@ -127,6 +130,7 @@ function BoardColumnView({ column, title, tasks, now, readLocally, selectedThrea
         ) : null}
       </header>
       <div data-board-column-scroll="" className="min-h-0 flex-1 space-y-1.5 overflow-y-auto overscroll-contain p-2 [scrollbar-width:thin]">
+        {lead}
         {addForm}
         {tasks.map((task) => (
           <TaskCard
@@ -160,7 +164,7 @@ function BoardColumnView({ column, title, tasks, now, readLocally, selectedThrea
   );
 }
 
-export function BoardView({ api }: { api: BoardApi }) {
+export function BoardView({ api, reviews }: { api: BoardApi; reviews: ReviewsApi }) {
   const context = useBbContext();
   const selectedThreadId = context?.threadId ?? null;
   // The selected card renders in the opposite theme so it pops against the board.
@@ -236,6 +240,7 @@ export function BoardView({ api }: { api: BoardApi }) {
               onArchive={archiveTask}
               onOpen={openTask}
               onStartAdding={column.id === "queue" ? () => setAdding(true) : null}
+              lead={column.id === "queue" ? <ReviewSection reviews={reviews} now={now} /> : null}
               addForm={column.id === "queue" && adding ? <AddTaskForm onAdd={addTask} onCancel={() => setAdding(false)} onError={report} /> : null}
             />
           ))}

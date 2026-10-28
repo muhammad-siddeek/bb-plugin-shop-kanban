@@ -13,10 +13,60 @@ export const piSessionIdInput = z.string().regex(/^[A-Za-z0-9_-][A-Za-z0-9._-]{0
  */
 const spendsOutput = z.object({ spends: z.record(z.string(), z.object({ amount: z.number(), estimated: z.number() }).strict()) }).strict();
 
+/** A pull request host: Delta (shop/world, through `dt`) or GitHub (through `gh`). */
+export const forgeInput = z.enum(["delta", "github"]);
+export type Forge = z.infer<typeof forgeInput>;
+const repoInput = z.string().regex(/^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/);
+const prNumberInput = z.number().int().min(1).max(Number.MAX_SAFE_INTEGER);
+/** A pull request as a search lists it. Delta's rows carry the head commit; GitHub's need `pr_detail`. */
+const forgePrSchema = z
+  .object({
+    repo: z.string(),
+    number: z.number(),
+    title: z.string(),
+    url: z.string(),
+    /** Display name: a bot's brand, or the login without its email domain or `[bot]` suffix. */
+    author: z.string(),
+    bot: z.boolean(),
+    draft: z.boolean(),
+    createdAt: z.string(),
+    updatedAt: z.string(),
+    labels: z.array(z.string()),
+    headSha: z.string().nullable(),
+  })
+  .strict();
+export type ForgePr = z.infer<typeof forgePrSchema>;
+const forgePrDetailSchema = z
+  .object({
+    headSha: z.string().nullable(),
+    /** Commit of the signed-in user's latest standing review; null when they left none, or it could not be read. */
+    reviewedSha: z.string().nullable(),
+    /** Clipped description. */
+    body: z.string(),
+    additions: z.number().nullable(),
+    deletions: z.number().nullable(),
+    changedFiles: z.number().nullable(),
+    /** The first page of changed files; `patch` is clipped, and null for lockfiles and generated dumps. */
+    files: z.array(
+      z
+        .object({
+          path: z.string(),
+          status: z.string().nullable(),
+          additions: z.number().nullable(),
+          deletions: z.number().nullable(),
+          patch: z.string().nullable(),
+        })
+        .strict(),
+    ),
+  })
+  .strict();
+export type ForgePrDetail = z.infer<typeof forgePrDetailSchema>;
+
 /**
  * Server ↔ host contract. The host runs a small model through a pi-compatible CLI to label threads, keeps
  * the thread search index (one markdown file per thread in the plugin's host data dir, indexed by qmd),
- * and reads what omp and Pi sessions spent from their transcripts.
+ * reads what omp and Pi sessions spent from their transcripts, and reads and reviews pull requests through
+ * the user's signed-in `dt` and `gh`.
  */
 export const hostContract = defineRpcContract({
   complete: {
@@ -81,5 +131,40 @@ export const hostContract = defineRpcContract({
   pi_spend: {
     input: z.object({ sessionIds: z.array(piSessionIdInput).min(1).max(500) }).strict(),
     output: spendsOutput,
+  },
+  /**
+   * Open pull requests matching a forge search (GitHub search syntax), most recently updated first. `missing` is
+   * true when the forge's CLI is not installed on this host. Delta searches one repository, so it needs `repo`.
+   */
+  pr_search: {
+    input: z
+      .object({
+        forge: forgeInput,
+        repo: repoInput.nullable(),
+        query: z.string().trim().min(1).max(1_000),
+        limit: z.number().int().min(1).max(100),
+      })
+      .strict(),
+    output: z
+      .object({ prs: z.array(forgePrSchema), total: z.number(), error: z.string().nullable(), missing: z.boolean() })
+      .strict(),
+  },
+  /** A pull request's head, size, description and a clipped diff of its first changed files. */
+  pr_detail: {
+    input: z.object({ forge: forgeInput, repo: repoInput, number: prNumberInput }).strict(),
+    output: z.object({ detail: forgePrDetailSchema.nullable(), error: z.string().nullable() }).strict(),
+  },
+  /** Approve, or request changes with `body` as the reason, as the CLI's signed-in user. */
+  pr_review: {
+    input: z
+      .object({
+        forge: forgeInput,
+        repo: repoInput,
+        number: prNumberInput,
+        verdict: z.enum(["approve", "request_changes"]),
+        body: z.string().max(10_000),
+      })
+      .strict(),
+    output: z.object({ error: z.string().nullable() }).strict(),
   },
 });

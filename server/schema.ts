@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { forgeInput } from "../contract";
 
 export const COLUMN_IDS = ["queue", "wip", "blocked", "done"] as const;
 export type Column = (typeof COLUMN_IDS)[number];
@@ -104,6 +105,69 @@ const searchResponseSchema = z.object({
   error: z.string().nullable(),
 });
 
+export const reviewRiskSchema = z.enum(["low", "medium", "high"]);
+/** Whose review a pull request asks for: the user's by name, or one of their teams'. Me first. */
+export const reviewScopeSchema = z.enum(["me", "team"]);
+
+/** An open pull request waiting on the user's review: a one-card entry at the top of the Queue column. */
+const reviewCardSchema = z.object({
+  /** `<forge>:<owner>/<repo>#<number>` */
+  id: z.string(),
+  forge: forgeInput,
+  repo: z.string(),
+  number: z.number(),
+  url: z.string(),
+  title: z.string(),
+  author: z.string(),
+  bot: z.boolean(),
+  draft: z.boolean(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  /** Null until the pull request's details are read. */
+  additions: z.number().nullable(),
+  deletions: z.number().nullable(),
+  changedFiles: z.number().nullable(),
+  /** The model's first read: risk and up to three sentences (what, why, what could break). */
+  risk: reviewRiskSchema.nullable(),
+  summary: z.string().nullable(),
+  /** A summary for the current head is being written. */
+  summarizing: z.boolean(),
+  /** Not opened from the board since its head commit last moved. */
+  unread: z.boolean(),
+  /** The user reviewed an older head: commits landed since their review. */
+  rereview: z.boolean(),
+  /** Me when a search for the user found it, otherwise Team. */
+  scope: reviewScopeSchema,
+});
+
+/** One configured search: what it found, and why it failed. */
+const reviewSourceSchema = z.object({
+  search: z.string(),
+  scope: reviewScopeSchema,
+  /** Open matches read, before archived and already-reviewed ones are hidden. */
+  count: z.number(),
+  /** Every open match, the user's own reviews included. */
+  total: z.number(),
+  error: z.string().nullable(),
+  /** The forge's CLI is not installed on the host. */
+  missing: z.boolean(),
+});
+
+const reviewStateSchema = z.object({
+  /** Scopes with at least one search line, Me first; none turns the queue off. */
+  scopes: z.array(reviewScopeSchema),
+  /** Most recently updated first; archived and reviewed ones are left out. */
+  reviews: z.array(reviewCardSchema),
+  sources: z.array(reviewSourceSchema),
+  refreshing: z.boolean(),
+  refreshedAt: z.number().nullable(),
+  /** Why no search could run, e.g. no connected host. */
+  error: z.string().nullable(),
+});
+
+const reviewRefSchema = z.object({ id: z.string().min(1).max(300) });
+const okSchema = z.object({ ok: z.boolean() });
+
 export const rpcContract = {
   board_list: { input: z.null(), output: boardStateSchema },
   board_spawn_task: {
@@ -132,6 +196,23 @@ export const rpcContract = {
   board_remove_task: { input: threadRefSchema, output: z.object({ removed: z.boolean() }) },
   board_mark_read: { input: threadRefSchema, output: z.object({ ok: z.boolean() }) },
   board_search: { input: z.object({ query: z.string().trim().min(1).max(200) }), output: searchResponseSchema },
+  reviews_list: { input: z.null(), output: reviewStateSchema },
+  /** Re-run the searches now; resolves once they are read. */
+  reviews_refresh: { input: z.null(), output: reviewStateSchema },
+  /** Mark read and return the prompt that seeds a new thread explaining the pull request. */
+  reviews_draft: { input: reviewRefSchema, output: z.object({ prompt: z.string() }) },
+  reviews_mark_read: { input: reviewRefSchema, output: okSchema },
+  /** Hide a pull request from the queue for good. */
+  reviews_archive: { input: reviewRefSchema, output: okSchema },
+  /** Approve, or request changes with a reason, as the user; the pull request then leaves the queue. */
+  reviews_submit: {
+    input: z.object({
+      id: reviewRefSchema.shape.id,
+      verdict: z.enum(["approve", "request_changes"]),
+      body: z.string().trim().max(10_000),
+    }),
+    output: okSchema,
+  },
 };
 
 export type StoredTask = {
@@ -153,3 +234,8 @@ export type StoredTask = {
 export type BoardTask = z.infer<typeof boardTaskSchema>;
 export type BoardSession = z.infer<typeof boardSessionSchema>;
 export type SearchResponse = z.infer<typeof searchResponseSchema>;
+export type ReviewRisk = z.infer<typeof reviewRiskSchema>;
+export type ReviewScope = z.infer<typeof reviewScopeSchema>;
+export type ReviewCard = z.infer<typeof reviewCardSchema>;
+export type ReviewSource = z.infer<typeof reviewSourceSchema>;
+export type ReviewState = z.infer<typeof reviewStateSchema>;

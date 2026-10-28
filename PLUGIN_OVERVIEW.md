@@ -5,6 +5,7 @@
 - Each thread shows a `[category] intent` title, a two-line summary of the latest exchange, the update time and status, what the thread has spent together with its child threads and subagents (archived ones included; `~` when part of it is estimated), a ring with the share of the context window in use (amber at 70%, red at 90%), and the icon of the harness running the thread. Hover the cost, ring or icon for model, thinking level, tokens, access mode and service tier.
 - Clicking a thread opens it at the latest message. The Queue + button starts a new thread. The thread open in bb is highlighted on the board and kept in view.
 - The search bar in the board's title bar finds any thread by what was said in it, archived threads included. Picking a result opens the thread in bb and leaves the board as it is.
+- A Reviews section at the top of Queue lists open pull requests waiting on your review on Delta and GitHub. A Me | Team toggle switches between requests of you by name and of your teams, starting on Me; the `reviewSearchesMe` and `reviewSearchesTeam` settings pick the searches. Each is a two-line card: a risk chip and title, which opens a drafted new thread asking what changed, why and how risky it is; then age, author, and links to open it on Delta or GitHub, approve (click twice), or request changes with a reason. Archive hides one for good. Ones you already reviewed come back marked `re-review` only when new commits land.
 
 ## For agents
 
@@ -19,5 +20,6 @@ Titles, summaries, and the Blocked-or-Done call for finished replies come from a
 - bb 0.47 or later.
 - For model-written labels: a pi-compatible CLI on each host that runs threads.
 - For thread search: [qmd](https://github.com/tobi/qmd) (`npm install -g @tobilu/qmd`) on a connected persistent host.
+- For the review queue: `dt` (Delta) and/or `gh` (GitHub), signed in, on that same host.
 
 If you replace bb's omp agent with a custom ACP agent entry, bb draws it with a generic toolbox glyph. The plugin draws bb's omp mark for it instead, in bb's sidebar and pickers as well as on the board.

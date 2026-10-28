@@ -1,10 +1,10 @@
 import { PLUGIN_SLUG } from "../brand";
-import type { BoardSession, SearchResponse } from "../server/schema";
+import type { BoardSession, ReviewCard, ReviewScope, ReviewState, SearchResponse } from "../server/schema";
 
 // Shared board types, constants, and pure helpers.
 
 // Type-only re-exports of the server's schema types; keeps zod out of the browser bundle.
-export type { BoardSession, SearchResponse };
+export type { BoardSession, ReviewCard, ReviewScope, ReviewState, SearchResponse };
 
 export type BoardColumn = "queue" | "wip" | "blocked" | "done";
 
@@ -255,6 +255,19 @@ export function formatRelativeTime(ms: number, now: number): string {
   if (days < 7) return plural(days, "day");
   if (days < 30) return plural(Math.floor(days / 7), "week");
   return new Date(ms).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+}
+
+/** `formatRelativeTime` in a few characters ("now", "5m", "3h", "2d", "3w"), for one-line review cards. */
+export function formatShortAge(ms: number, now: number): string {
+  const minutes = Math.floor(Math.max(0, now - ms) / 60_000);
+  if (minutes < 1) return "now";
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d`;
+  if (days < 30) return `${Math.floor(days / 7)}w`;
+  return new Date(ms).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
 /** Unread unless bb says it was read, or the user just opened it from the board. */

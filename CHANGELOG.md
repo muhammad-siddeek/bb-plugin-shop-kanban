@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased
+
+- A Reviews section at the top of the Queue column lists open pull requests
+  waiting on your review. A Me | Team toggle in its header switches between
+  requests of you by name and of your teams, and it opens on Me every time.
+  Two new settings, `reviewSearchesMe` and `reviewSearchesTeam`, take one
+  `delta:` or `github:` search per line in GitHub search syntax. They are
+  read through the `dt` and `gh` CLIs on the persistent host that runs thread
+  search. The defaults cover Delta and GitHub, without drafts or your own pull
+  requests. A pull request both sides find is listed under Me. Emptying a
+  setting hides its side; emptying both hides the section.
+- Each card is two lines. The title, behind a low/medium/high risk chip,
+  opens bb's new-thread screen with an unsent prompt asking what changed, why,
+  and how risky it is. The second line opens the pull request on Delta or
+  GitHub, approves it (click twice) or requests changes with a reason; the
+  card leaves the queue once the review is submitted. Archive hides a card
+  for good.
+- The labeler model writes each pull request a first read, risk plus at most
+  three sentences (what, why, what could break), once per head commit. It
+  shows as the chip, in the title's tooltip and in the drafted prompt.
+- Cards stay marked new until opened from the board, and turn new again when
+  commits land. A pull request you reviewed anywhere stays hidden until
+  commits land after your review, then returns marked `re-review`, with a
+  draft that asks what changed since the commit you reviewed.
+- The board's refresh button re-reads the review searches too.
+
 ## 0.8.0
 
 - A card's cost now covers the thread's whole tree: the thread, every

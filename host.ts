@@ -1,11 +1,11 @@
-import { spawn } from "cross-spawn";
 import { realpathSync } from "node:fs";
 import { mkdir, readdir, rm, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { experimental_defineHostEntry } from "@get-bb/plugin-sdk/host";
 import { z } from "zod";
 import { hostContract } from "./contract";
+import { prDetail, prReview, prSearch } from "./host/forge";
+import { failure, run } from "./host/run";
 import { ompSpend, piSpend } from "./host/spend";
 
 const LABELER_FLAGS = [
@@ -28,44 +28,6 @@ const QMD_COLLECTION = "threads";
 const THREADS_DIR = "threads";
 const QMD_UPDATE_TIMEOUT_MS = 120_000;
 const QMD_SEARCH_TIMEOUT_MS = 10_000;
-
-type RunResult = { code: number | null; stdout: string; stderr: string };
-
-/** cross-spawn resolves Windows npm shims (`qmd.cmd`) and quotes their args for cmd.exe; elsewhere it is plain `spawn`. */
-function run(command: string, args: string[], timeoutMs: number, signal: AbortSignal): Promise<RunResult> {
-  return new Promise((resolve) => {
-    const child = spawn(command, args, {
-      cwd: homedir(),
-      env: process.env,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    let stdout = "";
-    let stderr = "";
-    const stop = () => child.kill("SIGTERM");
-    const timer = setTimeout(stop, timeoutMs);
-    signal.addEventListener("abort", stop, { once: true });
-    child.stdout.on("data", (chunk) => {
-      if (stdout.length < 200_000) stdout += chunk;
-    });
-    child.stderr.on("data", (chunk) => {
-      if (stderr.length < 20_000) stderr += chunk;
-    });
-    const finish = (code: number | null) => {
-      clearTimeout(timer);
-      signal.removeEventListener("abort", stop);
-      resolve({ code, stdout, stderr });
-    };
-    child.on("error", (error) => {
-      stderr += String(error);
-      finish(-1);
-    });
-    child.on("close", finish);
-  });
-}
-
-function failure(command: string, result: RunResult): string {
-  return (result.stderr || result.stdout).trim().slice(-500) || `${command} exited with ${result.code}`;
-}
 
 /** Points the collection at `dir`: added when missing, re-added when it indexes another path. */
 async function ensureCollection(command: string, dir: string, signal: AbortSignal): Promise<string | null> {
@@ -143,5 +105,8 @@ export default experimental_defineHostEntry({
     },
     omp_spend: async ({ sessionIds }) => ({ spends: await ompSpend(sessionIds) }),
     pi_spend: async ({ sessionIds }) => ({ spends: await piSpend(sessionIds) }),
+    pr_search: (input, context) => prSearch(input, context.signal),
+    pr_detail: (input, context) => prDetail(input, context.signal),
+    pr_review: (input, context) => prReview(input, context.signal),
   },
 });

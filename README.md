@@ -117,6 +117,78 @@ qmd --index shop-kanban search "redis timeout"   # same index from a terminal
 | --------------- | ------- | ------------------------------------------------------ |
 | `searchCommand` | `qmd`   | qmd CLI to run. Leave empty to turn thread search off. |
 
+## Review queue
+
+Open pull requests waiting on your review sit in a collapsible **Reviews**
+section at the top of the Queue column, newest update first. A **Me | Team**
+toggle in its header switches between requests of you by name and requests of
+your teams. It opens on Me every time the board loads. Each side shows its
+count, in blue when it has new cards. Which pull requests land where is up to
+you: the `reviewSearchesMe` and `reviewSearchesTeam` settings each list one
+search per line, so each user gets their own and their teams' requests. A
+pull request that a Me search also finds is listed under Me only. Empty one
+setting and its side of the toggle goes away; empty both and the section
+does.
+
+Each pull request is a two-line card:
+
+- **Line 1**: a risk chip (`LOW`, `MED`, `HIGH`) and the title. Clicking the
+  title opens bb's new-thread screen with a drafted, unsent prompt that asks
+  the agent to explain the pull request: what changed, why, and how risky it
+  is. Hover it for the model's first read.
+- **Line 2**: age, author and number, then three actions:
+  - **Delta** or **GitHub** opens the pull request in your browser.
+  - **✓** approves. A first click turns it into `Approve?`; a second click
+    within 3 seconds submits.
+  - **✕** opens a one-line reason box; Enter requests changes with that
+    reason, Esc closes it.
+- **Archive** (on hover, top right) hides the pull request for good.
+
+New cards are blue and bold until you open them from the board (draft or
+forge link); a push of new commits marks them new again. Approving or
+requesting changes removes the card at once. A pull request you reviewed,
+from the board or anywhere else, stays hidden until commits land after your
+review; it then comes back marked `re-review`, and its draft asks what changed
+since the commit you reviewed. Errors show on the card, and failed searches
+behind an amber icon in the section header. The section shows 8 cards with a
+"Show more" button, and remembers whether it is collapsed.
+
+The searches run through the forge CLIs you already signed in to, `dt` for
+Delta and `gh` for GitHub, on the same connected persistent host as thread
+search: 8 seconds after the plugin loads, every 5 minutes, when either setting
+changes, and when you press the board's refresh button. Reviews are submitted
+as those CLIs' signed-in user. Each line is GitHub search syntax prefixed by
+its forge:
+
+- `is:pr is:open` is implied, and GitHub lines skip archived repositories.
+- A Delta line without `repo:` searches `shop/world`.
+- By name: Delta's `review-requested:@me` matches only requests of you by
+  name. GitHub's also matches your teams' requests; its
+  `user-review-requested:@me` is the by-name half.
+- Teams: Delta's `team-review-requested:@me` matches every team you are on.
+  GitHub rejects `@me` there, so the default uses
+  `review-requested:@me -user-review-requested:@me`. For one team, Delta
+  takes the team slug (`team-review-requested:exp`) and GitHub takes
+  `<org>/<team>`.
+- Blank lines and `#` comments are skipped.
+
+```sh
+# Team: only ExP's requests on Delta
+bb plugin config shop-kanban set reviewSearchesTeam 'delta: team-review-requested:exp -author:@me -is:draft'
+```
+
+The first read (`[risk] what. why. what could break.`, three sentences at
+most) comes from the labeler model (`labelerCommand` and `labelerModels`),
+given the description, the size and a clipped diff of the first changed
+files, without lockfiles and generated files. It is written once per head
+commit and kept in plugin storage. With `labelerCommand` empty, cards show no
+risk chip and drafts carry no first read.
+
+| Setting              | Default                                                                                                              | Meaning                                                          |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| `reviewSearchesMe`   | Delta and GitHub requests of you by name, drafts and your own PRs excluded                                           | Searches for Me, one per line. Leave empty to hide Me.           |
+| `reviewSearchesTeam` | Delta requests of any of your teams, GitHub requests of your teams but not of you by name; drafts and your own PRs excluded | Searches for Team, one per line. Leave empty to hide Team. |
+
 ## Agent tools
 
 Agents get four tools for tracking their own work on the board:

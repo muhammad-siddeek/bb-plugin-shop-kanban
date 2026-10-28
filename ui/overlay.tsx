@@ -14,7 +14,7 @@ import {
   defaultPanelHeight,
   maxPanelHeight,
 } from "./model";
-import { useBoard, useTaskStatusNotifications } from "./hooks";
+import { useBoard, useReviews, useTaskStatusNotifications } from "./hooks";
 import { IconButton } from "./primitives";
 import { BoardView } from "./column";
 import { ThreadSearch } from "./search";
@@ -53,6 +53,7 @@ export function BottomBoardOverlay() {
   const [panelHeight, setPanelHeight] = useState(defaultPanelHeight);
   const resizeCleanupRef = useRef<() => void>(() => {});
   const api = useBoard();
+  const reviews = useReviews();
   const { board, refetch } = api;
   useTaskStatusNotifications();
   const blockedTasks = board?.tasks.filter((task) => task.column === "blocked").length ?? 0;
@@ -62,6 +63,7 @@ export function BottomBoardOverlay() {
 
   const handleRefresh = () => {
     refetch();
+    reviews.refresh();
     setRefreshing(true);
     window.clearTimeout(refreshTimerRef.current);
     refreshTimerRef.current = window.setTimeout(() => setRefreshing(false), 1000);
@@ -205,7 +207,7 @@ export function BottomBoardOverlay() {
       </div>
 
       <div className="min-h-0 flex-1">
-        <BoardView api={api} />
+        <BoardView api={api} reviews={reviews} />
       </div>
     </div>
   );
