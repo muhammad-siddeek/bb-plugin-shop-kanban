@@ -6,30 +6,30 @@ threads roll up into their parent thread.
 
 ## Columns
 
-Columns are derived from live thread state; the only drag is parking a thread
-(see Parked).
+Columns are derived from live thread state; the only drags are parking a
+thread (see Parked) and starting a waiting one (see WIP limit).
 
 - **Queue**: the thread has not started yet (pending, queued, or no output).
 - **WIP**: the thread or one of its descendants is running, including
   background work. Blocked threads sit at the top of WIP as red cards: the
-  thread is idle and needs you (a pending interaction, an error, a failed
-  result, or a last reply that asks a question). The title bar counts them.
+  thread is idle and needs you (a pending interaction, an error, or a last
+  reply that asks a question). The title bar counts them.
 - **Done**: the thread is idle and its last reply reports completion. Unread
   Done threads come first with a solid check; opening a thread marks it read.
 - **Parked** (grey): idle threads you parked to come back to later, such as a
   finished thread whose suggested next steps can wait. Drag an idle card onto
-  Parked (the only column that takes a drop; it outlines and shows "Drop to
-  park" while you drag), or hover the card and press the pause button. The
-  return button on a parked card unparks it. Parked cards keep their status
-  (Completed, Asked a question, ...) and leave Parked on their own when the
-  thread runs again.
+  Parked (it outlines and shows "Drop to park" while you drag), or hover the
+  card and press the pause button; a card waiting to start has a play button
+  there instead, so drag it. The return button on a parked card unparks it.
+  Parked cards keep their status (Completed, Asked a question, ...) and leave
+  Parked on their own when the thread runs again.
 
 ## WIP limit
 
 The picker at the top of WIP caps how many threads run at once, to keep a
-steady spend rate. It reads `3/5 running` (amber when full) and, while
-messages wait, `· 2 waiting`; the default is no limit, and the choice is kept
-across reloads.
+steady spend rate: Max 0 to Max 5 running, or No limit. It reads
+`3/5 working` (amber when full) and, while messages wait, `· 2 in queue`;
+the default is no limit, and the choice is kept across reloads.
 
 - A thread holds a slot while it or a descendant runs and it doesn't wait on
   you, so Blocked threads don't count.
@@ -40,8 +40,16 @@ across reloads.
 - Work inside a running thread goes through: steers, follow-ups and child
   threads it spawns. Running threads are never stopped, so lowering the limit
   only holds new starts.
-- Send now on a waiting message skips the limit; Cancel drops it.
-- `board_set_wip_limit` sets it over RPC (`null` for none, at most 50).
+- Max 0 holds every new start until you raise the limit; threads already
+  running keep going.
+- Send now on a waiting message skips the limit; Cancel drops it. On the
+  board, a waiting card's play button (on hover; always shown on touch) does
+  the same, as does dragging the card onto WIP, which outlines and shows
+  "Drop to start now" while you drag one. It works for any Queue card whose
+  message waits to send, not only ones held by the limit.
+- `board_start_task` starts a card over RPC; `board_list` marks the cards it
+  can start with `startable`.
+- `board_set_wip_limit` sets it over RPC (`null` for none, 0 to 50).
 
 ## Threads on the board
 
@@ -81,10 +89,11 @@ across reloads.
   provider and model never priced on the host stays at $0.
 - An archive button in the top-right corner, shown on hover or focus, and
   always on touch screens.
-- Clicking a thread opens it at its latest message. The Queue `+` button
-  starts a new thread; its form sits at the top of Queue, above Reviews, and
-  keeps what you typed across reloads and crashes until you start the thread
-  or cancel.
+- Clicking a thread opens it at its latest message. The New thread button at
+  the top of Queue, shown whether or not Queue has threads (the header `+`
+  does the same), starts a new thread; its form takes the button's place
+  above Reviews and keeps what you typed across reloads and crashes until you
+  start the thread or cancel.
 
 ### On a phone
 
@@ -213,8 +222,12 @@ button, and remembers whether it is collapsed.
 
 The searches run through the forge CLIs you already signed in to, `dt` for
 Delta and `gh` for GitHub, on the same connected persistent host as thread
-search: 8 seconds after the plugin loads, every 5 minutes, and when either
-setting changes. Reviews are submitted
+search: 8 seconds after the plugin loads, when either setting changes, every
+5 minutes (every minute after a failed search), and whenever the board reads
+the queue and the last search is over a minute old. Opening the board, or
+coming back to it after waking the machine, picks up new requests within one
+search round. The 5 minutes count time asleep, so a machine that wakes from a
+long sleep searches within 30 seconds. Reviews are submitted
 as those CLIs' signed-in user. Each line is GitHub search syntax prefixed by
 its forge:
 
@@ -249,24 +262,20 @@ risk chip and drafts carry no first read.
 
 ## Agent tools
 
-Agents get four tools for tracking their own work on the board:
+Every agent gets two tools, for when you ask it to spawn board threads:
 
-- `shop_kanban_move_card`: move the current or a given thread to another column.
-- `shop_kanban_spawn_task`: spawn a child thread of the current one; it starts in WIP.
+- `shop_kanban_spawn_task`: spawn a child thread of the current one.
 - `shop_kanban_create_theory_tasks`: spawn one independent thread per theory.
-- `shop_kanban_mark_result`: mark a thread done (success) or blocked (failure).
-  Blocked threads show in WIP as red cards.
 
-The bundled `shop-kanban` skill explains when to use them.
+Agents report nothing to the board, which follows live thread state; the
+tools carry no standing instructions to call them. The bundled `shop-kanban`
+skill says the same.
 
 ## CLI
 
 ```sh
 bb shop-kanban list [--json]
-bb shop-kanban add <short-name> -- <prompt> [--json]
-bb shop-kanban move <thread-id> <queue|wip|blocked|done> [note] [--json]
-bb shop-kanban success <thread-id> <summary> [--json]
-bb shop-kanban fail <thread-id> <summary> [--json]
+bb shop-kanban add <short-name> -- <prompt> [--json]  # short name: 40 characters at most
 bb shop-kanban park <thread-id> [--json]     # idle threads only; exits 1 if the thread is running
 bb shop-kanban unpark <thread-id> [--json]
 bb shop-kanban remove <thread-id> [--json]   # archives the thread; exits 1 if nothing was archived

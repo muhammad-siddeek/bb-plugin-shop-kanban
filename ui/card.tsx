@@ -133,15 +133,17 @@ function FooterNote({ tone, text }: { tone: string; text: string }) {
   );
 }
 
-export function TaskCard({ task, now, unread, selected, dragging, invertedTheme, provider, onArchive, onPark, onDragChange, onOpen }: {
+export function TaskCard({ task, now, unread, selected, dragging, starting, invertedTheme, provider, onArchive, onPark, onStart, onDragChange, onOpen }: {
   task: BoardTask;
   now: number;
   /** Done and not yet read: the title goes from semibold to bold and the check fills. */
   unread: boolean;
   /** Card belongs to the thread currently open in bb. */
   selected: boolean;
-  /** This card is the one being dragged to Parked. */
+  /** This card is the one being dragged. */
   dragging: boolean;
+  /** Its start is on its way to the server: the start button waits. */
+  starting: boolean;
   /** Opposite of bb's active theme; the selected card renders in it so it stands out. */
   invertedTheme: ThemeScope;
   /** The harness the card's thread runs on; null when bb's roster doesn't list it. */
@@ -149,7 +151,9 @@ export function TaskCard({ task, now, unread, selected, dragging, invertedTheme,
   onArchive: (threadId: string) => void;
   /** Park an idle card, or unpark a parked one. */
   onPark: (threadId: string, parked: boolean) => void;
-  /** A drag of this card to Parked started (its thread id) or ended (null). */
+  /** Start a startable Queue card now, past the WIP limit. */
+  onStart: (threadId: string) => void;
+  /** A drag of this card started (its thread id) or ended (null). */
   onDragChange: (threadId: string | null) => void;
   onOpen: (threadId: string) => void;
 }) {
@@ -258,7 +262,7 @@ export function TaskCard({ task, now, unread, selected, dragging, invertedTheme,
   const reason = task.statusReason && task.status !== "done" && task.statusReason !== "Running" ? task.statusReason : null;
   // Idle cards can be parked, and parked ones unparked; running ones can't be either.
   const parkToggle = canOpen && task.status !== "wip";
-  // Idle cards outside Parked can also be dragged there; Parked is the only column that takes a drop.
+  // Idle cards outside Parked can also be dragged there; a startable Queue card can also be dropped on WIP to start it.
   const canDrag = parkToggle && !parked;
 
   // Selection wins over the column/unread border; the blocked stripe and the parked dashes stay either way.
@@ -340,10 +344,26 @@ export function TaskCard({ task, now, unread, selected, dragging, invertedTheme,
         )}
       </div>
 
-      {/* Park and archive: overlay the end of the title line (no reflow); a card-colored backdrop with a short
-          leftward fade hides the truncated title underneath. Revealed on hover/focus, always on touch. */}
+      {/* Start or park, and archive: overlay the end of the title line (no reflow); a card-colored backdrop with a
+          short leftward fade hides the truncated title underneath. Revealed on hover/focus, always on touch. */}
       <span className="absolute right-1.5 top-[7px] flex gap-0.5 bg-card opacity-0 transition-opacity duration-150 before:pointer-events-none before:absolute before:inset-y-0 before:right-full before:w-3 before:bg-linear-to-l before:from-card before:to-transparent before:content-[''] group-hover:opacity-100 group-focus-within:opacity-100 has-[:focus-visible]:opacity-100 [@media(hover:none)]:opacity-100 pointer-coarse:right-1 pointer-coarse:top-[3px]">
-        {parkToggle ? (
+        {/* A startable card's next step is to start, so Play takes park's place; it can still be dragged to Parked. */}
+        {task.startable ? (
+          <button
+            type="button"
+            aria-label="Start thread now"
+            title="Start now, past the WIP limit"
+            disabled={starting}
+            className="inline-flex size-5 items-center justify-center rounded-md text-muted-foreground/70 transition-[color,background-color] duration-150 hover:bg-accent hover:text-foreground focus-visible:bg-accent focus-visible:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:pointer-events-none pointer-coarse:size-7"
+            onClick={() => onStart(task.threadId)}
+          >
+            {starting ? (
+              <span className="inline-flex size-3 animate-spin rounded-full border-[1.5px] border-muted-foreground/25 border-t-muted-foreground" aria-hidden />
+            ) : (
+              <Icon name="Play" className="size-3.5" aria-hidden />
+            )}
+          </button>
+        ) : parkToggle ? (
           <button
             type="button"
             aria-label={parked ? "Unpark thread" : "Park thread"}

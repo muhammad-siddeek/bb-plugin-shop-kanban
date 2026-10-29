@@ -1,11 +1,12 @@
 // Board server: every non-archived, visible, top-level BB thread is a card. Its column is derived from live thread
-// state (deriveStatus in server/status.ts), not from the column an agent last reported.
+// state (deriveStatus in server/status.ts); agents report nothing.
 
 import type { BbPluginApi, PluginThreadEventName, PluginThreadEventPayloads } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import {
   COLUMN_IDS,
   COLUMNS,
+  ERROR_MAX,
   rpcContract,
   STATUS_COLUMN,
   storedTaskSchema,
@@ -14,9 +15,9 @@ import {
   type Status,
   type StoredTask,
 } from "./server/schema";
-import { categorizedTitle, cleanShortName, compactTitle, nowIso, safe } from "./server/text";
+import { capped, categorizedTitle, cleanShortName, compactTitle, nowIso, safe } from "./server/text";
 import { deriveStatus, isRunningSelf, isWorking, toLiveThread, type LiveThread } from "./server/status";
-import { registerAgentTools, registerCli, toolHelp, type TaskSpawn, type TaskUpdate } from "./server/agents";
+import { registerAgentTools, registerCli, type TaskSpawn } from "./server/agents";
 import { createSessionInfo } from "./server/session";
 import { createLabeler } from "./server/labeler";
 import { createThreadReader } from "./server/threads";
@@ -32,38 +33,21 @@ const TASKS_KEY = "tasks-v1";
 const PARKED_KEY = "parked-v1";
 /** The same failure is logged at most once per this interval. */
 const LOG_REPEAT_MS = 60 * 60_000;
+/**
+ * Queued-row states bb's Send now can still send; a claimed row is already on its way, a failed one isn't queued.
+ * Indexed by a row's state, so a state bb adds fails the typecheck until it's listed here.
+ */
+const SENDABLE_ROW_STATES = {
+  queued: true,
+  waiting: true,
+  scheduled: true,
+  claimed: false,
+  failed_retrying: false,
+  failed_exhausted: false,
+} satisfies Record<string, boolean>;
 
 function statusResult(status: Status): Result | null {
   return status === "done" ? "success" : status === "blocked" ? "failed" : null;
-}
-
-/** `previous` with an agent's or the CLI's update applied. */
-function updatedTask(input: TaskUpdate, previous: StoredTask | undefined, thread: LiveThread | null): StoredTask {
-  const now = nowIso();
-  const baseName = input.shortName ?? previous?.shortName ?? compactTitle(thread?.title ?? thread?.titleFallback ?? input.threadId);
-  const shortName = input.shortName
-    ? categorizedTitle(baseName, previous?.description ?? previous?.note ?? "")
-    : cleanShortName(baseName);
-  const column = input.column ?? previous?.column ?? "queue";
-  const parentThreadId = previous?.parentThreadId ?? thread?.parentThreadId ?? null;
-  // An explicit result wins; otherwise Done/Blocked imply one, and moving elsewhere clears it.
-  const result =
-    input.result !== undefined
-      ? input.result
-      : statusResult(column) ?? (input.column !== undefined ? null : previous?.result ?? null);
-  return {
-    threadId: input.threadId,
-    shortName,
-    titleChain: input.shortName && parentThreadId === null ? shortName : previous?.titleChain ?? shortName,
-    column,
-    parentThreadId,
-    projectId: previous?.projectId ?? thread?.projectId ?? null,
-    description: previous?.description ?? null,
-    result,
-    note: input.note ?? previous?.note ?? null,
-    createdAt: previous?.createdAt ?? now,
-    updatedAt: now,
-  };
 }
 
 function iso(ms: number | null): string {
@@ -196,7 +180,7 @@ export default async function plugin(bb: BbPluginApi) {
       sessions.sessionFor(thread, descendants),
     ]);
     const label = labels.view(thread, details, running, all);
-    const derived = deriveStatus(thread, details, stored, descendants, label, parkedAt);
+    const derived = deriveStatus(thread, details, stored?.error ?? null, descendants, label, parkedAt);
     // Until the labeler has run: "[category] thread title".
     const title =
       label.title ??
@@ -218,6 +202,7 @@ export default async function plugin(bb: BbPluginApi) {
       childCount,
       runningChildCount: derived.runningChildren,
       statusReason: derived.status === "queue" && wip.isWaiting(thread.id) ? "Waiting for a WIP slot" : derived.reason,
+      startable: derived.status === "queue" && thread.queuedWork === "waiting",
       unread: thread.latestAttentionAt !== null && (thread.lastReadAt === null || thread.latestAttentionAt > thread.lastReadAt),
       createdAt: stored?.createdAt ?? iso(thread.createdAt),
       updatedAt: iso(Math.max(thread.updatedAt ?? 0, stored ? Date.parse(stored.updatedAt) || 0 : 0) || null),
@@ -237,20 +222,23 @@ export default async function plugin(bb: BbPluginApi) {
     };
   }
 
-  /** Materialize a single card (the return value of thread mutations); `live` saves reading the thread again. */
+  /** Materialize a just-spawned thread's card; `live` saves reading the thread again. */
   async function materializeOne(stored: StoredTask, live?: LiveThread | null): Promise<BoardTask> {
     const thread = live ?? toLiveThread(await reader.getThread(stored.threadId));
     if (!thread) {
       return {
         ...stored,
-        status: stored.column,
-        column: STATUS_COLUMN[stored.column],
+        status: "queue",
+        column: "queue",
+        result: null,
+        note: null,
         childCount: 0,
         runningChildCount: 0,
         statusReason: null,
         unread: false,
         lastUserInputAt: null,
         missingThread: true,
+        startable: false,
         thread: null,
         session: null,
       };
@@ -349,6 +337,43 @@ export default async function plugin(bb: BbPluginApi) {
     );
   }
 
+  /**
+   * Start a Queue card now: send its thread's next waiting message with bb's Send now, which skips the WIP limit (and
+   * any other dispatch hold) by bb's design, as the composer's Send now does. Returns its card.
+   */
+  async function startTask(threadId: string): Promise<BoardTask> {
+    const thread = (await reader.threadsById([threadId])).get(threadId);
+    if (!thread || thread.archivedAt !== null) throw new Error(`No thread ${threadId} on the board.`);
+    const rows = await bb.sdk.threads.queuedMessages.list({ threadId });
+    const row = rows.find((entry) => SENDABLE_ROW_STATES[entry.state]);
+    if (row) {
+      const sent = await bb.sdk.threads.queuedMessages.send({ threadId, queuedMessageId: row.id, mode: "auto" });
+      if (sent.delivery === "queued") {
+        const hold = sent.queuedMessage.waitingOn;
+        const why =
+          hold?.kind === "plugin" ? hold.reason : hold?.kind === "host-offline" ? `${hold.hostName} is offline` : hold?.kind.replace(/-/g, " ");
+        throw new Error(`bb couldn't send it yet${why ? `: ${why}` : ""}.`);
+      }
+    }
+    const [live, descendants, stored, parkedAll] = await Promise.all([
+      reader.threadsById([threadId]).then((threads) => threads.get(threadId) ?? thread),
+      reader.listDescendants(threadId),
+      readTasks(),
+      readParked(),
+    ]);
+    const children = descendants ?? [];
+    const card = await materialize(
+      live,
+      stored[threadId],
+      parkedAll[threadId] ?? null,
+      children,
+      children.filter((entry) => entry.parentThreadId === threadId).length,
+    );
+    // Nothing to send is fine when the card already left Queue (a second click, or a WIP slot freed meanwhile).
+    if (!row && card.status === "queue") throw new Error("Nothing is waiting to be sent in this thread.");
+    return card;
+  }
+
   async function preferThreadNotifications(threadId: string) {
     await safe(() =>
       bb.sdk.plugins.callRpc({
@@ -360,30 +385,6 @@ export default async function plugin(bb: BbPluginApi) {
     );
   }
 
-  /** A thread an agent reports finished or stuck turns unread and notifies the user. */
-  async function notifyIfSettled(previous: StoredTask | undefined, next: StoredTask) {
-    if (previous?.column === next.column) return;
-    if (next.column !== "blocked" && next.column !== "done") return;
-    await preferThreadNotifications(next.threadId);
-    await safe(() => bb.sdk.threads.markUnread({ threadId: next.threadId }));
-    publishBoardChanged();
-  }
-
-  /** Store an update and mirror it into the thread's metadata; also returns the thread as read. */
-  async function storeUpdate(input: TaskUpdate) {
-    const thread = toLiveThread(await reader.getThread(input.threadId));
-    const { previous, next } = await editTask(input.threadId, (previous) => updatedTask(input, previous, thread));
-    const { threadId, projectId, description, createdAt, ...metadata } = next;
-    await safe(() => bb.sdk.threads.updatePluginMetadata({ threadId, set: { boardTask: true, ...metadata } }));
-    await notifyIfSettled(previous, next);
-    return { thread, next };
-  }
-
-  async function updateTask(input: TaskUpdate): Promise<BoardTask> {
-    const { thread, next } = await storeUpdate(input);
-    return materializeOne(next, thread);
-  }
-
   async function spawnTask(input: TaskSpawn): Promise<BoardTask> {
     const shortName = categorizedTitle(input.shortName, input.prompt);
     const parent = await reader.titleChainForParent(input.parentThreadId);
@@ -393,17 +394,13 @@ export default async function plugin(bb: BbPluginApi) {
     const common = {
       shortName,
       titleChain,
-      column: input.column ?? (input.parentThreadId ? "wip" : "queue"),
       parentThreadId: input.parentThreadId ?? null,
-      result: null,
-      note: null,
       updatedAt: now,
     } satisfies Partial<StoredTask>;
-    const prompt = `${input.prompt.trim()}\n\n---\n${toolHelp(titleChain)}`;
     const thread = await bb.sdk.threads.spawn({
       projectId,
       environment: { type: "project-default" },
-      prompt,
+      prompt: input.prompt.trim(),
       title: titleChain,
       ...(input.parentThreadId ? { parentThreadId: input.parentThreadId } : {}),
       pluginMetadata: { boardTask: true, ...common },
@@ -413,6 +410,7 @@ export default async function plugin(bb: BbPluginApi) {
       ...common,
       projectId,
       description: input.prompt.trim().slice(0, 1_000),
+      error: null,
       createdAt: now,
     };
     // The thread exists by now: failing to store its description must not report the spawn as failed.
@@ -421,12 +419,6 @@ export default async function plugin(bb: BbPluginApi) {
     );
     await preferThreadNotifications(task.threadId);
     return materializeOne(task, toLiveThread(thread));
-  }
-
-  async function markTaskResult(threadId: string, success: boolean, summary: string) {
-    const result: Result = success ? "success" : "failed";
-    const task = await updateTask({ threadId, column: success ? "done" : "blocked", result, note: summary });
-    return { task, result };
   }
 
   async function removeTask(threadId: string, options: { archiveThread?: boolean } = {}): Promise<boolean> {
@@ -439,7 +431,7 @@ export default async function plugin(bb: BbPluginApi) {
         bb.sdk.threads.updatePluginMetadata({
           threadId,
           set: { boardTask: false, updatedAt: nowIso() },
-          remove: ["shortName", "titleChain", "column", "result", "note"],
+          remove: ["shortName", "titleChain"],
         }),
       );
     } else if (archived) {
@@ -453,6 +445,7 @@ export default async function plugin(bb: BbPluginApi) {
     board_spawn_task: spawnTask,
     board_remove_task: async ({ threadId }) => ({ removed: await removeTask(threadId, { archiveThread: true }) }),
     board_park_task: ({ threadId, parked }) => parkTask(threadId, parked),
+    board_start_task: ({ threadId }) => startTask(threadId),
     board_mark_read: async ({ threadId }) => {
       const ok = (await safe(() => bb.sdk.threads.markRead({ threadId }))) !== null;
       publishBoardChanged();
@@ -467,7 +460,7 @@ export default async function plugin(bb: BbPluginApi) {
     reviews_submit: ({ id, verdict, body }) => reviews.submit(id, verdict, body),
   });
 
-  const boardApi = { listBoard, spawnTask, updateTask, markTaskResult, removeTask, parkTask };
+  const boardApi = { listBoard, spawnTask, removeTask, parkTask };
   registerAgentTools(bb, boardApi);
   registerCli(bb, boardApi);
 
@@ -481,13 +474,13 @@ export default async function plugin(bb: BbPluginApi) {
   on("thread.active", async ({ thread }) => {
     // Running again takes a thread out of Parked; when it settles it goes where its new state says.
     await setParked(thread.id, false);
-    const task = (await readTasks())[thread.id];
-    if (task?.column === "queue" && !task.result) await storeUpdate({ threadId: thread.id, column: "wip" });
   });
 
+  // A spawned thread's failure message describes its card while it shows as errored.
   on("thread.failed", async ({ thread, error }) => {
-    if (!(await readTasks())[thread.id]) return;
-    await storeUpdate({ threadId: thread.id, column: "blocked", result: "failed", note: error ?? "Thread failed." });
+    await editTask(thread.id, (previous) =>
+      previous && { ...previous, error: capped(error ?? "Thread failed.", ERROR_MAX), updatedAt: nowIso() },
+    );
   });
 
   on("thread.deleted", async ({ thread }) => {

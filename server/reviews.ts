@@ -32,6 +32,17 @@ const NO_HOST = "No connected persistent host to read pull requests on.";
 /** Host calls end a little after the host's own 30s (60s for a review) CLI timeout, so its clearer error wins. */
 const CALL_TIMEOUT_MS = 35_000;
 const REVIEW_CALL_TIMEOUT_MS = 65_000;
+/** Searches re-run once the last run is this old. */
+const POLL_MS = 5 * 60_000;
+/** ...or this old when a search failed (offline, no host, a CLI timeout), so the queue recovers soon after. */
+const RETRY_MS = 60_000;
+/** A board read re-runs searches older than this, so a board on screen trails the forges by about a minute. */
+const READ_FRESH_MS = 60_000;
+/**
+ * How often the poll checks the age of the last run. Ages are wall-clock: timers stop while the machine sleeps,
+ * so a plain 5-minute interval left the queue up to 5 minutes stale after waking.
+ */
+const POLL_TICK_MS = 30_000;
 
 const LINE_SYNTAX =
   "One search per line: `delta: <query>` reads Delta through `dt` (shop/world unless the query names a `repo:`), `github: <query>` reads GitHub through `gh`. GitHub search syntax with `is:pr is:open` implied; pull requests you already reviewed drop off until new commits land.";
@@ -146,6 +157,8 @@ export function createReviewQueue(bb: BbPluginApi, labeler: Labeler) {
   let refreshedAt: number | null = null;
   let refreshing: Promise<void> | null = null;
   let refreshAgain = false;
+  /** The last run had a search fail in a way worth retrying before the next regular poll. */
+  let retrySoon = false;
   let hostId: string | null = null;
   let disposed = false;
   let changedTimer: ReturnType<typeof setTimeout> | undefined;
@@ -253,20 +266,21 @@ export function createReviewQueue(bb: BbPluginApi, labeler: Labeler) {
       .catch((cause: unknown) => ({ prs: [], total: 0, error: message(cause), missing: false }));
   }
 
-  async function runRefresh() {
+  /** Re-reads every search; resolves true when one failed in a way worth retrying soon. */
+  async function runRefresh(): Promise<boolean> {
     const { searches, invalid } = configuredSearches(await settings.get());
     error = null;
     if (searches.length === 0) {
       entries = [];
       sources = invalid;
-      return;
+      return false;
     }
     hostId = await indexHostId(bb, hostId);
     const target = hostId;
     if (!target) {
       // Quiet like a missing CLI; the last list stays up until a host connects again.
       sources = [...searches.map((search) => failedSource(search, NO_HOST, true)), ...invalid];
-      return;
+      return true;
     }
     const results = await Promise.all(
       searches.map(async (search) => {
@@ -312,6 +326,14 @@ export function createReviewQueue(bb: BbPluginApi, labeler: Labeler) {
       if (details.get(entry.id)?.updatedAt === entry.updatedAt) queueSummary(entry, marks);
       else detailQueue.add(entry);
     }
+    return searched.some((source) => source.error !== null && !source.missing);
+  }
+
+  /** No run has finished yet, or the last one ended at least `maxAgeMs` ago (or in the future: the clock moved back). */
+  function due(maxAgeMs: number): boolean {
+    if (refreshedAt === null) return true;
+    const age = Date.now() - refreshedAt;
+    return age >= maxAgeMs || age < 0;
   }
 
   /** Re-reads every search; a call while one runs joins it and queues one more run. */
@@ -322,8 +344,12 @@ export function createReviewQueue(bb: BbPluginApi, labeler: Labeler) {
     }
     changed();
     refreshing = runRefresh()
+      .then((failed) => {
+        retrySoon = failed;
+      })
       .catch((cause) => {
         error = message(cause);
+        retrySoon = true;
       })
       .finally(() => {
         refreshing = null;
@@ -411,8 +437,9 @@ export function createReviewQueue(bb: BbPluginApi, labeler: Labeler) {
 
   async function list(): Promise<ReviewState> {
     const [marks, values] = await Promise.all([load(), settings.get()]);
-    // The first board read starts the first search instead of waiting for the startup timer.
-    if (refreshedAt === null && !refreshing) void refresh();
+    // Any board read (opening it, the page showing again after the machine wakes, its 1-minute poll) re-runs
+    // searches over a minute old, so a new request shows within one search round instead of at the next poll.
+    if (!refreshing && due(READ_FRESH_MS)) void refresh();
     return {
       scopes: configuredSearches(values).scopes,
       reviews: entries.flatMap((entry) => {
@@ -478,7 +505,9 @@ export function createReviewQueue(bb: BbPluginApi, labeler: Labeler) {
     if (next.reviewSearchesMe !== prev.reviewSearchesMe || next.reviewSearchesTeam !== prev.reviewSearchesTeam) void refresh();
   });
   const startupTimer = setTimeout(() => void refresh(), 8_000);
-  const pollTimer = setInterval(() => void refresh(), 5 * 60_000);
+  const pollTimer = setInterval(() => {
+    if (!refreshing && due(retrySoon ? RETRY_MS : POLL_MS)) void refresh();
+  }, POLL_TICK_MS);
 
   function dispose() {
     disposed = true;

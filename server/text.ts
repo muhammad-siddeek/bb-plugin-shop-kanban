@@ -6,7 +6,7 @@ export function oneLine(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
 
-const SHORT_NAME_MAX = 40;
+export const SHORT_NAME_MAX = 40;
 const SHORT_NAME_CUT = 37;
 export const ELLIPSIS = "…";
 
@@ -18,6 +18,11 @@ export function cleanShortName(value: string): string {
 /** At most the first five words of `value`, or "Thread". */
 export function compactTitle(value: string): string {
   return cleanShortName(value).split(/\s+/u).slice(0, 5).join(" ") || "Thread";
+}
+
+/** `value` cut to at most `max` characters, ending in an ellipsis when cut. */
+export function capped(value: string, max: number): string {
+  return value.length <= max ? value : `${value.slice(0, max - 1).trimEnd()}${ELLIPSIS}`;
 }
 
 const CATEGORY_STOPWORDS = new Set([

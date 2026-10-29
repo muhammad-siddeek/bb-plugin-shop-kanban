@@ -2,23 +2,25 @@ import { z } from "zod";
 import { forgeInput } from "../contract";
 
 /**
- * A card's state. Blocked cards (waiting on the user, errored, or reported failed) sit in the WIP column, marked
- * red; Parked holds idle threads the user set aside to come back to.
+ * A card's state. Blocked cards (waiting on the user or errored) sit in the WIP column, marked red; Parked holds idle
+ * threads the user set aside to come back to.
  */
 export const STATUS_IDS = ["queue", "wip", "blocked", "done", "parked"] as const;
 export type Status = (typeof STATUS_IDS)[number];
-/** The states an agent or the CLI reports; parking is the user's call, through park and unpark. */
-export const reportedStatusSchema = z.enum(["queue", "wip", "blocked", "done"]);
-export type ReportedStatus = z.infer<typeof reportedStatusSchema>;
 
 export const COLUMN_IDS = ["queue", "wip", "done", "parked"] as const;
 export type Column = (typeof COLUMN_IDS)[number];
 /** The column a card in each state sits in. */
 export const STATUS_COLUMN: Record<Status, Column> = { queue: "queue", wip: "wip", blocked: "wip", done: "done", parked: "parked" };
-export const STATUS_TITLES: Record<Status, string> = { queue: "Queue", wip: "WIP", blocked: "Blocked", done: "Done", parked: "Parked" };
 
 const resultSchema = z.enum(["success", "failed"]);
 export type Result = z.infer<typeof resultSchema>;
+
+/**
+ * Longest failure message a card stores. Every card's state shares one KV row capped at 256KB, so one unbounded
+ * message would fail every later board write.
+ */
+export const ERROR_MAX = 2_000;
 
 const boardColumnSchema = z.object({ id: z.enum(COLUMN_IDS), title: z.string(), description: z.string() });
 
@@ -27,7 +29,7 @@ export const COLUMNS: Record<Column, z.infer<typeof boardColumnSchema>> = {
   wip: {
     id: "wip",
     title: "WIP",
-    description: "Threads running or with running children, and idle threads blocked on user input, an error, or a failure.",
+    description: "Threads running or with running children, and idle threads blocked on user input or an error.",
   },
   done: { id: "done", title: "Done", description: "Idle threads whose last message reported completion." },
   parked: { id: "parked", title: "Parked", description: "Idle threads set aside for later, until they run again." },
@@ -85,6 +87,8 @@ const boardTaskSchema = z.object({
   childCount: z.number(),
   runningChildCount: z.number(),
   statusReason: z.string().nullable(),
+  /** In Queue with a message waiting to send (held for a WIP slot, or otherwise queued), so starting it now can send it. */
+  startable: z.boolean(),
   /** bb's unread state: new activity since the user last opened the thread. */
   unread: z.boolean(),
   createdAt: z.string(),
@@ -196,16 +200,17 @@ export const rpcContract = {
       prompt: z.string().trim().min(1).max(12_000),
       projectId: z.string().optional(),
       parentThreadId: z.string().optional(),
-      column: reportedStatusSchema.optional(),
     }),
     output: boardTaskSchema,
   },
   board_remove_task: { input: threadRefSchema, output: z.object({ removed: z.boolean() }) },
   /** Park an idle thread (it stays in Parked until it runs again), or unpark it. */
   board_park_task: { input: z.object({ threadId: z.string(), parked: z.boolean() }), output: boardTaskSchema },
+  /** Start a Queue card now: send its waiting message with bb's Send now, past the WIP limit. */
+  board_start_task: { input: threadRefSchema, output: boardTaskSchema },
   board_mark_read: { input: threadRefSchema, output: z.object({ ok: z.boolean() }) },
   /** Set the WIP limit (null: none); messages that would start another card past it wait in their thread's queue. */
-  board_set_wip_limit: { input: z.object({ limit: z.number().int().min(1).max(WIP_LIMIT_MAX).nullable() }), output: wipLimitSchema },
+  board_set_wip_limit: { input: z.object({ limit: z.number().int().min(0).max(WIP_LIMIT_MAX).nullable() }), output: wipLimitSchema },
   board_search: { input: z.object({ query: z.string().trim().min(1).max(200) }), output: searchResponseSchema },
   reviews_list: { input: z.null(), output: reviewStateSchema },
   /** Mark read and return the prompt that seeds a new thread explaining the pull request. */
@@ -225,19 +230,17 @@ export const rpcContract = {
 };
 
 /**
- * One entry of the stored tasks KV blob. Unknown keys (entries from before 0.9.0) are stripped; an unknown column
- * starts over in the queue. `column` is the state an agent or the CLI last reported.
+ * One entry of the stored tasks KV blob: what spawning a thread recorded, and its last failure message. Unknown keys
+ * (entries from before 0.9.0, and the column, result and note agents reported before 0.14.0) are stripped.
  */
 export const storedTaskSchema = z.object({
   threadId: z.string(),
   shortName: z.string(),
   titleChain: z.string(),
-  column: reportedStatusSchema.catch("queue"),
   parentThreadId: z.string().nullable().catch(null),
   projectId: z.string().nullable().catch(null),
   description: z.string().nullable().catch(null),
-  result: resultSchema.nullable().catch(null),
-  note: z.string().nullable().catch(null),
+  error: z.string().nullable().catch(null),
   createdAt: z.string(),
   updatedAt: z.string(),
 });

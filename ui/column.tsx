@@ -170,22 +170,28 @@ function AddTaskForm({ focus, onAdd, onCancel, onError }: {
   );
 }
 
-function BoardColumnView({ column, title, tasks, now, readLocally, selectedThreadId, draggingId, invertedTheme, providersById, onArchive, onPark, onDragChange, onDropPark, onOpen, onStartAdding, headerControl, lead, addForm }: {
+/** What a column does with a dragged card: Parked parks any idle card, WIP starts a Queue card that has a message waiting. */
+type ColumnDrop = { label: string; icon: string; onDrop: (threadId: string) => void };
+
+function BoardColumnView({ column, title, tasks, now, readLocally, selectedThreadId, draggingId, startingIds, invertedTheme, providersById, onArchive, onPark, onStart, onDragChange, drop, onOpen, onStartAdding, headerControl, lead, addForm }: {
   column: BoardColumn;
   title: string;
   tasks: BoardTask[];
   readLocally: ReadonlySet<string>;
   now: number;
   selectedThreadId: string | null;
-  /** The card being dragged to Parked, if any. */
+  /** The card being dragged, if any. */
   draggingId: string | null;
+  /** Cards whose start is on its way to the server; their start button waits. */
+  startingIds: ReadonlySet<string>;
   invertedTheme: ThemeScope;
   providersById: ReadonlyMap<string, AgentProvider>;
   onArchive: (threadId: string) => void;
   onPark: (threadId: string, parked: boolean) => void;
+  onStart: (threadId: string) => void;
   onDragChange: (threadId: string | null) => void;
-  /** Non-null only for Parked, the one column a dragged card can be dropped on. */
-  onDropPark: ((threadId: string) => void) | null;
+  /** Non-null while this column takes a dragged card: always for Parked, for WIP while a startable card is dragged. */
+  drop: ColumnDrop | null;
   onOpen: (threadId: string) => void;
   onStartAdding: (() => void) | null;
   /** Drawn at the header's end: the WIP limit picker in WIP. */
@@ -199,7 +205,7 @@ function BoardColumnView({ column, title, tasks, now, readLocally, selectedThrea
   const adding = addForm !== null;
   // A drag is on its way and this column takes it; `over` while the pointer is inside it. dragenter/dragleave
   // fire for every child crossed, so a depth count tells when the pointer really leaves.
-  const awaitingDrop = onDropPark !== null && draggingId !== null;
+  const awaitingDrop = drop !== null && draggingId !== null;
   const [over, setOver] = useState(false);
   const dragDepth = useRef(0);
   useEffect(() => {
@@ -207,7 +213,7 @@ function BoardColumnView({ column, title, tasks, now, readLocally, selectedThrea
     dragDepth.current = 0;
     setOver(false);
   }, [awaitingDrop]);
-  const takesDrag = (event: DragEvent) => onDropPark !== null && event.dataTransfer.types.includes(THREAD_DRAG_TYPE);
+  const takesDrag = (event: DragEvent) => drop !== null && event.dataTransfer.types.includes(THREAD_DRAG_TYPE);
   const dropClass = !awaitingDrop
     ? ""
     : over
@@ -234,12 +240,12 @@ function BoardColumnView({ column, title, tasks, now, readLocally, selectedThrea
         if (dragDepth.current === 0) setOver(false);
       }}
       onDrop={(event) => {
-        if (!takesDrag(event) || !onDropPark) return;
+        if (!takesDrag(event) || !drop) return;
         event.preventDefault();
         dragDepth.current = 0;
         setOver(false);
         const threadId = event.dataTransfer.getData(THREAD_DRAG_TYPE);
-        if (threadId) onDropPark(threadId);
+        if (threadId) drop.onDrop(threadId);
       }}
     >
       <span className={`pointer-events-none absolute inset-x-0 top-0 h-[3px] ${meta.accent} opacity-80`} aria-hidden />
@@ -256,31 +262,29 @@ function BoardColumnView({ column, title, tasks, now, readLocally, selectedThrea
           board's horizontal scroll, so overscroll is contained on y only. */}
       <div data-board-column-scroll="" className="min-h-0 flex-1 space-y-1.5 overflow-y-auto overflow-x-hidden overscroll-y-contain p-2 [scrollbar-width:thin]">
         {addForm}
-        {awaitingDrop ? (
+        {awaitingDrop && drop ? (
           <div
             className={`flex shrink-0 items-center justify-center gap-1.5 rounded-lg border border-dashed px-3 py-5 text-[11px] font-medium transition-colors ${
               over ? "border-muted-foreground/70 bg-card text-foreground" : "border-muted-foreground/40 text-muted-foreground"
             }`}
           >
-            <Icon name="Pause" className="size-3.5" aria-hidden />
-            Drop to park
+            <Icon name={drop.icon} className="size-3.5" aria-hidden />
+            {drop.label}
           </div>
         ) : null}
-        {tasks.length === 0 && !adding && !awaitingDrop ? (
-          onStartAdding ? (
-            <button
-              type="button"
-              onClick={onStartAdding}
-              className="flex w-full shrink-0 items-center justify-center gap-1.5 rounded-lg border border-dashed border-border/60 px-3 py-5 text-[11px] text-muted-foreground/90 transition-colors hover:border-sky-500/50 hover:bg-sky-500/5 hover:text-[light-dark(var(--color-sky-700),var(--color-sky-500))] focus-visible:border-sky-500/60 focus-visible:text-[light-dark(var(--color-sky-700),var(--color-sky-500))] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/20"
-            >
-              <Icon name="Plus" className="size-3.5" aria-hidden />
-              New thread
-            </button>
-          ) : (
-            <div className="flex shrink-0 items-center justify-center rounded-lg border border-dashed border-border/60 px-3 py-5 text-center text-[11px] text-muted-foreground/90">
-              {column === "parked" ? "Drag an idle thread here to come back to it later" : "No threads"}
-            </div>
-          )
+        {onStartAdding && !adding ? (
+          <button
+            type="button"
+            onClick={onStartAdding}
+            className="flex w-full shrink-0 items-center justify-center gap-1.5 rounded-lg border border-dashed border-border/60 px-3 py-5 text-[11px] text-muted-foreground/90 transition-colors hover:border-sky-500/50 hover:bg-sky-500/5 hover:text-[light-dark(var(--color-sky-700),var(--color-sky-500))] focus-visible:border-sky-500/60 focus-visible:text-[light-dark(var(--color-sky-700),var(--color-sky-500))] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/20"
+          >
+            <Icon name="Plus" className="size-3.5" aria-hidden />
+            New thread
+          </button>
+        ) : tasks.length === 0 && !adding && !awaitingDrop ? (
+          <div className="flex shrink-0 items-center justify-center rounded-lg border border-dashed border-border/60 px-3 py-5 text-center text-[11px] text-muted-foreground/90">
+            {column === "parked" ? "Drag an idle thread here to come back to it later" : "No threads"}
+          </div>
         ) : null}
         {lead}
         {tasks.map((task) => (
@@ -291,10 +295,12 @@ function BoardColumnView({ column, title, tasks, now, readLocally, selectedThrea
             unread={task.status === "done" && isUnread(task, readLocally)}
             selected={task.threadId === selectedThreadId}
             dragging={task.threadId === draggingId}
+            starting={startingIds.has(task.threadId)}
             invertedTheme={invertedTheme}
             provider={task.thread?.providerId ? providersById.get(task.thread.providerId) ?? null : null}
             onArchive={onArchive}
             onPark={onPark}
+            onStart={onStart}
             onDragChange={onDragChange}
             onOpen={onOpen}
           />
@@ -334,6 +340,15 @@ export function BoardView({ api, reviews }: { api: BoardApi; reviews: ReviewsApi
     if (next.size !== parkedLocally.size) setParkedLocally(next);
   }, [board, parkedLocally]);
   const [draggingId, setDraggingId] = useState<string | null>(null);
+  const draggingStartable = board?.tasks.some((task) => task.threadId === draggingId && task.startable) ?? false;
+  // Cards started from the board: their start button waits until the server's board shows them started.
+  const [startingIds, setStartingIds] = useState<ReadonlySet<string>>(() => new Set());
+  useEffect(() => {
+    // Drop them once the server's board no longer offers to start them, or they left the board.
+    if (!board || startingIds.size === 0) return;
+    const next = new Set(board.tasks.filter((task) => task.startable && startingIds.has(task.threadId)).map((task) => task.threadId));
+    if (next.size !== startingIds.size) setStartingIds(next);
+  }, [board, startingIds]);
   const now = useNow(CLOCK_TICK_MS);
   // A saved draft means the form was open with text when the app last closed: reopen it, without focus.
   const [adding, setAdding] = useState<"closed" | "restored" | "opened">(() => (readDraft() ? "restored" : "closed"));
@@ -374,6 +389,18 @@ export function BoardView({ api, reviews }: { api: BoardApi; reviews: ReviewsApi
     parkTask(threadId, true);
   };
 
+  const startTask = (threadId: string) => {
+    setStartingIds((current) => new Set([...current, threadId]));
+    rpc.call("board_start_task", { threadId }).then(refetch, (cause) => {
+      setStartingIds((current) => {
+        const next = new Set(current);
+        next.delete(threadId);
+        return next;
+      });
+      report(cause);
+    });
+  };
+
   const openTask = (threadId: string) => {
     setReadLocally((current) => (current.has(threadId) ? current : new Set([...current, threadId])));
     rpc.call("board_mark_read", { threadId }).then(refetch, refetch);
@@ -386,10 +413,11 @@ export function BoardView({ api, reviews }: { api: BoardApi; reviews: ReviewsApi
   };
 
   const addTask = async (prompt: string) => {
+    // With no thread open there is no project: leave the key out (the server picks one); an undefined value isn't JSON.
     await rpc.call("board_spawn_task", {
       shortName: shortNameFromPrompt(prompt),
       prompt,
-      projectId: context.projectId ?? undefined,
+      ...(context.projectId ? { projectId: context.projectId } : {}),
     });
     refetch();
   };
@@ -419,12 +447,20 @@ export function BoardView({ api, reviews }: { api: BoardApi; reviews: ReviewsApi
               readLocally={readLocally}
               selectedThreadId={selectedThreadId}
               draggingId={draggingId}
+              startingIds={startingIds}
               invertedTheme={invertedTheme}
               providersById={providersById}
               onArchive={archiveTask}
               onPark={parkTask}
+              onStart={startTask}
               onDragChange={setDraggingId}
-              onDropPark={column.id === "parked" ? dropPark : null}
+              drop={
+                column.id === "parked"
+                  ? { label: "Drop to park", icon: "Pause", onDrop: dropPark }
+                  : column.id === "wip" && draggingStartable
+                    ? { label: "Drop to start now", icon: "Play", onDrop: startTask }
+                    : null
+              }
               onOpen={openTask}
               onStartAdding={column.id === "queue" ? () => setAdding("opened") : null}
               headerControl={

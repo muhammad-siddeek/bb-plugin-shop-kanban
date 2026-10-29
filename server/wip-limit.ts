@@ -41,7 +41,7 @@ export function createWipLimit(bb: BbPluginApi, reader: ThreadReader, onChange: 
     .get<unknown>(LIMIT_KEY)
     .then((value) => {
       // Anything but a whole number in range (unset, or corrupt) means no limit.
-      limit = typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= WIP_LIMIT_MAX ? value : null;
+      limit = typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= WIP_LIMIT_MAX ? value : null;
     })
     .catch((error: unknown) => bb.log.warn(`reading the WIP limit failed: ${String(error)}`));
   /** Card (root thread) id → when, and to which thread in it, a message was let through. */
@@ -93,7 +93,10 @@ export function createWipLimit(bb: BbPluginApi, reader: ThreadReader, onChange: 
     const busy = new Set([...working, ...admitted.keys()]);
     if (busy.has(root.id)) return { action: "proceed" };
     if (busy.size >= max) {
-      return { action: "wait", reason: `WIP full (${busy.size} of ${max} running): sends when a WIP thread finishes` };
+      const reason = max === 0
+        ? "WIP limit is 0: sends when you raise it"
+        : `WIP full (${busy.size} of ${max} running): sends when a WIP thread finishes`;
+      return { action: "wait", reason };
     }
     admitted.set(root.id, { at: now, threadId: ctx.thread.id });
     return { action: "proceed" };

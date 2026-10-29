@@ -1,5 +1,60 @@
 # Changelog
 
+## 0.14.0
+
+- Agents stop reporting to the board. Columns have followed live thread
+  state since 0.2.0, yet every thread's agent was still told to move its
+  card and mark a result, and threads started from the board carried the
+  same instructions at the end of their first message. The plugin now gives
+  agents no standing instructions, threads start with your message alone,
+  and the bundled skill says to use the board only when you ask.
+- Removed: the `shop_kanban_move_card` and `shop_kanban_mark_result` agent
+  tools, `bb shop-kanban move|success|fail`, and the `column` input of
+  `shop_kanban_spawn_task` and `board_spawn_task`. A reported failure no
+  longer turns an idle card Blocked, and a reported Done or Blocked no
+  longer marks the thread unread or turns on its notifications. Agent notes
+  no longer stand in for a card's summary; stored ones are dropped.
+- `shop_kanban_spawn_task` and `shop_kanban_create_theory_tasks` stay, for
+  when you ask an agent to spawn threads. Theory threads end by saying
+  whether the theory worked, and the investigation thread is left as it is.
+
+## 0.13.1
+
+- Review requests show up soon after waking the machine. The 5-minute review
+  poll ran on a timer that stops while the machine sleeps, so after a long
+  sleep the queue stayed stale for up to 5 more minutes, and opening the
+  board did not search again. The poll now goes by the wall clock and checks
+  every 30 seconds, a board read searches again once the last search is a
+  minute old, and a failed search (offline, no host, a CLI timeout) is
+  retried after a minute instead of 5.
+
+## 0.13.0
+
+- The Queue column's New thread button always shows, not only while Queue is
+  empty.
+- The WIP limit picker offers Max 0 to Max 5 running, then No limit. Max 0
+  holds every new start until you raise it; running threads keep going.
+  `board_set_wip_limit` takes 0 to 50.
+- The WIP limit chip reads `3/1 working · 5 in queue` (was `3/1 running · 5
+  waiting`).
+
+## 0.12.0
+
+- Start a waiting card now: a Queue card whose message waits to send (held
+  for a WIP slot, or otherwise queued) shows a play button in place of the
+  pause button, on hover and always on touch. Dragging it onto WIP, which
+  outlines and shows "Drop to start now" while you drag one, does the same.
+  Its message goes out with bb's Send now, past the WIP limit, and the card
+  moves to WIP. New `board_start_task` RPC; `board_list` tasks carry
+  `startable`.
+- The Queue + form no longer fails to start a thread when no thread is open
+  in bb; the thread starts in the default project.
+- Notes and result summaries are capped at 2,000 characters and short names
+  at 40: `bb shop-kanban add|move|success|fail` refuse longer ones, as the
+  agent tools already did, and a longer stored note (such as a failed
+  thread's error) is cut. One oversized note could fill the 256 KB row all
+  cards share and fail every later board write.
+
 ## 0.11.0
 
 - WIP limit: a picker at the top of WIP caps how many threads run at once,

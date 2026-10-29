@@ -1,93 +1,45 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
-import { PLUGIN_NAME, PLUGIN_SLUG, TOOL_PREFIX } from "../brand";
-import { reportedStatusSchema, STATUS_TITLES, type BoardTask, type ReportedStatus, type Result } from "./schema";
+import { PLUGIN_SLUG, TOOL_PREFIX } from "../brand";
+import type { BoardTask } from "./schema";
+import { SHORT_NAME_MAX } from "./text";
 
-export type TaskSpawn = { shortName: string; prompt: string; projectId?: string; parentThreadId?: string; column?: ReportedStatus };
-export type TaskUpdate = { threadId: string; column?: ReportedStatus; shortName?: string; note?: string; result?: Result | null };
+export type TaskSpawn = { shortName: string; prompt: string; projectId?: string; parentThreadId?: string };
 
 type BoardApi = {
   listBoard(): Promise<{ columns: unknown[]; tasks: BoardTask[] }>;
   spawnTask(input: TaskSpawn): Promise<BoardTask>;
-  updateTask(input: TaskUpdate): Promise<BoardTask>;
-  markTaskResult(threadId: string, success: boolean, summary: string): Promise<{ task: BoardTask; result: Result }>;
   removeTask(threadId: string, options?: { archiveThread?: boolean }): Promise<boolean>;
   parkTask(threadId: string, parked: boolean): Promise<BoardTask>;
 };
 
 const TOOLS = {
-  moveCard: `${TOOL_PREFIX}_move_card`,
   spawnTask: `${TOOL_PREFIX}_spawn_task`,
   createTheoryTasks: `${TOOL_PREFIX}_create_theory_tasks`,
-  markResult: `${TOOL_PREFIX}_mark_result`,
 };
 
 /**
- * Opens the board instructions appended to every spawned thread's prompt (after a `---` rule). Followed by
+ * Opens the board instructions that spawned threads' prompts carried after a `---` rule until 0.14.0. Followed by
  * "thread"; prompts from before 0.7.0 say "card", so `withoutToolHelp` strips both by this prefix.
  */
 const TOOL_HELP_LEAD = "You are working on Kanban";
 
-/** `text` without the board instructions appended to a spawned thread's prompt. */
+/** `text` without the board instructions appended to the prompt of a thread spawned before 0.14.0. */
 export function withoutToolHelp(text: string): string {
   return text.split(`\n---\n${TOOL_HELP_LEAD} `)[0].trim();
 }
 
-export function toolHelp(titleChain: string): string {
-  return [
-    `${TOOL_HELP_LEAD} thread ${JSON.stringify(titleChain)}.`,
-    `Move the thread as work progresses with ${TOOLS.moveCard}. Columns are Queue, WIP, Done, and Parked; Blocked threads show in WIP, marked red.`,
-    `When you finish, call ${TOOLS.markResult} with success=true or success=false and a short summary.`,
-    "Thread titles should describe the whole thread's goal, not the latest implementation step.",
-    "Thread descriptions/notes should describe how far the work has gotten and what changed most recently.",
-    "The board categorizes thread titles holistically and prefixes them with a 1-2 word bracketed category such as [docs site].",
-    "When spawning from a parent thread, titles are formatted as parent > child, so keep each segment short.",
-  ].join("\n");
-}
-
-export function registerAgentTools(bb: BbPluginApi, { spawnTask, updateTask, markTaskResult }: BoardApi) {
-  bb.agents.registerTool({
-    name: TOOLS.moveCard,
-    description: "Move the current or specified thread to another column of the Kanban board as work progresses.",
-    instructions:
-      "Use this when your thread's state changes. If no threadId is supplied, it updates the current thread. Columns: queue, wip, blocked, done; blocked threads show in the WIP column, marked red.",
-    presentation: { label: { pending: "Moving Kanban thread", completed: "Moved Kanban thread" }, icon: { glyph: "ListTodo" } },
-    parameters: z.object({
-      threadId: z.string().optional().describe("Thread id. Omit to update the current thread."),
-      column: reportedStatusSchema,
-      note: z
-        .string()
-        .max(2_000)
-        .optional()
-        .describe("Progress/status description: how far the work has gotten and what changed most recently."),
-      shortName: z
-        .string()
-        .max(40)
-        .optional()
-        .describe("Short thread title describing the whole thread's goal, not just the latest step."),
-    }),
-    async execute(args, context) {
-      const task = await updateTask({
-        threadId: args.threadId ?? context.threadId,
-        column: args.column,
-        note: args.note,
-        shortName: args.shortName,
-      });
-      return `Moved ${task.titleChain} to ${STATUS_TITLES[args.column]}.`;
-    },
-  });
-
+export function registerAgentTools(bb: BbPluginApi, { spawnTask }: Pick<BoardApi, "spawnTask">) {
   bb.agents.registerTool({
     name: TOOLS.spawnTask,
     description: "Spawn a new BB thread on the Kanban board, usually as a child of the current thread.",
     instructions:
-      "Choose a shortName that describes the whole thread's goal, not just the latest step. The board will add a 1-2 word bracketed category prefix based on all board threads. Child threads are titled parent > child, so keep names short.",
+      "Call only when the user asks for a separate thread. Choose a shortName that describes the whole thread's goal. The board adds a 1-2 word bracketed category prefix and titles child threads parent > child, so keep names short. The board follows the thread's live state; nothing needs reporting back.",
     presentation: { label: { pending: "Spawning Kanban thread", completed: "Spawned Kanban thread" }, icon: { glyph: "Bot" } },
     parameters: z.object({
       shortName: z.string().min(1).max(40).describe("Short thread title describing the whole thread's goal."),
-      prompt: z.string().min(1).max(12_000).describe("Initial prompt/progress description for the thread."),
+      prompt: z.string().min(1).max(12_000).describe("The new thread's first message."),
       parentThreadId: z.string().optional().describe("Parent thread id. Omit to use the current thread."),
-      column: reportedStatusSchema.optional(),
     }),
     async execute(args, context) {
       const task = await spawnTask({ ...args, parentThreadId: args.parentThreadId ?? context.threadId });
@@ -100,7 +52,7 @@ export function registerAgentTools(bb: BbPluginApi, { spawnTask, updateTask, mar
     description:
       "For an investigation thread, spawn one independent BB thread per theory so separate agents can try different solutions.",
     instructions:
-      "Use after investigating and forming theories. Each theory needs a shortName that describes that theory thread's overall goal, not just the latest step. The board will add a 1-2 word bracketed category prefix based on all board threads. Each spawned agent should try that theory independently and mark success/failure.",
+      "Call only when the user asks to split an investigation into theory threads. Each theory needs a shortName that describes that theory thread's overall goal; the board adds a 1-2 word bracketed category prefix. The board follows each thread's live state; nothing needs reporting back.",
     presentation: { label: { pending: "Spawning theory threads", completed: "Spawned theory threads" }, icon: { glyph: "Lightbulb" } },
     parameters: z.object({
       parentThreadId: z.string().optional().describe("Investigation thread. Omit to use current thread."),
@@ -113,7 +65,7 @@ export function registerAgentTools(bb: BbPluginApi, { spawnTask, updateTask, mar
               .string()
               .max(12_000)
               .optional()
-              .describe("Progress/thread prompt shown as the thread description until updates arrive."),
+              .describe("The thread's first message. Omit for one asking it to try the theory independently."),
           }),
         )
         .min(1)
@@ -121,7 +73,6 @@ export function registerAgentTools(bb: BbPluginApi, { spawnTask, updateTask, mar
     }),
     async execute(args, context) {
       const parentThreadId = args.parentThreadId ?? context.threadId;
-      await updateTask({ threadId: parentThreadId, column: "wip", note: `Spawned ${args.theories.length} theory thread(s).` });
       const spawned: BoardTask[] = [];
       for (const theory of args.theories) {
         const prompt =
@@ -130,9 +81,9 @@ export function registerAgentTools(bb: BbPluginApi, { spawnTask, updateTask, mar
             `Try this theory independently: ${theory.theory}`,
             "Investigate or implement the smallest convincing test/solution.",
             "Do not assume another theory thread will do your work.",
-            `When done, call ${TOOLS.markResult} with success=true if the theory worked, otherwise success=false, and include a concise summary.`,
+            "End with whether the theory worked and why.",
           ].join("\n\n");
-        spawned.push(await spawnTask({ shortName: theory.shortName, prompt, parentThreadId, column: "wip" }));
+        spawned.push(await spawnTask({ shortName: theory.shortName, prompt, parentThreadId }));
       }
       return `Spawned ${spawned.length} theory thread(s): ${spawned
         .map((task) => `${task.titleChain} (@thread:${task.threadId})`)
@@ -140,51 +91,16 @@ export function registerAgentTools(bb: BbPluginApi, { spawnTask, updateTask, mar
     },
   });
 
-  bb.agents.registerTool({
-    name: TOOLS.markResult,
-    description: "Mark the current or specified Kanban thread as done or blocked when the agent finishes.",
-    instructions:
-      "Always call this when finishing a Kanban thread. Include a concise summary. Success moves to Done; failure marks it Blocked, shown red in WIP.",
-    presentation: { label: { pending: "Marking Kanban result", completed: "Marked Kanban result" }, icon: { glyph: "CircleCheck" } },
-    parameters: z.object({
-      threadId: z.string().optional().describe("Thread id. Omit to update current thread."),
-      success: z.boolean(),
-      summary: z
-        .string()
-        .min(1)
-        .max(2_000)
-        .describe("Final progress description: how far the work got and why it is done or blocked."),
-    }),
-    async execute(args, context) {
-      const { task, result } = await markTaskResult(args.threadId ?? context.threadId, args.success, args.summary);
-      return `Marked ${task.titleChain} as ${result}: ${args.summary}`;
-    },
-  });
-
-  bb.agents.configure(() => ({
-    tools: Object.values(TOOLS),
-    skills: [PLUGIN_SLUG],
-    instructions: [
-      `${PLUGIN_NAME} plugin workflow:`,
-      `- Every item on the Kanban board is a BB thread. Move your thread between columns with ${TOOLS.moveCard} as work progresses.`,
-      `- For investigation work, produce theories, then call ${TOOLS.createTheoryTasks} so each theory gets an independent BB thread/agent. The board only shows top-level non-archived threads; child threads are tracked but hidden from the board.`,
-      "- A thread title should describe the whole thread's goal, not the latest implementation step.",
-      "- A thread description/note should describe how far the work has gotten and what changed most recently.",
-      "- Look at the board holistically and group related threads with a 1-2 word bracketed category prefix, for example [docs site]. The board also auto-adds this prefix for new threads when missing.",
-      "- When a BB thread spawns another, the child title is parent > child. Keep each segment short (usually 2-5 words).",
-      `- The board columns are Queue, WIP (Blocked threads too, marked red), Done, and Parked (threads the user set aside for later). When finished, call ${TOOLS.markResult} with success or failure and a concise summary.`,
-    ].join("\n"),
-  }));
+  // Offered in every thread with no standing instructions: the board reads live thread state, so an agent spawns
+  // board threads only when the user asks.
+  bb.agents.configure(() => ({ tools: Object.values(TOOLS), skills: [PLUGIN_SLUG] }));
 }
 
-export function registerCli(bb: BbPluginApi, { listBoard, spawnTask, updateTask, markTaskResult, removeTask, parkTask }: BoardApi) {
+export function registerCli(bb: BbPluginApi, { listBoard, spawnTask, removeTask, parkTask }: BoardApi) {
   const cli = `bb ${PLUGIN_SLUG}`;
   const commands = [
     { name: "list", summary: "List threads on the Kanban board", usage: `${cli} list [--json]` },
     { name: "add", summary: "Spawn a thread on the Kanban board", usage: `${cli} add <short-name> -- <prompt> [--json]` },
-    { name: "move", summary: "Move a thread", usage: `${cli} move <thread-id> <${reportedStatusSchema.options.join("|")}> [note] [--json]` },
-    { name: "success", summary: "Mark a thread done", usage: `${cli} success <thread-id> <summary> [--json]` },
-    { name: "fail", summary: "Mark a thread blocked", usage: `${cli} fail <thread-id> <summary> [--json]` },
     { name: "park", summary: "Park an idle thread for later", usage: `${cli} park <thread-id> [--json]` },
     { name: "unpark", summary: "Take a thread out of Parked", usage: `${cli} unpark <thread-id> [--json]` },
     { name: "remove", summary: "Archive/remove a thread from the board", usage: `${cli} remove <thread-id> [--json]` },
@@ -215,22 +131,12 @@ export function registerCli(bb: BbPluginApi, { listBoard, spawnTask, updateTask,
           const shortName = args.slice(1, separator).join(" ");
           const prompt = args.slice(separator + 1).join(" ");
           if (!prompt.trim()) return usageError;
+          // The spawn tools' limit: a longer name is refused rather than cut.
+          if (shortName.trim().length > SHORT_NAME_MAX) {
+            return { exitCode: 1, stderr: `The short name is ${shortName.trim().length} characters; the limit is ${SHORT_NAME_MAX}.` };
+          }
           const task = await spawnTask({ shortName, prompt });
           return reply(task, `Spawned ${task.titleChain} as ${task.threadId}`);
-        }
-        if (command === "move") {
-          const [, threadId, statusArg, ...note] = args;
-          const status = reportedStatusSchema.safeParse(statusArg);
-          if (!threadId || !status.success) return usageError;
-          const task = await updateTask({ threadId, column: status.data, note: note.join(" ") || undefined });
-          return reply(task, `Moved ${task.titleChain} to ${task.status}`);
-        }
-        if (command === "success" || command === "fail") {
-          const [, threadId, ...rest] = args;
-          const summary = rest.join(" ").trim();
-          if (!threadId || !summary) return usageError;
-          const { task, result } = await markTaskResult(threadId, command === "success", summary);
-          return reply(task, `Marked ${task.titleChain} ${result}`);
         }
         if (command === "park" || command === "unpark") {
           const [, threadId] = args;

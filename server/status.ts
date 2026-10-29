@@ -1,5 +1,5 @@
 import type { BbPluginApi, PluginThreadEventPayloads } from "@get-bb/plugin-sdk";
-import type { Status, StoredTask } from "./schema";
+import type { Status } from "./schema";
 import { ELLIPSIS, oneLine } from "./text";
 
 export type LiveThread = {
@@ -135,13 +135,14 @@ export function isWorking(thread: LiveThread, descendants: LiveThread[]): boolea
 }
 
 /**
- * The card's state, why, and its description. `parkedAt` is when the user parked the thread; it stays parked until
- * it settles or fails again, either of which moves bb's attention time past it.
+ * The card's state, why, and its description. `error` is the message of the thread's last failure, if the board
+ * spawned it. `parkedAt` is when the user parked the thread; it stays parked until it settles or fails again, either
+ * of which moves bb's attention time past it.
  */
 export function deriveStatus(
   thread: LiveThread,
   details: ThreadDetails,
-  stored: StoredTask | undefined,
+  error: string | null,
   descendants: LiveThread[],
   label: LabelView,
   parkedAt: number | null,
@@ -150,10 +151,6 @@ export function deriveStatus(
   const runningChildren = descendants.filter(isRunningSelf).length;
   const reply = excerpt(details.output);
   const prompt = excerpt(details.lastUserPrompt);
-  const note = stored?.note ?? null;
-  // A note the agent wrote since the user last spoke still describes the thread.
-  const freshNote =
-    stored?.note && (details.lastUserInputAt === null || Date.parse(stored.updatedAt) >= details.lastUserInputAt) ? stored.note : null;
   const errored = thread.status === "error" || thread.displayStatus === "error" || thread.queuedWork === "failed";
   const childWaiting = descendants.some((child) => child.hasPendingInteraction);
   const children = `${runningChildren} child thread${runningChildren === 1 ? "" : "s"} running`;
@@ -162,14 +159,13 @@ export function deriveStatus(
   // when there is one, beats them all.
   type Rule = [when: () => boolean, status: Status, reason: string, from: (string | null)[]];
   const rules: Rule[] = [
-    [() => thread.hasPendingInteraction, "blocked", "Waiting for your response", [reply, note, prompt]],
-    [() => runningSelf, "wip", "Running", [freshNote, prompt, note]],
-    [() => runningChildren > 0, "wip", children, [freshNote, prompt, note]],
-    [() => errored, "blocked", "Errored", [note, reply, prompt]],
-    [() => thread.status === "pending" || thread.queuedWork === "waiting", "queue", "Queued", [prompt, note]],
-    [() => childWaiting, "blocked", "A child thread is waiting for your response", [reply, note, prompt]],
-    [() => !details.output?.trim(), "queue", "Not started", [prompt, note]],
-    [() => freshNote !== null && stored?.result === "failed", "blocked", "Reported failure", [note]],
+    [() => thread.hasPendingInteraction, "blocked", "Waiting for your response", [reply, prompt]],
+    [() => runningSelf, "wip", "Running", [prompt]],
+    [() => runningChildren > 0, "wip", children, [prompt]],
+    [() => errored, "blocked", "Errored", [error, reply, prompt]],
+    [() => thread.status === "pending" || thread.queuedWork === "waiting", "queue", "Queued", [prompt]],
+    [() => childWaiting, "blocked", "A child thread is waiting for your response", [reply, prompt]],
+    [() => !details.output?.trim(), "queue", "Not started", [prompt]],
     [() => label.needsInput ?? asksForInput(details.output ?? ""), "blocked", "Asked a question", [reply]],
   ];
   const [, status, reason, from]: Rule = rules.find(([when]) => when()) ?? [() => true, "done", "Completed", [reply]];

@@ -1,46 +1,21 @@
 ---
 name: shop-kanban
-description: Use the Shop Kanban plugin to track BB threads on a Kanban board, spawn one thread per theory, and mark independent attempts as success or failure.
+description: Spawn BB threads on the Shop Kanban board (one per theory, or a child thread) or inspect the board, when the user asks for it. The board follows live thread state; never report progress to it.
 ---
 
-# Shop Kanban workflow
+# Shop Kanban
 
-Use the Shop Kanban plugin when a user wants work tracked as threads on a Kanban board or asks you to investigate, make theories, and have independent agents try solutions.
+The Shop Kanban board shows every non-archived top-level BB thread, placed by its live state: not started → Queue, running → WIP, waiting on the user or errored → a red Blocked card in WIP, finished → Done. Parked is the user's own later pile. Child threads roll up into their parent.
 
-## Core rules
-
-- Every item on the board is a BB thread.
-- Report progress with `shop_kanban_move_card`; its note says how far the work has gotten. The board places threads by live state (running → WIP, waiting on the user → a red Blocked card at the top of WIP, finished → Done), and moving to Blocked or Done notifies the user. Parked is the user's own later pile; agents don't park threads.
-- When an investigation yields theories, call `shop_kanban_create_theory_tasks` so each theory gets its own independent BB thread.
-- Only top-level threads appear on the board; child threads roll up into their parent thread.
-- When you finish, call `shop_kanban_mark_result` with success or failure and a concise summary.
-- Do not spawn raw `pi` processes for board work. Spawn BB threads through the plugin tools so the board can track them.
-
-## Naming rule
-
-Give every thread a short title that describes the **whole thread's goal**, not just the latest implementation step.
-
-Use the thread description/note to say **how far the work has gotten** and what changed most recently.
-
-Look at all threads on the board holistically and group related threads with a 1-2 word bracketed category prefix, for example `[docs site]`. The board also auto-adds this prefix for new threads when it is missing.
-
-When one BB thread spawns another, the child title is:
-
-`parent > child`
-
-Keep each segment short, usually 2-5 words and under 40 characters, for example:
-
-- `[auth race] auth race > [auth race] cache theory`
-- `[checkout] checkout bug > [checkout] retry fix`
-- `[docs site] search page > [docs site] result ranking`
+Nothing needs reporting: the board reads bb's thread state and a model-written title and summary. Use the plugin only when the user asks to spawn board threads or to look at the board.
 
 ## Tools
 
-- `shop_kanban_move_card`: move the current or specified thread to `queue`, `wip`, `blocked`, or `done`, optionally with a note and a new short title.
-- `shop_kanban_spawn_task`: spawn one child BB thread of the current (or a given) thread. It starts in WIP unless `column` says otherwise.
-- `shop_kanban_create_theory_tasks`: spawn one independent child BB thread per theory (at most 12).
-- `shop_kanban_mark_result`: mark a thread done on success or blocked on failure.
+- `shop_kanban_spawn_task`: spawn one child BB thread of the current (or a given) thread.
+- `shop_kanban_create_theory_tasks`: spawn one independent child BB thread per theory (at most 12), for an investigation the user wants split up.
+
+Give each thread a short name (2-5 words, at most 40 characters) for the whole thread's goal. The board adds a 1-2 word bracketed category prefix such as `[docs site]` and titles a child thread `parent > child`.
 
 ## CLI
 
-`bb shop-kanban list [--json]` shows every thread on the board with its column; use it to see the board before naming or grouping threads. `add`, `move`, `success`, `fail`, `park`, `unpark` and `remove` spawn, move, mark, park and archive threads; `bb shop-kanban --help` prints their usage.
+`bb shop-kanban list [--json]` shows every thread on the board with its column and why. `add` spawns a thread, `park` and `unpark` move an idle thread in and out of Parked, and `remove` archives one; `bb shop-kanban --help` prints their usage.
