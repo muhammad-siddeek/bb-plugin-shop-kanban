@@ -1,5 +1,5 @@
 import type { BbPluginApi, PluginThreadEventPayloads } from "@get-bb/plugin-sdk";
-import type { Column, StoredTask } from "./schema";
+import type { Status, StoredTask } from "./schema";
 import { ELLIPSIS, oneLine } from "./text";
 
 export type LiveThread = {
@@ -124,15 +124,27 @@ export type ThreadDetails = {
 
 export type LabelView = { title: string | null; summary: string | null; needsInput: boolean | null };
 
-type Derived = { column: Column; reason: string; description: string | null; runningChildren: number };
+type Derived = { status: Status; reason: string; description: string | null; runningChildren: number };
 
-/** The card's column, why, and its description. */
+/**
+ * Doing work, itself or through a child, rather than waiting on the user: a card in WIP that is not blocked. Such a
+ * thread can't be parked, and a parked one shows in WIP while it works.
+ */
+export function isWorking(thread: LiveThread, descendants: LiveThread[]): boolean {
+  return !thread.hasPendingInteraction && (isRunningSelf(thread) || descendants.some(isRunningSelf));
+}
+
+/**
+ * The card's state, why, and its description. `parkedAt` is when the user parked the thread; it stays parked until
+ * it settles or fails again, either of which moves bb's attention time past it.
+ */
 export function deriveStatus(
   thread: LiveThread,
   details: ThreadDetails,
   stored: StoredTask | undefined,
   descendants: LiveThread[],
   label: LabelView,
+  parkedAt: number | null,
 ): Derived {
   const runningSelf = isRunningSelf(thread);
   const runningChildren = descendants.filter(isRunningSelf).length;
@@ -148,7 +160,7 @@ export function deriveStatus(
 
   // The first rule that holds wins. `from` lists the description's sources by preference; the labeler's summary,
   // when there is one, beats them all.
-  type Rule = [when: () => boolean, column: Column, reason: string, from: (string | null)[]];
+  type Rule = [when: () => boolean, status: Status, reason: string, from: (string | null)[]];
   const rules: Rule[] = [
     [() => thread.hasPendingInteraction, "blocked", "Waiting for your response", [reply, note, prompt]],
     [() => runningSelf, "wip", "Running", [freshNote, prompt, note]],
@@ -160,7 +172,14 @@ export function deriveStatus(
     [() => freshNote !== null && stored?.result === "failed", "blocked", "Reported failure", [note]],
     [() => label.needsInput ?? asksForInput(details.output ?? ""), "blocked", "Asked a question", [reply]],
   ];
-  const [, column, reason, from]: Rule = rules.find(([when]) => when()) ?? [() => true, "done", "Completed", [reply]];
-  return { column, reason, description: label.summary ?? from.find((text) => text !== null) ?? null, runningChildren };
+  const [, status, reason, from]: Rule = rules.find(([when]) => when()) ?? [() => true, "done", "Completed", [reply]];
+  // A parked card keeps the reason it had when idle, so Parked still says whether it finished or asked something.
+  const parked = parkedAt !== null && parkedAt >= (thread.latestAttentionAt ?? 0) && !isWorking(thread, descendants);
+  return {
+    status: parked ? "parked" : status,
+    reason,
+    description: label.summary ?? from.find((text) => text !== null) ?? null,
+    runningChildren,
+  };
 }
 

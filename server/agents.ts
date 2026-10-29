@@ -1,10 +1,10 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { PLUGIN_NAME, PLUGIN_SLUG, TOOL_PREFIX } from "../brand";
-import { COLUMN_IDS, COLUMNS, columnSchema, type BoardTask, type Column, type Result } from "./schema";
+import { reportedStatusSchema, STATUS_TITLES, type BoardTask, type ReportedStatus, type Result } from "./schema";
 
-export type TaskSpawn = { shortName: string; prompt: string; projectId?: string; parentThreadId?: string; column?: Column };
-export type TaskUpdate = { threadId: string; column?: Column; shortName?: string; note?: string; result?: Result | null };
+export type TaskSpawn = { shortName: string; prompt: string; projectId?: string; parentThreadId?: string; column?: ReportedStatus };
+export type TaskUpdate = { threadId: string; column?: ReportedStatus; shortName?: string; note?: string; result?: Result | null };
 
 type BoardApi = {
   listBoard(): Promise<{ columns: unknown[]; tasks: BoardTask[] }>;
@@ -12,6 +12,7 @@ type BoardApi = {
   updateTask(input: TaskUpdate): Promise<BoardTask>;
   markTaskResult(threadId: string, success: boolean, summary: string): Promise<{ task: BoardTask; result: Result }>;
   removeTask(threadId: string, options?: { archiveThread?: boolean }): Promise<boolean>;
+  parkTask(threadId: string, parked: boolean): Promise<BoardTask>;
 };
 
 const TOOLS = {
@@ -23,14 +24,19 @@ const TOOLS = {
 
 /**
  * Opens the board instructions appended to every spawned thread's prompt (after a `---` rule). Followed by
- * "thread"; prompts from before 0.7.0 say "card", so search strips both by this prefix.
+ * "thread"; prompts from before 0.7.0 say "card", so `withoutToolHelp` strips both by this prefix.
  */
-export const TOOL_HELP_LEAD = "You are working on Kanban";
+const TOOL_HELP_LEAD = "You are working on Kanban";
+
+/** `text` without the board instructions appended to a spawned thread's prompt. */
+export function withoutToolHelp(text: string): string {
+  return text.split(`\n---\n${TOOL_HELP_LEAD} `)[0].trim();
+}
 
 export function toolHelp(titleChain: string): string {
   return [
     `${TOOL_HELP_LEAD} thread ${JSON.stringify(titleChain)}.`,
-    `Move the thread as work progresses with ${TOOLS.moveCard}. Columns are Queue, WIP, Blocked, and Done.`,
+    `Move the thread as work progresses with ${TOOLS.moveCard}. Columns are Queue, WIP, Done, and Parked; Blocked threads show in WIP, marked red.`,
     `When you finish, call ${TOOLS.markResult} with success=true or success=false and a short summary.`,
     "Thread titles should describe the whole thread's goal, not the latest implementation step.",
     "Thread descriptions/notes should describe how far the work has gotten and what changed most recently.",
@@ -44,11 +50,11 @@ export function registerAgentTools(bb: BbPluginApi, { spawnTask, updateTask, mar
     name: TOOLS.moveCard,
     description: "Move the current or specified thread to another column of the Kanban board as work progresses.",
     instructions:
-      "Use this when your thread's state changes. If no threadId is supplied, it updates the current thread. Columns: queue, wip, blocked, done.",
+      "Use this when your thread's state changes. If no threadId is supplied, it updates the current thread. Columns: queue, wip, blocked, done; blocked threads show in the WIP column, marked red.",
     presentation: { label: { pending: "Moving Kanban thread", completed: "Moved Kanban thread" }, icon: { glyph: "ListTodo" } },
     parameters: z.object({
       threadId: z.string().optional().describe("Thread id. Omit to update the current thread."),
-      column: columnSchema,
+      column: reportedStatusSchema,
       note: z
         .string()
         .max(2_000)
@@ -67,7 +73,7 @@ export function registerAgentTools(bb: BbPluginApi, { spawnTask, updateTask, mar
         note: args.note,
         shortName: args.shortName,
       });
-      return `Moved ${task.titleChain} to ${COLUMNS[args.column].title}.`;
+      return `Moved ${task.titleChain} to ${STATUS_TITLES[args.column]}.`;
     },
   });
 
@@ -81,7 +87,7 @@ export function registerAgentTools(bb: BbPluginApi, { spawnTask, updateTask, mar
       shortName: z.string().min(1).max(40).describe("Short thread title describing the whole thread's goal."),
       prompt: z.string().min(1).max(12_000).describe("Initial prompt/progress description for the thread."),
       parentThreadId: z.string().optional().describe("Parent thread id. Omit to use the current thread."),
-      column: columnSchema.optional(),
+      column: reportedStatusSchema.optional(),
     }),
     async execute(args, context) {
       const task = await spawnTask({ ...args, parentThreadId: args.parentThreadId ?? context.threadId });
@@ -138,7 +144,7 @@ export function registerAgentTools(bb: BbPluginApi, { spawnTask, updateTask, mar
     name: TOOLS.markResult,
     description: "Mark the current or specified Kanban thread as done or blocked when the agent finishes.",
     instructions:
-      "Always call this when finishing a Kanban thread. Include a concise summary. Success moves to Done; failure moves to Blocked.",
+      "Always call this when finishing a Kanban thread. Include a concise summary. Success moves to Done; failure marks it Blocked, shown red in WIP.",
     presentation: { label: { pending: "Marking Kanban result", completed: "Marked Kanban result" }, icon: { glyph: "CircleCheck" } },
     parameters: z.object({
       threadId: z.string().optional().describe("Thread id. Omit to update current thread."),
@@ -166,19 +172,21 @@ export function registerAgentTools(bb: BbPluginApi, { spawnTask, updateTask, mar
       "- A thread description/note should describe how far the work has gotten and what changed most recently.",
       "- Look at the board holistically and group related threads with a 1-2 word bracketed category prefix, for example [docs site]. The board also auto-adds this prefix for new threads when missing.",
       "- When a BB thread spawns another, the child title is parent > child. Keep each segment short (usually 2-5 words).",
-      `- The board columns are Queue, WIP, Blocked, and Done. When finished, call ${TOOLS.markResult} with success or failure and a concise summary.`,
+      `- The board columns are Queue, WIP (Blocked threads too, marked red), Done, and Parked (threads the user set aside for later). When finished, call ${TOOLS.markResult} with success or failure and a concise summary.`,
     ].join("\n"),
   }));
 }
 
-export function registerCli(bb: BbPluginApi, { listBoard, spawnTask, updateTask, markTaskResult, removeTask }: BoardApi) {
+export function registerCli(bb: BbPluginApi, { listBoard, spawnTask, updateTask, markTaskResult, removeTask, parkTask }: BoardApi) {
   const cli = `bb ${PLUGIN_SLUG}`;
   const commands = [
     { name: "list", summary: "List threads on the Kanban board", usage: `${cli} list [--json]` },
     { name: "add", summary: "Spawn a thread on the Kanban board", usage: `${cli} add <short-name> -- <prompt> [--json]` },
-    { name: "move", summary: "Move a thread", usage: `${cli} move <thread-id> <${COLUMN_IDS.join("|")}> [note] [--json]` },
+    { name: "move", summary: "Move a thread", usage: `${cli} move <thread-id> <${reportedStatusSchema.options.join("|")}> [note] [--json]` },
     { name: "success", summary: "Mark a thread done", usage: `${cli} success <thread-id> <summary> [--json]` },
     { name: "fail", summary: "Mark a thread blocked", usage: `${cli} fail <thread-id> <summary> [--json]` },
+    { name: "park", summary: "Park an idle thread for later", usage: `${cli} park <thread-id> [--json]` },
+    { name: "unpark", summary: "Take a thread out of Parked", usage: `${cli} unpark <thread-id> [--json]` },
     { name: "remove", summary: "Archive/remove a thread from the board", usage: `${cli} remove <thread-id> [--json]` },
   ];
   const usage = ["Usage:", ...commands.map((command) => `  ${command.usage}`)].join("\n");
@@ -197,7 +205,7 @@ export function registerCli(bb: BbPluginApi, { listBoard, spawnTask, updateTask,
           const board = await listBoard();
           const lines = board.tasks.map(
             (task) =>
-              `${task.threadId}\t${task.column}\t${task.titleChain}${task.statusReason ? ` (${task.statusReason})` : ""}${task.note ? ` — ${task.note}` : ""}`,
+              `${task.threadId}\t${task.status}\t${task.titleChain}${task.statusReason ? ` (${task.statusReason})` : ""}${task.note ? ` — ${task.note}` : ""}`,
           );
           return reply(board, lines.length ? lines.join("\n") : "No threads on the Kanban board yet.");
         }
@@ -211,11 +219,11 @@ export function registerCli(bb: BbPluginApi, { listBoard, spawnTask, updateTask,
           return reply(task, `Spawned ${task.titleChain} as ${task.threadId}`);
         }
         if (command === "move") {
-          const [, threadId, columnArg, ...note] = args;
-          const column = columnSchema.safeParse(columnArg);
-          if (!threadId || !column.success) return usageError;
-          const task = await updateTask({ threadId, column: column.data, note: note.join(" ") || undefined });
-          return reply(task, `Moved ${task.titleChain} to ${task.column}`);
+          const [, threadId, statusArg, ...note] = args;
+          const status = reportedStatusSchema.safeParse(statusArg);
+          if (!threadId || !status.success) return usageError;
+          const task = await updateTask({ threadId, column: status.data, note: note.join(" ") || undefined });
+          return reply(task, `Moved ${task.titleChain} to ${task.status}`);
         }
         if (command === "success" || command === "fail") {
           const [, threadId, ...rest] = args;
@@ -223,6 +231,12 @@ export function registerCli(bb: BbPluginApi, { listBoard, spawnTask, updateTask,
           if (!threadId || !summary) return usageError;
           const { task, result } = await markTaskResult(threadId, command === "success", summary);
           return reply(task, `Marked ${task.titleChain} ${result}`);
+        }
+        if (command === "park" || command === "unpark") {
+          const [, threadId] = args;
+          if (!threadId) return usageError;
+          const task = await parkTask(threadId, command === "park");
+          return reply(task, `${command === "park" ? "Parked" : "Unparked"} ${task.titleChain} (${task.status})`);
         }
         if (command === "remove") {
           const [, threadId] = args;

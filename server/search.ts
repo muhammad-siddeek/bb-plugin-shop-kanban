@@ -1,7 +1,7 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { hostContract } from "../contract";
-import { TOOL_HELP_LEAD } from "./agents";
+import { withoutToolHelp } from "./agents";
 import { commandMissing, indexHostId } from "./hosts";
 import type { SearchResponse } from "./schema";
 import { isRunningSelf, type LiveThread } from "./status";
@@ -59,7 +59,7 @@ function threadMarkdown(thread: LiveThread, messages: ThreadMessage[]): string {
   const title = `# ${oneLine(thread.title ?? thread.titleFallback ?? thread.id)}`;
   const sections = messages.map((message) => {
     // Drop the board instructions appended to spawned threads' prompts.
-    const text = message.text.split(`\n---\n${TOOL_HELP_LEAD} `)[0].trim();
+    const text = withoutToolHelp(message.text);
     return `## ${ROLE_HEADINGS[message.role]}\n\n${clip(text, MESSAGE_MAX_CHARS)}`;
   });
   const [opening, ...rest] = sections;

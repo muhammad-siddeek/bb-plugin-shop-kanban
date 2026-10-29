@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { KeyboardEvent, PointerEvent } from "react";
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
 import { PLUGIN_NAME } from "../brand";
-import { BOTTOM_BOARD_COLLAPSED_CLASS, BOTTOM_BOARD_HEIGHT_VAR, BOTTOM_BOARD_OPEN_CLASS, COLUMN_META, type BoardColumn } from "./model";
+import { BOTTOM_BOARD_COLLAPSED_CLASS, BOTTOM_BOARD_HEIGHT_VAR, BOTTOM_BOARD_OPEN_CLASS, STATUS_META, type BoardStatus } from "./model";
 import { useBoard, useReviews } from "./hooks";
 import { IconButton } from "./primitives";
 import { BoardView } from "./column";
@@ -29,11 +29,11 @@ function clampPanelHeight(value: number): number {
   return Math.min(Math.max(value, PANEL_MIN_HEIGHT), maxPanelHeight());
 }
 
-function CountBadge({ column, count }: { column: "blocked" | "done"; count: number }) {
+function CountBadge({ status, count }: { status: "blocked" | "done"; count: number }) {
   if (count === 0) return null;
   return (
-    <span className={`inline-flex h-5 items-center rounded-full px-2 text-[10px] font-semibold uppercase tracking-wide tabular-nums ${COLUMN_META[column].badge}`}>
-      {count} {column}
+    <span className={`inline-flex h-5 items-center rounded-full px-2 text-[10px] font-semibold uppercase tracking-wide tabular-nums ${STATUS_META[status].badge}`}>
+      {count} {status}
     </span>
   );
 }
@@ -47,7 +47,7 @@ export function BottomBoardOverlay() {
   const api = useBoard();
   const reviews = useReviews();
   const { board } = api;
-  const count = (column: BoardColumn) => board?.tasks.filter((task) => task.column === column).length ?? 0;
+  const count = (status: BoardStatus) => board?.tasks.filter((task) => task.status === status).length ?? 0;
 
   const startResize = (event: PointerEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -124,8 +124,8 @@ export function BottomBoardOverlay() {
           <Icon name={PLUGIN_ICON} className="size-3.5" aria-hidden />
         </span>
         <span className="tracking-tight">{PLUGIN_NAME}</span>
-        <CountBadge column="blocked" count={count("blocked")} />
-        <CountBadge column="done" count={count("done")} />
+        <CountBadge status="blocked" count={count("blocked")} />
+        <CountBadge status="done" count={count("done")} />
         <Icon name="ChevronUp" className="size-3.5 text-muted-foreground transition-transform duration-150 group-hover:-translate-y-px group-hover:text-foreground max-sm:ml-auto max-sm:size-5" aria-hidden />
       </button>
     );
@@ -168,7 +168,7 @@ export function BottomBoardOverlay() {
             {board.tasks.length} thread{board.tasks.length === 1 ? "" : "s"}
           </span>
         ) : null}
-        <CountBadge column="blocked" count={count("blocked")} />
+        <CountBadge status="blocked" count={count("blocked")} />
         <div className="ml-3 min-w-0 max-sm:ml-0 max-sm:flex-1">
           {/* Header (40px, 48px on touch) plus a little breathing room below the list. */}
           <ThreadSearch maxListHeight={panelHeight - 56} />

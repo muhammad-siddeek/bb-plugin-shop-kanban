@@ -1,7 +1,7 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { hostContract } from "../contract";
-import { LABEL_PROMPT_VERSION, LABEL_SYSTEM, SUMMARY_PROMPT_VERSION, hashText, labelPrompt, parseLabel } from "./labels";
+import { HARNESS_NOTICE, LABEL_PROMPT_VERSION, LABEL_SYSTEM, SUMMARY_PROMPT_VERSION, THREAD_MENTION, hashText, labelPrompt, parseLabel } from "./labels";
 import type { LabelView, LiveThread, ThreadDetails } from "./status";
 import { commandMissing, connectedHostId } from "./hosts";
 import { safe } from "./text";
@@ -73,6 +73,8 @@ export function createLabeler(bb: BbPluginApi, onChange: () => void) {
   const labelInFlight = new Set<string>();
   let labelActive = 0;
   const renaming = new Set<string>();
+  /** Threads that are cards on the board now; their titles show the labeler what the board already groups. */
+  let boardIds: string[] = [];
   /**
    * Threads whose last refresh failed, with the `titleSig|summarySig` it tried. They keep showing their last label
    * and retry after RETRY_MS, or at once when the thread moves on. Kept in memory: a restart retries.
@@ -199,21 +201,30 @@ export function createLabeler(bb: BbPluginApi, onChange: () => void) {
     const hostId = thread.hostId ?? (await connectedHostId(bb));
     try {
       if (!hostId) throw new Error("No connected bb host to run the labeler on.");
-      const categories = Array.from(new Set(Object.values(all).map((entry) => entry.category).filter(Boolean))).slice(0, 30);
+      const board = boardIds.flatMap((id) => {
+        const label = id === thread.id ? undefined : all[id];
+        return label?.category && label.intent ? [`[${label.category}] ${label.intent}`] : [];
+      });
+      const userText = [details.firstUserPrompt, ...details.userPrompts].join("\n");
+      const mentioned = [...new Set(Array.from(userText.matchAll(THREAD_MENTION), (match) => match[1]))].slice(0, 5);
+      const mentionTitles = Object.fromEntries(
+        (await Promise.all(mentioned.map(async (id) => [id, (await safe(() => bb.sdk.threads.get({ threadId: id })))?.title]))).filter(
+          (entry): entry is [string, string] => typeof entry[1] === "string" && entry[1] !== "",
+        ),
+      );
       const prompt = labelPrompt({
-        title: thread.title,
         currentTitle: job.currentTitle,
         firstPrompt: details.firstUserPrompt,
-        lastPrompt: details.lastUserPrompt,
         prompts: details.userPrompts,
         output: details.output,
         running,
-        categories,
+        board: board.slice(0, 40),
+        mentionTitles,
       });
       const parsed = parseLabel(await complete(hostId, LABEL_SYSTEM, prompt, LABEL_TIMEOUT_MS));
       if (!parsed) throw new Error("reply had no usable JSON; threads keep their last label");
       const previous = all[thread.id];
-      // Only a new user message may retitle the card; summary refreshes keep the title.
+      // Only a new user message, or the reply that settles it, may retitle the card; other refreshes keep the title.
       const keepTitle = previous !== undefined && Boolean(previous.category && previous.intent) && previous.titleSig === job.titleSig;
       all[thread.id] = {
         ...previous,
@@ -240,7 +251,11 @@ export function createLabeler(bb: BbPluginApi, onChange: () => void) {
    * thread moved on. `all` is the record returned by `load()`.
    */
   function view(thread: LiveThread, details: ThreadDetails, running: boolean, all: Labels): LabelView {
-    const titleSig = `v${LABEL_PROMPT_VERSION}:${details.userPrompts.length}:${details.lastUserInputAt ?? 0}:${hashText(details.firstUserPrompt ?? thread.title ?? thread.id)}`;
+    // A new user message may retitle the card, and so may the reply that settles it: the first title is written
+    // before the agent has answered. Harness notices only refresh the summary.
+    const written = details.userPrompts.filter((text) => !HARNESS_NOTICE.test(text));
+    const answering = running && !HARNESS_NOTICE.test(details.lastUserPrompt ?? "");
+    const titleSig = `v${LABEL_PROMPT_VERSION}:${written.length}:${hashText(written.at(-1) ?? "")}:${answering ? "run" : "idle"}:${hashText(details.firstUserPrompt ?? thread.title ?? thread.id)}`;
     const summaryVersion = `v${LABEL_PROMPT_VERSION}.${SUMMARY_PROMPT_VERSION}`;
     const summarySig = running
       ? `${summaryVersion}:run:${details.lastUserInputAt ?? 0}`
@@ -284,5 +299,10 @@ export function createLabeler(bb: BbPluginApi, onChange: () => void) {
     labelQueue.length = 0;
   }
 
-  return { load, view, forget, complete, dispose };
+  /** The threads that are cards on the board, as of the latest board read. */
+  function setBoard(threadIds: string[]) {
+    boardIds = threadIds;
+  }
+
+  return { load, view, forget, complete, dispose, setBoard };
 }

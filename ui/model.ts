@@ -8,6 +8,7 @@ import type {
   ReviewScope,
   ReviewState,
   SearchResponse,
+  Status,
   rpcContract,
 } from "../server/schema";
 
@@ -16,6 +17,7 @@ import type {
 // Type-only re-exports of the server's schema types; keeps zod out of the browser bundle.
 export type { BoardSession, BoardTask, ReviewCard, ReviewScope, ReviewState, SearchResponse };
 export type BoardColumn = Column;
+export type BoardStatus = Status;
 export type BoardState = z.infer<(typeof rpcContract)["board_list"]["output"]>;
 
 export const CLOCK_TICK_MS = 15_000;
@@ -23,7 +25,9 @@ export const BOTTOM_BOARD_OPEN_CLASS = `${PLUGIN_SLUG}-bottom-open`;
 export const BOTTOM_BOARD_HEIGHT_VAR = `--${PLUGIN_SLUG}-bottom-height`;
 /** Set while the board is hidden; on phones the hidden board is a bottom bar that keeps its own strip of the page. */
 export const BOTTOM_BOARD_COLLAPSED_CLASS = `${PLUGIN_SLUG}-bottom-collapsed`;
-const COLUMNS: BoardColumn[] = ["queue", "wip", "blocked", "done"];
+/** dataTransfer type of a dragged card, carrying its thread id; only the Parked column accepts it. */
+export const THREAD_DRAG_TYPE = `application/x-${PLUGIN_SLUG}-thread`;
+const COLUMNS: BoardColumn[] = ["queue", "wip", "done", "parked"];
 
 /**
  * Accent text per hue: the -500 shade on dark, -700 on light, where -500 is too faint to read (about 2:1 on
@@ -45,7 +49,8 @@ export const ACCENT_BADGE = {
   emerald: "bg-emerald-500/15 text-[light-dark(var(--color-emerald-800),var(--color-emerald-500))]",
 } as const;
 
-export const COLUMN_META: Record<BoardColumn, {
+/** Colors per card state; each column takes those of the state it is named after. Parked is grey. */
+export const STATUS_META: Record<BoardStatus, {
   title: string;
   accent: string;
   badge: string;
@@ -55,6 +60,12 @@ export const COLUMN_META: Record<BoardColumn, {
   wip: { title: ACCENT_TEXT.amber, accent: "bg-amber-500", badge: ACCENT_BADGE.amber, outline: "outline-amber-500" },
   blocked: { title: ACCENT_TEXT.rose, accent: "bg-rose-500", badge: ACCENT_BADGE.rose, outline: "outline-rose-500" },
   done: { title: ACCENT_TEXT.emerald, accent: "bg-emerald-500", badge: ACCENT_BADGE.emerald, outline: "outline-emerald-500" },
+  parked: {
+    title: "text-muted-foreground",
+    accent: "bg-muted-foreground/40",
+    badge: "bg-muted-foreground/15 text-muted-foreground",
+    outline: "outline-muted-foreground/60",
+  },
 };
 
 export function shortNameFromPrompt(prompt: string): string {
@@ -130,10 +141,22 @@ export function isUnread(task: BoardTask, readLocally: ReadonlySet<string>): boo
   return task.unread && !readLocally.has(task.threadId);
 }
 
-export function groupTasksByColumn(board: BoardState | null, readLocally: ReadonlySet<string>): Map<BoardColumn, BoardTask[]> {
+/** `parkedLocally`: cards just parked from the board, shown in Parked before the server's board catches up. */
+export function groupTasksByColumn(
+  board: BoardState | null,
+  readLocally: ReadonlySet<string>,
+  parkedLocally: ReadonlySet<string>,
+): Map<BoardColumn, BoardTask[]> {
   const grouped = new Map<BoardColumn, BoardTask[]>(COLUMNS.map((column) => [column, []]));
-  for (const task of board?.tasks ?? []) grouped.get(task.column)?.push(task);
-  // Done: unread cards first, then read ones; each group keeps the server's timestamp order.
+  for (const served of board?.tasks ?? []) {
+    const task = parkedLocally.has(served.threadId) ? { ...served, column: "parked" as const, status: "parked" as const } : served;
+    grouped.get(task.column)?.push(task);
+  }
+  // Each column keeps the server's timestamp order within these groups.
+  // WIP: blocked cards, which wait on the user, above running ones.
+  const wip = grouped.get("wip") ?? [];
+  grouped.set("wip", [...wip.filter((task) => task.status === "blocked"), ...wip.filter((task) => task.status !== "blocked")]);
+  // Done: unread cards first, then read ones.
   const done = grouped.get("done") ?? [];
   grouped.set("done", [
     ...done.filter((task) => isUnread(task, readLocally)),

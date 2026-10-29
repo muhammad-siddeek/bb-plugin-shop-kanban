@@ -1,7 +1,8 @@
 ## What you get
 
-- A board docked at the bottom of bb with Queue, WIP, Blocked and Done columns. Every non-archived top-level thread is on it, and child threads roll up into their parent thread.
-- Columns follow live thread state, so you never drag a thread. Queue means not started. WIP means the thread or one of its children is running, background work included. Blocked means idle and waiting on you: a pending interaction, an error, a failed result, or a last reply that asks a question. Done means idle with a last reply that reports completion; unread Done threads come first.
+- A board docked at the bottom of bb with Queue, WIP, Done and Parked columns. Every non-archived top-level thread is on it, and child threads roll up into their parent thread.
+- Columns follow live thread state; the one drag is parking. Queue means not started. WIP means the thread or one of its children is running, background work included; blocked threads (idle and waiting on you: a pending interaction, an error, a failed result, or a last reply that asks a question) sit at the top of WIP as red cards. Done means idle with a last reply that reports completion; unread Done threads come first. Parked, in grey, holds idle threads you dragged onto it (it highlights while you drag) or parked from the card's pause button, to come back to later; they keep their status and leave Parked when the thread runs again.
+- A picker at the top of WIP caps how many threads run at once (no limit by default). With WIP full, a new thread or a follow-up to an idle one waits in its thread's message queue, shown in Queue as "Waiting for a WIP slot", and bb sends it when a WIP thread finishes; Blocked threads don't count, and steers, follow-ups and child threads of a running thread go through.
 - Each thread shows a `[category] intent` title, a summary of the latest exchange (two lines, three on hover), the update time and status, what the thread has spent together with its child threads and subagents (archived ones included; `~` when part of it is estimated), a ring with the share of the context window in use (amber at 70%, red at 90%), and the icon of the harness running the thread. Rest the pointer on a card for a tooltip beside it with the harness, model, thinking level, tokens, cost, access mode and service tier.
 - Clicking a thread opens it at the latest message. The Queue + button starts a new thread from a form at the top of Queue that keeps your draft across reloads and crashes. The thread open in bb is highlighted on the board and kept in view.
 - The search bar in the board's title bar finds any thread by what was said in it, archived threads included. Picking a result opens the thread in bb and leaves the board as it is.
@@ -9,11 +10,11 @@
 
 ## For agents
 
-Agents get four tools to track their own work: move their thread, spawn a child thread, spawn one independent thread per theory for an investigation, and mark a result as success (Done) or failure (Blocked). A bundled skill tells agents when to use them. The same actions are available from the terminal as `bb shop-kanban`.
+Agents get four tools to track their own work: move their thread, spawn a child thread, spawn one independent thread per theory for an investigation, and mark a result as success (Done) or failure (a red Blocked card in WIP). A bundled skill tells agents when to use them. The same actions, plus park and unpark, are available from the terminal as `bb shop-kanban`.
 
 ## Model-written labels
 
-Titles, summaries, and the Blocked-or-Done call for finished replies come from a small model. The plugin runs a pi-compatible CLI on the thread's host, by default `pi` with `anthropic/claude-haiku-4-5`, so labels are billed to that CLI's account. Board titles are written back to the bb thread title unless you rename the thread yourself. Set `labelerCommand` to empty to turn labels off; threads then use heuristic titles and an excerpt of the latest message.
+Titles, summaries, and the Blocked-or-Done call for finished replies come from a small model. The plugin runs a pi-compatible CLI on the thread's host, by default `pi` with `anthropic/claude-haiku-4-5`, so labels are billed to that CLI's account. The model sees the other cards' titles, so related threads share a tag, and harness notices sent as user turns never retitle a card. Board titles are written back to the bb thread title unless you rename the thread yourself. Set `labelerCommand` to empty to turn labels off; threads then use heuristic titles and an excerpt of the latest message.
 
 ## Requirements
 

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
-import { ACCENT_TEXT, COLUMN_META, formatRelativeTime, taskActivityTime, taskCardTitle, type BoardColumn, type BoardTask } from "./model";
+import { ACCENT_TEXT, STATUS_META, THREAD_DRAG_TYPE, formatRelativeTime, taskActivityTime, taskCardTitle, type BoardStatus, type BoardTask } from "./model";
 import { CardTooltip, HarnessMeta, type AgentProvider } from "./session";
 
 // All marks share one 16px frame so they line up with the 18px title line (mt-px centers them).
@@ -76,29 +76,29 @@ function boardCardLayoutKey(card: HTMLElement): string | null {
 /** Theme class that re-scopes bb's color tokens for a subtree (`.light` / `.dark`). */
 export type ThemeScope = "light" | "dark";
 
-function TaskStatusMark({ column, unread }: { column: BoardColumn; unread: boolean }) {
-  if (column === "wip") {
+function TaskStatusMark({ status, unread }: { status: BoardStatus; unread: boolean }) {
+  if (status === "wip") {
     return (
       <span role="img" aria-label="In progress" className={MARK_FRAME}>
         <span className="block size-3.5 animate-spin rounded-full border-[1.5px] border-amber-500/20 border-t-[light-dark(var(--color-amber-600),var(--color-amber-500))] [animation-duration:900ms]" />
       </span>
     );
   }
-  if (column === "done") {
+  if (status === "done") {
     const label = unread ? "Done · unread" : "Done";
     return (
       <span
         role="img"
         aria-label={label}
         className={`${MARK_FRAME} rounded-full transition-colors ${
-          unread ? "bg-emerald-500 text-white" : COLUMN_META.done.badge
+          unread ? "bg-emerald-500 text-white" : STATUS_META.done.badge
         }`}
       >
         <Icon name="Check" className="size-3" aria-hidden />
       </span>
     );
   }
-  if (column === "blocked") {
+  if (status === "blocked") {
     return (
       <span
         role="img"
@@ -106,6 +106,13 @@ function TaskStatusMark({ column, unread }: { column: BoardColumn; unread: boole
         className={`${MARK_FRAME} rounded-full bg-rose-500 text-[10.5px] font-bold leading-none text-white`}
       >
         !
+      </span>
+    );
+  }
+  if (status === "parked") {
+    return (
+      <span role="img" aria-label="Parked" className={`${MARK_FRAME} rounded-full ${STATUS_META.parked.badge}`}>
+        <Icon name="Pause" className="size-2.5" aria-hidden />
       </span>
     );
   }
@@ -126,18 +133,24 @@ function FooterNote({ tone, text }: { tone: string; text: string }) {
   );
 }
 
-export function TaskCard({ task, now, unread, selected, invertedTheme, provider, onArchive, onOpen }: {
+export function TaskCard({ task, now, unread, selected, dragging, invertedTheme, provider, onArchive, onPark, onDragChange, onOpen }: {
   task: BoardTask;
   now: number;
   /** Done and not yet read: the title goes from semibold to bold and the check fills. */
   unread: boolean;
   /** Card belongs to the thread currently open in bb. */
   selected: boolean;
+  /** This card is the one being dragged to Parked. */
+  dragging: boolean;
   /** Opposite of bb's active theme; the selected card renders in it so it stands out. */
   invertedTheme: ThemeScope;
   /** The harness the card's thread runs on; null when bb's roster doesn't list it. */
   provider: AgentProvider | null;
   onArchive: (threadId: string) => void;
+  /** Park an idle card, or unpark a parked one. */
+  onPark: (threadId: string, parked: boolean) => void;
+  /** A drag of this card to Parked started (its thread id) or ended (null). */
+  onDragChange: (threadId: string | null) => void;
   onOpen: (threadId: string) => void;
 }) {
   const ref = useRef<HTMLElement>(null);
@@ -195,6 +208,11 @@ export function TaskCard({ task, now, unread, selected, invertedTheme, provider,
     setTooltipOpen(false);
   };
   useEffect(() => () => window.clearTimeout(tooltipTimer.current), []);
+  const dragFrame = useRef(0);
+  useEffect(() => () => cancelAnimationFrame(dragFrame.current), []);
+  // Chrome sends the drag's source card a pointerenter when the drag ends, wherever the pointer is; the tooltip
+  // ignores it until the pointer next leaves the card.
+  const dragEnded = useRef(false);
   // Scrolling the board moves the card out from under the fixed tooltip: close rather than chase it.
   // Other scrollers (a streaming thread timeline) don't contain the card and are ignored.
   useEffect(() => {
@@ -207,6 +225,7 @@ export function TaskCard({ task, now, unread, selected, invertedTheme, provider,
     return () => window.removeEventListener("scroll", close, true);
   }, [tooltipOpen]);
   const { category, intent } = taskCardTitle(task);
+  const parked = task.status === "parked";
   // Lines 1-2: "[tag] title — summary" as one run of text. Hovering the card hands it the footer's line
   // too; the footer's session facts are in the card's tooltip.
   // The 18px lines come from the 12px strut; the 13px title is leading-none so it can't grow a line.
@@ -218,9 +237,9 @@ export function TaskCard({ task, now, unread, selected, invertedTheme, provider,
         </span>
       ) : null}
       <span
-        className={`text-[13px] leading-none text-foreground decoration-muted-foreground/40 underline-offset-2 group-hover/open:underline ${
-          unread ? "font-bold" : "font-semibold"
-        }`}
+        className={`text-[13px] leading-none decoration-muted-foreground/40 underline-offset-2 group-hover/open:underline ${
+          parked ? "text-foreground/70" : "text-foreground"
+        } ${unread ? "font-bold" : "font-semibold"}`}
       >
         {intent}
       </span>
@@ -232,18 +251,24 @@ export function TaskCard({ task, now, unread, selected, invertedTheme, provider,
       ) : null}
     </span>
   );
-  const meta = COLUMN_META[task.column];
+  const meta = STATUS_META[task.status];
   const activity = taskActivityTime(task);
   const canOpen = !task.missingThread;
-  const reason = task.statusReason && task.column !== "done" && task.statusReason !== "Running" ? task.statusReason : null;
+  // Done cards don't repeat "Completed"; parked ones say how they were left, so they do.
+  const reason = task.statusReason && task.status !== "done" && task.statusReason !== "Running" ? task.statusReason : null;
+  // Idle cards can be parked, and parked ones unparked; running ones can't be either.
+  const parkToggle = canOpen && task.status !== "wip";
+  // Idle cards outside Parked can also be dragged there; Parked is the only column that takes a drop.
+  const canDrag = parkToggle && !parked;
 
-  // Selection wins over the column/unread border; the blocked stripe stays either way.
+  // Selection wins over the column/unread border; the blocked stripe and the parked dashes stay either way.
   const borderClass = selected
     ? "border-border"
     : unread
       ? "border-emerald-500/30 hover:border-emerald-500/50"
       : "border-border/60 hover:border-border";
-  const stateClass = task.column === "blocked" ? `${borderClass} ${BLOCKED_STRIPE}` : borderClass;
+  const stateClass =
+    task.status === "blocked" ? `${borderClass} ${BLOCKED_STRIPE}` : parked ? `${borderClass} border-dashed` : borderClass;
   // Selected: flip the card into the opposite theme (bg-card, text-*, bg-muted follow) and ring it
   // in the column accent. Outline 2px + 2px offset stays inside the column's p-2 scroll padding.
   const surfaceClass = selected
@@ -253,6 +278,21 @@ export function TaskCard({ task, now, unread, selected, invertedTheme, provider,
   return (
     <article
       ref={ref}
+      draggable={canDrag}
+      onDragStart={(event) => {
+        if (!canDrag) return;
+        hideTooltip();
+        event.dataTransfer.setData(THREAD_DRAG_TYPE, task.threadId);
+        event.dataTransfer.effectAllowed = "move";
+        // Next frame: restyling the card now would also restyle the drag image the browser is about to capture.
+        dragFrame.current = requestAnimationFrame(() => onDragChange(task.threadId));
+      }}
+      onDragEnd={() => {
+        if (!canDrag) return;
+        cancelAnimationFrame(dragFrame.current);
+        dragEnded.current = true;
+        onDragChange(null);
+      }}
       aria-current={selected ? "true" : undefined}
       data-selected={selected ? "" : undefined}
       onClick={(event) => {
@@ -261,11 +301,14 @@ export function TaskCard({ task, now, unread, selected, invertedTheme, provider,
       }}
       onPointerEnter={(event) => {
         // Mouse only: touch has no hover, and a tap opens the thread.
-        if (event.pointerType !== "mouse") return;
+        if (event.pointerType !== "mouse" || dragEnded.current) return;
         window.clearTimeout(tooltipTimer.current);
         tooltipTimer.current = window.setTimeout(showTooltip, TOOLTIP_DELAY_MS);
       }}
-      onPointerLeave={hideTooltip}
+      onPointerLeave={() => {
+        dragEnded.current = false;
+        hideTooltip();
+      }}
       onFocus={(event) => {
         if (event.target.matches(":focus-visible")) showTooltip();
       }}
@@ -275,12 +318,12 @@ export function TaskCard({ task, now, unread, selected, invertedTheme, provider,
       onKeyDown={(event) => {
         if (event.key === "Escape") hideTooltip();
       }}
-      className={`group relative rounded-lg border bg-card px-2.5 pb-1.5 pt-2 transition-[border-color,box-shadow,background-color] duration-150 has-[[data-card-open]:focus-visible]:ring-2 has-[[data-card-open]:focus-visible]:ring-ring/60 ${
+      className={`group relative rounded-lg border bg-card px-2.5 pb-1.5 pt-2 transition-[border-color,box-shadow,background-color,opacity] duration-150 has-[[data-card-open]:focus-visible]:ring-2 has-[[data-card-open]:focus-visible]:ring-ring/60 ${
         canOpen ? "cursor-pointer" : ""
-      } ${stateClass} ${surfaceClass}`}
+      } ${dragging ? "opacity-40" : ""} ${stateClass} ${surfaceClass}`}
     >
       <div className="flex items-start gap-2">
-        <TaskStatusMark column={task.column} unread={unread} />
+        <TaskStatusMark status={task.status} unread={unread} />
         {/* Always two lines tall, so the hover's third line overlays the footer instead of resizing the card. */}
         {canOpen ? (
           <button
@@ -297,9 +340,19 @@ export function TaskCard({ task, now, unread, selected, invertedTheme, provider,
         )}
       </div>
 
-      {/* Archive: overlays the end of the title line (no reflow); a card-colored backdrop with a short
+      {/* Park and archive: overlay the end of the title line (no reflow); a card-colored backdrop with a short
           leftward fade hides the truncated title underneath. Revealed on hover/focus, always on touch. */}
-      <span className="absolute right-1.5 top-[7px] flex bg-card opacity-0 transition-opacity duration-150 before:pointer-events-none before:absolute before:inset-y-0 before:right-full before:w-3 before:bg-linear-to-l before:from-card before:to-transparent before:content-[''] group-hover:opacity-100 group-focus-within:opacity-100 has-[:focus-visible]:opacity-100 [@media(hover:none)]:opacity-100 pointer-coarse:right-1 pointer-coarse:top-[3px]">
+      <span className="absolute right-1.5 top-[7px] flex gap-0.5 bg-card opacity-0 transition-opacity duration-150 before:pointer-events-none before:absolute before:inset-y-0 before:right-full before:w-3 before:bg-linear-to-l before:from-card before:to-transparent before:content-[''] group-hover:opacity-100 group-focus-within:opacity-100 has-[:focus-visible]:opacity-100 [@media(hover:none)]:opacity-100 pointer-coarse:right-1 pointer-coarse:top-[3px]">
+        {parkToggle ? (
+          <button
+            type="button"
+            aria-label={parked ? "Unpark thread" : "Park thread"}
+            className="inline-flex size-5 items-center justify-center rounded-md text-muted-foreground/70 transition-[color,background-color] duration-150 hover:bg-accent hover:text-foreground focus-visible:bg-accent focus-visible:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 pointer-coarse:size-7"
+            onClick={() => onPark(task.threadId, !parked)}
+          >
+            <Icon name={parked ? "ArrowTurnBackward" : "Pause"} className="size-3.5" aria-hidden />
+          </button>
+        ) : null}
         <button
           type="button"
           aria-label="Archive thread"

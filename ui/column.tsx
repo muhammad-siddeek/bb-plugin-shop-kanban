@@ -1,13 +1,14 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { FormEvent, KeyboardEvent, ReactElement } from "react";
+import type { DragEvent, FormEvent, KeyboardEvent, ReactElement } from "react";
 import { experimental_Icon as Icon, experimental_useCodeTheme, experimental_useProviders, useBbContext, useBbNavigate } from "@get-bb/plugin-sdk/app";
 import { PLUGIN_SLUG } from "../brand";
-import { CLOCK_TICK_MS, COLUMN_META, groupTasksByColumn, isUnread, shortNameFromPrompt, type BoardColumn, type BoardTask } from "./model";
+import { CLOCK_TICK_MS, STATUS_META, THREAD_DRAG_TYPE, groupTasksByColumn, isUnread, shortNameFromPrompt, type BoardColumn, type BoardTask } from "./model";
 import { useNow, type BoardApi, type ReviewsApi } from "./hooks";
 import { IconButton } from "./primitives";
 import { TaskCard, type ThemeScope } from "./card";
 import { ReviewSection } from "./reviews";
 import type { AgentProvider } from "./session";
+import { WipLimitControl } from "./wip-limit";
 
 const SCROLL_TO_LATEST_SELECTOR = 'button[aria-label="Scroll to latest event"]';
 /** The new-thread form's text, written on every keystroke so a crash or reload doesn't lose it. */
@@ -169,29 +170,77 @@ function AddTaskForm({ focus, onAdd, onCancel, onError }: {
   );
 }
 
-function BoardColumnView({ column, title, tasks, now, readLocally, selectedThreadId, invertedTheme, providersById, onArchive, onOpen, onStartAdding, lead, addForm }: {
+function BoardColumnView({ column, title, tasks, now, readLocally, selectedThreadId, draggingId, invertedTheme, providersById, onArchive, onPark, onDragChange, onDropPark, onOpen, onStartAdding, headerControl, lead, addForm }: {
   column: BoardColumn;
   title: string;
   tasks: BoardTask[];
   readLocally: ReadonlySet<string>;
   now: number;
   selectedThreadId: string | null;
+  /** The card being dragged to Parked, if any. */
+  draggingId: string | null;
   invertedTheme: ThemeScope;
   providersById: ReadonlyMap<string, AgentProvider>;
   onArchive: (threadId: string) => void;
+  onPark: (threadId: string, parked: boolean) => void;
+  onDragChange: (threadId: string | null) => void;
+  /** Non-null only for Parked, the one column a dragged card can be dropped on. */
+  onDropPark: ((threadId: string) => void) | null;
   onOpen: (threadId: string) => void;
   onStartAdding: (() => void) | null;
+  /** Drawn at the header's end: the WIP limit picker in WIP. */
+  headerControl: ReactElement | null;
   /** Rendered above the column's cards, below the new-thread form or button: the review queue in Queue. */
   lead: ReactElement | null;
   /** The new-thread form; non-null only while it is open. */
   addForm: ReactElement | null;
 }) {
-  const meta = COLUMN_META[column];
+  const meta = STATUS_META[column];
   const adding = addForm !== null;
+  // A drag is on its way and this column takes it; `over` while the pointer is inside it. dragenter/dragleave
+  // fire for every child crossed, so a depth count tells when the pointer really leaves.
+  const awaitingDrop = onDropPark !== null && draggingId !== null;
+  const [over, setOver] = useState(false);
+  const dragDepth = useRef(0);
+  useEffect(() => {
+    if (awaitingDrop) return;
+    dragDepth.current = 0;
+    setOver(false);
+  }, [awaitingDrop]);
+  const takesDrag = (event: DragEvent) => onDropPark !== null && event.dataTransfer.types.includes(THREAD_DRAG_TYPE);
+  const dropClass = !awaitingDrop
+    ? ""
+    : over
+      ? "bg-muted-foreground/12 outline-2 -outline-offset-2 outline-muted-foreground/70"
+      : "outline-2 outline-dashed -outline-offset-2 outline-muted-foreground/45";
   return (
     <section
       aria-label={title}
-      className="relative flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-border/60 bg-muted/35 shadow-xs max-sm:snap-start"
+      className={`relative flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-border/60 bg-muted/35 shadow-xs transition-[background-color,outline-color] duration-150 max-sm:snap-start ${dropClass}`}
+      onDragEnter={(event) => {
+        if (!takesDrag(event)) return;
+        event.preventDefault();
+        dragDepth.current += 1;
+        setOver(true);
+      }}
+      onDragOver={(event) => {
+        if (!takesDrag(event)) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "move";
+      }}
+      onDragLeave={(event) => {
+        if (!takesDrag(event)) return;
+        dragDepth.current = Math.max(0, dragDepth.current - 1);
+        if (dragDepth.current === 0) setOver(false);
+      }}
+      onDrop={(event) => {
+        if (!takesDrag(event) || !onDropPark) return;
+        event.preventDefault();
+        dragDepth.current = 0;
+        setOver(false);
+        const threadId = event.dataTransfer.getData(THREAD_DRAG_TYPE);
+        if (threadId) onDropPark(threadId);
+      }}
     >
       <span className={`pointer-events-none absolute inset-x-0 top-0 h-[3px] ${meta.accent} opacity-80`} aria-hidden />
       <header className="flex h-10 shrink-0 items-center gap-2 border-b border-border/40 pl-3 pr-2 pt-[3px]">
@@ -200,10 +249,24 @@ function BoardColumnView({ column, title, tasks, now, readLocally, selectedThrea
         {onStartAdding && !adding ? (
           <IconButton icon="Plus" label="New thread" onClick={onStartAdding} small className="ml-auto" />
         ) : null}
+        {headerControl}
       </header>
-      <div data-board-column-scroll="" className="min-h-0 flex-1 space-y-1.5 overflow-y-auto overscroll-contain p-2 [scrollbar-width:thin]">
+      {/* Vertical scroller only: `overflow-y-auto` alone makes x `auto` too, so content wider than the column
+          would scroll the column sideways and swallow the swipe. Sideways swipes on the cards must chain to the
+          board's horizontal scroll, so overscroll is contained on y only. */}
+      <div data-board-column-scroll="" className="min-h-0 flex-1 space-y-1.5 overflow-y-auto overflow-x-hidden overscroll-y-contain p-2 [scrollbar-width:thin]">
         {addForm}
-        {tasks.length === 0 && !adding ? (
+        {awaitingDrop ? (
+          <div
+            className={`flex shrink-0 items-center justify-center gap-1.5 rounded-lg border border-dashed px-3 py-5 text-[11px] font-medium transition-colors ${
+              over ? "border-muted-foreground/70 bg-card text-foreground" : "border-muted-foreground/40 text-muted-foreground"
+            }`}
+          >
+            <Icon name="Pause" className="size-3.5" aria-hidden />
+            Drop to park
+          </div>
+        ) : null}
+        {tasks.length === 0 && !adding && !awaitingDrop ? (
           onStartAdding ? (
             <button
               type="button"
@@ -214,8 +277,8 @@ function BoardColumnView({ column, title, tasks, now, readLocally, selectedThrea
               New thread
             </button>
           ) : (
-            <div className="flex shrink-0 items-center justify-center rounded-lg border border-dashed border-border/60 px-3 py-5 text-[11px] text-muted-foreground/90">
-              No threads
+            <div className="flex shrink-0 items-center justify-center rounded-lg border border-dashed border-border/60 px-3 py-5 text-center text-[11px] text-muted-foreground/90">
+              {column === "parked" ? "Drag an idle thread here to come back to it later" : "No threads"}
             </div>
           )
         ) : null}
@@ -225,11 +288,14 @@ function BoardColumnView({ column, title, tasks, now, readLocally, selectedThrea
             key={task.threadId}
             task={task}
             now={now}
-            unread={task.column === "done" && isUnread(task, readLocally)}
+            unread={task.status === "done" && isUnread(task, readLocally)}
             selected={task.threadId === selectedThreadId}
+            dragging={task.threadId === draggingId}
             invertedTheme={invertedTheme}
             provider={task.thread?.providerId ? providersById.get(task.thread.providerId) ?? null : null}
             onArchive={onArchive}
+            onPark={onPark}
+            onDragChange={onDragChange}
             onOpen={onOpen}
           />
         ))}
@@ -250,19 +316,62 @@ export function BoardView({ api, reviews }: { api: BoardApi; reviews: ReviewsApi
   const { rpc, board, error, report, refetch } = api;
   // Cards opened from the board count as read right away, before bb's read state round-trips.
   const [readLocally, setReadLocally] = useState<ReadonlySet<string>>(() => new Set());
-  const grouped = useMemo(() => groupTasksByColumn(board, readLocally), [board, readLocally]);
+  // Cards parked from the board move to Parked right away, before the server's board round-trips.
+  const [parkedLocally, setParkedLocally] = useState<ReadonlySet<string>>(() => new Set());
+  const grouped = useMemo(() => groupTasksByColumn(board, readLocally, parkedLocally), [board, readLocally, parkedLocally]);
   useEffect(() => {
     // Drop local overrides once the server agrees, so later activity can mark the card unread again.
     if (!board || readLocally.size === 0) return;
     const next = new Set(board.tasks.filter((task) => task.unread && readLocally.has(task.threadId)).map((task) => task.threadId));
     if (next.size !== readLocally.size) setReadLocally(next);
   }, [board, readLocally]);
+  useEffect(() => {
+    // Likewise once the server shows them parked, or they left the board.
+    if (!board || parkedLocally.size === 0) return;
+    const next = new Set(
+      board.tasks.filter((task) => task.status !== "parked" && parkedLocally.has(task.threadId)).map((task) => task.threadId),
+    );
+    if (next.size !== parkedLocally.size) setParkedLocally(next);
+  }, [board, parkedLocally]);
+  const [draggingId, setDraggingId] = useState<string | null>(null);
   const now = useNow(CLOCK_TICK_MS);
   // A saved draft means the form was open with text when the app last closed: reopen it, without focus.
   const [adding, setAdding] = useState<"closed" | "restored" | "opened">(() => (readDraft() ? "restored" : "closed"));
 
   const archiveTask = (threadId: string) => {
     rpc.call("board_remove_task", { threadId }).then(refetch, report);
+  };
+
+  const forgetParked = (threadId: string) => {
+    setParkedLocally((current) => {
+      if (!current.has(threadId)) return current;
+      const next = new Set(current);
+      next.delete(threadId);
+      return next;
+    });
+  };
+
+  const parkTask = (threadId: string, parked: boolean) => {
+    // Parking shows right away; unparking waits for the server, which decides where the card goes.
+    if (parked) setParkedLocally((current) => new Set([...current, threadId]));
+    else forgetParked(threadId);
+    rpc.call("board_park_task", { threadId, parked }).then(
+      (task) => {
+        // A thread that started running meanwhile stays where it is.
+        if (task.status !== "parked") forgetParked(threadId);
+        refetch();
+      },
+      (cause) => {
+        forgetParked(threadId);
+        report(cause);
+      },
+    );
+  };
+
+  const dropPark = (threadId: string) => {
+    // The card leaves its column before its dragend fires, and a removed card's dragend never reaches React.
+    setDraggingId(null);
+    parkTask(threadId, true);
   };
 
   const openTask = (threadId: string) => {
@@ -285,6 +394,10 @@ export function BoardView({ api, reviews }: { api: BoardApi; reviews: ReviewsApi
     refetch();
   };
 
+  const setWipLimit = (limit: number | null) => {
+    rpc.call("board_set_wip_limit", { limit }).then(refetch, report);
+  };
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       {error ? (
@@ -305,11 +418,25 @@ export function BoardView({ api, reviews }: { api: BoardApi; reviews: ReviewsApi
               now={now}
               readLocally={readLocally}
               selectedThreadId={selectedThreadId}
+              draggingId={draggingId}
               invertedTheme={invertedTheme}
               providersById={providersById}
               onArchive={archiveTask}
+              onPark={parkTask}
+              onDragChange={setDraggingId}
+              onDropPark={column.id === "parked" ? dropPark : null}
               onOpen={openTask}
               onStartAdding={column.id === "queue" ? () => setAdding("opened") : null}
+              headerControl={
+                column.id === "wip" ? (
+                  <WipLimitControl
+                    limit={board.wipLimit.limit}
+                    running={(grouped.get("wip") ?? []).filter((task) => task.status === "wip").length}
+                    waiting={board.wipLimit.waiting}
+                    onChange={setWipLimit}
+                  />
+                ) : null
+              }
               lead={column.id === "queue" ? <ReviewSection reviews={reviews} now={now} /> : null}
               addForm={
                 column.id === "queue" && adding !== "closed" ? (

@@ -15,6 +15,12 @@ const WARN_TONE = { ring: ACCENT_TEXT.amber, bar: "bg-amber-500" };
 const CRITICAL_TONE = { ring: ACCENT_TEXT.rose, bar: "bg-rose-500" };
 const RING_RADIUS = 4.5;
 const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
+/**
+ * bb wraps provider artwork in a `min-w-max` span, and the artwork's SVG is `size-full` with no width or
+ * height, so Safari sizes it at the 300px SVG default and every card overflows its column by ~270px.
+ * A definite size on the SVG itself (`.x > svg` outranks its `.size-full`) keeps the icon 14px everywhere.
+ */
+const PROVIDER_ICON = "size-3.5 shrink-0 [&>svg]:size-3.5";
 
 /** Built once per currency: every card formats its cost on each render. */
 const currencyFormats = new Map<string, Intl.NumberFormat>();
@@ -90,7 +96,7 @@ export function HarnessMeta({ provider, session }: { provider: AgentProvider | n
           {percent}
         </span>
       ) : null}
-      {provider ? <ProviderIcon providerKind="agent" provider={provider} className="size-3.5" aria-hidden /> : null}
+      {provider ? <ProviderIcon providerKind="agent" provider={provider} className={PROVIDER_ICON} aria-hidden /> : null}
     </span>
   );
 }
@@ -149,7 +155,7 @@ export function CardTooltip({ id, anchor, provider, session }: {
         <div className="flex min-w-0 items-center gap-1.5 whitespace-nowrap">
           {provider ? (
             <>
-              <ProviderIcon providerKind="agent" provider={provider} className="size-3.5 shrink-0" aria-hidden />
+              <ProviderIcon providerKind="agent" provider={provider} className={PROVIDER_ICON} aria-hidden />
               <span className="font-semibold">{provider.displayName}</span>
             </>
           ) : null}

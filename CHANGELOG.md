@@ -1,5 +1,51 @@
 # Changelog
 
+## 0.11.0
+
+- WIP limit: a picker at the top of WIP caps how many threads run at once,
+  to pace spend. It shows running over the limit (amber when full) and how
+  many threads wait. Past the limit, a message that would start another
+  thread waits in that thread's message queue (the card stays in Queue,
+  marked "Waiting for a WIP slot") and bb sends it when a WIP thread
+  finishes. Blocked threads don't count; steers, follow-ups and child threads
+  of a running thread go through, and running threads are never stopped.
+  Send now skips the limit. New `board_set_wip_limit` RPC; `board_list`
+  carries `wipLimit: { limit, waiting }`.
+- New grey Parked column after Done for idle threads you want to come back
+  to later, such as a finished thread whose suggested next steps can wait.
+  Drag an idle card onto Parked, the only column that takes a drop (it
+  outlines while you drag and fills in under the pointer, with a "Drop to
+  park" slot), or hover the card and press the pause button. The return
+  button unparks it; `bb shop-kanban park|unpark <thread-id>` does the same.
+  Running and parked cards can't be dragged. A parked card keeps its status
+  (Completed, Asked a question, ...) and leaves Parked on its own when the
+  thread runs again.
+- The Blocked column is gone: blocked threads sit at the top of WIP and keep
+  their red card, stripe and title-bar count. Agents and the CLI still
+  report `blocked`.
+- `bb shop-kanban list --json` and `board_list`: each task's `column` is
+  `queue`, `wip`, `done` or `parked`, and a new `status` field carries the
+  card's state (`queue`, `wip`, `blocked`, `done` or `parked`). Blocked
+  threads report `column: "wip"`, `status: "blocked"`.
+- Model-written card titles are more representative:
+  - Tags and titles keep the model's whole phrase instead of being cut to
+    2 and 6 words (`[rank and]` is now `[rank and commit]`).
+  - The labeler sees the other cards' titles, so related threads share a
+    tag; archived threads no longer steer the choice.
+  - A message that mentions `@thread:<id>` ("Continue from @thread:…") is
+    labeled with that thread's title alongside it.
+  - Harness notices sent as user turns (`<irc>…`, `<system-notice>…`) are
+    left out of the labeler's input and refresh only the summary, so
+    background agents no longer crowd out your messages or retitle the card.
+  - A title is checked against all your messages: it changes when the goal
+    changes (say, from explaining a problem to fixing it), not for steps such
+    as commit or release.
+  - Every card is relabeled once after updating.
+- On phones, swiping sideways anywhere on the board moves between columns,
+  including over a column's cards; before, only the column headers took the
+  swipe. In Safari the harness icon no longer draws 300px wide, which made
+  cards overflow their column so a swipe could scroll the cards out of view.
+
 ## 0.10.1
 
 - The card tooltip shows only the harness session: harness, model and

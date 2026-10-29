@@ -10,7 +10,7 @@ Use the Shop Kanban plugin when a user wants work tracked as threads on a Kanban
 ## Core rules
 
 - Every item on the board is a BB thread.
-- Report progress with `shop_kanban_move_card`; its note says how far the work has gotten. The board places threads by live state (running → WIP, waiting on the user → Blocked, finished → Done), and moving to Blocked or Done notifies the user.
+- Report progress with `shop_kanban_move_card`; its note says how far the work has gotten. The board places threads by live state (running → WIP, waiting on the user → a red Blocked card at the top of WIP, finished → Done), and moving to Blocked or Done notifies the user. Parked is the user's own later pile; agents don't park threads.
 - When an investigation yields theories, call `shop_kanban_create_theory_tasks` so each theory gets its own independent BB thread.
 - Only top-level threads appear on the board; child threads roll up into their parent thread.
 - When you finish, call `shop_kanban_mark_result` with success or failure and a concise summary.
@@ -43,4 +43,4 @@ Keep each segment short, usually 2-5 words and under 40 characters, for example:
 
 ## CLI
 
-`bb shop-kanban list [--json]` shows every thread on the board with its column; use it to see the board before naming or grouping threads. `add`, `move`, `success`, `fail` and `remove` spawn, move, mark and archive threads; `bb shop-kanban --help` prints their usage.
+`bb shop-kanban list [--json]` shows every thread on the board with its column; use it to see the board before naming or grouping threads. `add`, `move`, `success`, `fail`, `park`, `unpark` and `remove` spawn, move, mark, park and archive threads; `bb shop-kanban --help` prints their usage.

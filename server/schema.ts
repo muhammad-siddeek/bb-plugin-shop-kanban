@@ -1,20 +1,36 @@
 import { z } from "zod";
 import { forgeInput } from "../contract";
 
-export const COLUMN_IDS = ["queue", "wip", "blocked", "done"] as const;
-export type Column = (typeof COLUMN_IDS)[number];
+/**
+ * A card's state. Blocked cards (waiting on the user, errored, or reported failed) sit in the WIP column, marked
+ * red; Parked holds idle threads the user set aside to come back to.
+ */
+export const STATUS_IDS = ["queue", "wip", "blocked", "done", "parked"] as const;
+export type Status = (typeof STATUS_IDS)[number];
+/** The states an agent or the CLI reports; parking is the user's call, through park and unpark. */
+export const reportedStatusSchema = z.enum(["queue", "wip", "blocked", "done"]);
+export type ReportedStatus = z.infer<typeof reportedStatusSchema>;
 
-export const columnSchema = z.enum(COLUMN_IDS);
+export const COLUMN_IDS = ["queue", "wip", "done", "parked"] as const;
+export type Column = (typeof COLUMN_IDS)[number];
+/** The column a card in each state sits in. */
+export const STATUS_COLUMN: Record<Status, Column> = { queue: "queue", wip: "wip", blocked: "wip", done: "done", parked: "parked" };
+export const STATUS_TITLES: Record<Status, string> = { queue: "Queue", wip: "WIP", blocked: "Blocked", done: "Done", parked: "Parked" };
+
 const resultSchema = z.enum(["success", "failed"]);
 export type Result = z.infer<typeof resultSchema>;
 
-const boardColumnSchema = z.object({ id: columnSchema, title: z.string(), description: z.string() });
+const boardColumnSchema = z.object({ id: z.enum(COLUMN_IDS), title: z.string(), description: z.string() });
 
 export const COLUMNS: Record<Column, z.infer<typeof boardColumnSchema>> = {
   queue: { id: "queue", title: "Queue", description: "Threads waiting to be started." },
-  wip: { id: "wip", title: "WIP", description: "Threads currently running, or with running children." },
-  blocked: { id: "blocked", title: "Blocked", description: "Idle threads that need user input or asked a question." },
+  wip: {
+    id: "wip",
+    title: "WIP",
+    description: "Threads running or with running children, and idle threads blocked on user input, an error, or a failure.",
+  },
   done: { id: "done", title: "Done", description: "Idle threads whose last message reported completion." },
+  parked: { id: "parked", title: "Parked", description: "Idle threads set aside for later, until they run again." },
 };
 
 const threadSummarySchema = z.object({
@@ -59,7 +75,8 @@ const boardTaskSchema = z.object({
   threadId: z.string(),
   shortName: z.string(),
   titleChain: z.string(),
-  column: columnSchema,
+  status: z.enum(STATUS_IDS),
+  column: z.enum(COLUMN_IDS),
   parentThreadId: z.string().nullable(),
   projectId: z.string().nullable(),
   description: z.string().nullable(),
@@ -78,7 +95,13 @@ const boardTaskSchema = z.object({
   session: boardSessionSchema.nullable(),
 });
 
-const boardStateSchema = z.object({ columns: z.array(boardColumnSchema), tasks: z.array(boardTaskSchema) });
+/** The highest WIP limit the board takes. */
+export const WIP_LIMIT_MAX = 50;
+/** The WIP limit: at most `limit` cards running at once (null: no limit), and how many threads wait for a slot. */
+const wipLimitSchema = z.object({ limit: z.number().int().nullable(), waiting: z.number().int() });
+export type WipLimitView = z.infer<typeof wipLimitSchema>;
+
+const boardStateSchema = z.object({ columns: z.array(boardColumnSchema), tasks: z.array(boardTaskSchema), wipLimit: wipLimitSchema });
 
 const shortNameInput = z.string().trim().min(1).max(40);
 const threadRefSchema = z.object({ threadId: z.string() });
@@ -173,12 +196,16 @@ export const rpcContract = {
       prompt: z.string().trim().min(1).max(12_000),
       projectId: z.string().optional(),
       parentThreadId: z.string().optional(),
-      column: columnSchema.optional(),
+      column: reportedStatusSchema.optional(),
     }),
     output: boardTaskSchema,
   },
   board_remove_task: { input: threadRefSchema, output: z.object({ removed: z.boolean() }) },
+  /** Park an idle thread (it stays in Parked until it runs again), or unpark it. */
+  board_park_task: { input: z.object({ threadId: z.string(), parked: z.boolean() }), output: boardTaskSchema },
   board_mark_read: { input: threadRefSchema, output: z.object({ ok: z.boolean() }) },
+  /** Set the WIP limit (null: none); messages that would start another card past it wait in their thread's queue. */
+  board_set_wip_limit: { input: z.object({ limit: z.number().int().min(1).max(WIP_LIMIT_MAX).nullable() }), output: wipLimitSchema },
   board_search: { input: z.object({ query: z.string().trim().min(1).max(200) }), output: searchResponseSchema },
   reviews_list: { input: z.null(), output: reviewStateSchema },
   /** Mark read and return the prompt that seeds a new thread explaining the pull request. */
@@ -199,13 +226,13 @@ export const rpcContract = {
 
 /**
  * One entry of the stored tasks KV blob. Unknown keys (entries from before 0.9.0) are stripped; an unknown column
- * starts over in the queue.
+ * starts over in the queue. `column` is the state an agent or the CLI last reported.
  */
 export const storedTaskSchema = z.object({
   threadId: z.string(),
   shortName: z.string(),
   titleChain: z.string(),
-  column: columnSchema.catch("queue"),
+  column: reportedStatusSchema.catch("queue"),
   parentThreadId: z.string().nullable().catch(null),
   projectId: z.string().nullable().catch(null),
   description: z.string().nullable().catch(null),

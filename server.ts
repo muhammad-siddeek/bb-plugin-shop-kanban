@@ -3,25 +3,38 @@
 
 import type { BbPluginApi, PluginThreadEventName, PluginThreadEventPayloads } from "@get-bb/plugin-sdk";
 import { z } from "zod";
-import { COLUMN_IDS, COLUMNS, rpcContract, storedTaskSchema, type BoardTask, type Column, type Result, type StoredTask } from "./server/schema";
+import {
+  COLUMN_IDS,
+  COLUMNS,
+  rpcContract,
+  STATUS_COLUMN,
+  storedTaskSchema,
+  type BoardTask,
+  type Result,
+  type Status,
+  type StoredTask,
+} from "./server/schema";
 import { categorizedTitle, cleanShortName, compactTitle, nowIso, safe } from "./server/text";
-import { deriveStatus, isRunningSelf, toLiveThread, type LiveThread } from "./server/status";
+import { deriveStatus, isRunningSelf, isWorking, toLiveThread, type LiveThread } from "./server/status";
 import { registerAgentTools, registerCli, toolHelp, type TaskSpawn, type TaskUpdate } from "./server/agents";
 import { createSessionInfo } from "./server/session";
 import { createLabeler } from "./server/labeler";
 import { createThreadReader } from "./server/threads";
 import { createSearchIndex } from "./server/search";
 import { createReviewQueue } from "./server/reviews";
+import { createWipLimit } from "./server/wip-limit";
 
 export { rpcContract } from "./server/schema";
 
 const BOARD_CHANGED = "board-changed";
 const TASKS_KEY = "tasks-v1";
+/** Parked threads: thread id → when the user parked it (ms). */
+const PARKED_KEY = "parked-v1";
 /** The same failure is logged at most once per this interval. */
 const LOG_REPEAT_MS = 60 * 60_000;
 
-function columnResult(column: Column): Result | null {
-  return column === "done" ? "success" : column === "blocked" ? "failed" : null;
+function statusResult(status: Status): Result | null {
+  return status === "done" ? "success" : status === "blocked" ? "failed" : null;
 }
 
 /** `previous` with an agent's or the CLI's update applied. */
@@ -37,7 +50,7 @@ function updatedTask(input: TaskUpdate, previous: StoredTask | undefined, thread
   const result =
     input.result !== undefined
       ? input.result
-      : columnResult(column) ?? (input.column !== undefined ? null : previous?.result ?? null);
+      : statusResult(column) ?? (input.column !== undefined ? null : previous?.result ?? null);
   return {
     threadId: input.threadId,
     shortName,
@@ -84,6 +97,7 @@ export default async function plugin(bb: BbPluginApi) {
   const sessions = createSessionInfo(bb, reader);
   const search = createSearchIndex(bb, reader);
   const reviews = createReviewQueue(bb, labels);
+  const wip = createWipLimit(bb, reader, publishBoardChanged);
   const loggedAt = new Map<string, number>();
 
   function publishBoardChanged() {
@@ -110,16 +124,23 @@ export default async function plugin(bb: BbPluginApi) {
     return tasks;
   }
 
-  let tasksWrite: Promise<unknown> = Promise.resolve();
+  let kvWrite: Promise<unknown> = Promise.resolve();
   /**
-   * Replace one stored task with `edit`'s result (`undefined` drops it). Edits run one at a time: every task shares
-   * one KV row, so overlapping read-modify-writes from concurrent events would drop each other's changes.
+   * Run one KV read-modify-write at a time: each store keeps every thread in one KV row, so overlapping edits from
+   * concurrent events would drop each other's changes.
    */
+  function serialized<T>(write: () => Promise<T>): Promise<T> {
+    const run = kvWrite.then(write);
+    kvWrite = run.catch(() => undefined);
+    return run;
+  }
+
+  /** Replace one stored task with `edit`'s result (`undefined` drops it). */
   function editTask<T extends StoredTask | undefined>(
     threadId: string,
     edit: (previous: StoredTask | undefined) => T,
   ): Promise<{ previous: StoredTask | undefined; next: T }> {
-    const run = tasksWrite.then(async () => {
+    return serialized(async () => {
       const tasks = await readTasks();
       const previous = tasks[threadId];
       const next = edit(previous);
@@ -131,8 +152,27 @@ export default async function plugin(bb: BbPluginApi) {
       }
       return { previous, next };
     });
-    tasksWrite = run.catch(() => undefined);
-    return run;
+  }
+
+  /** When each parked thread was parked (ms); entries that do not parse are dropped. */
+  async function readParked(): Promise<Record<string, number>> {
+    const raw = await bb.storage.kv.get<unknown>(PARKED_KEY);
+    const parked: Record<string, number> = {};
+    if (!raw || typeof raw !== "object") return parked;
+    for (const [id, at] of Object.entries(raw)) if (typeof at === "number" && Number.isFinite(at)) parked[id] = at;
+    return parked;
+  }
+
+  /** Park a thread as of now, or forget that it was parked. */
+  function setParked(threadId: string, parked: boolean): Promise<void> {
+    return serialized(async () => {
+      const all = await readParked();
+      if (!parked && !(threadId in all)) return;
+      if (parked) all[threadId] = Date.now();
+      else delete all[threadId];
+      await bb.storage.kv.set(PARKED_KEY, all);
+      publishBoardChanged();
+    });
   }
 
   async function defaultProjectId(): Promise<string> {
@@ -145,6 +185,7 @@ export default async function plugin(bb: BbPluginApi) {
   async function materialize(
     thread: LiveThread,
     stored: StoredTask | undefined,
+    parkedAt: number | null,
     descendants: LiveThread[],
     childCount: number,
   ): Promise<BoardTask> {
@@ -155,7 +196,7 @@ export default async function plugin(bb: BbPluginApi) {
       sessions.sessionFor(thread, descendants),
     ]);
     const label = labels.view(thread, details, running, all);
-    const derived = deriveStatus(thread, details, stored, descendants, label);
+    const derived = deriveStatus(thread, details, stored, descendants, label, parkedAt);
     // Until the labeler has run: "[category] thread title".
     const title =
       label.title ??
@@ -167,15 +208,16 @@ export default async function plugin(bb: BbPluginApi) {
       threadId: thread.id,
       shortName: stored?.shortName ?? cleanShortName(title),
       titleChain: title,
-      column: derived.column,
+      status: derived.status,
+      column: STATUS_COLUMN[derived.status],
       parentThreadId: thread.parentThreadId,
       projectId: thread.projectId ?? stored?.projectId ?? null,
       description: stored?.description ?? null,
-      result: columnResult(derived.column),
+      result: statusResult(derived.status),
       note: derived.description,
       childCount,
       runningChildCount: derived.runningChildren,
-      statusReason: derived.reason,
+      statusReason: derived.status === "queue" && wip.isWaiting(thread.id) ? "Waiting for a WIP slot" : derived.reason,
       unread: thread.latestAttentionAt !== null && (thread.lastReadAt === null || thread.latestAttentionAt > thread.lastReadAt),
       createdAt: stored?.createdAt ?? iso(thread.createdAt),
       updatedAt: iso(Math.max(thread.updatedAt ?? 0, stored ? Date.parse(stored.updatedAt) || 0 : 0) || null),
@@ -201,6 +243,8 @@ export default async function plugin(bb: BbPluginApi) {
     if (!thread) {
       return {
         ...stored,
+        status: stored.column,
+        column: STATUS_COLUMN[stored.column],
         childCount: 0,
         runningChildCount: 0,
         statusReason: null,
@@ -211,19 +255,35 @@ export default async function plugin(bb: BbPluginApi) {
         session: null,
       };
     }
-    const descendants = (await reader.listDescendants(thread.id)) ?? [];
-    return materialize(thread, stored, descendants, descendants.filter((entry) => entry.parentThreadId === thread.id).length);
+    const [descendants, parked] = await Promise.all([
+      reader.listDescendants(thread.id),
+      readParked().catch((): Record<string, number> => ({})),
+    ]);
+    const children = descendants ?? [];
+    return materialize(
+      thread,
+      stored,
+      parked[thread.id] ?? null,
+      children,
+      children.filter((entry) => entry.parentThreadId === thread.id).length,
+    );
   }
 
   async function listBoard() {
     const columns = COLUMN_IDS.map((id) => COLUMNS[id]);
-    // Without the stored names and notes the board still shows every thread, from live state alone.
-    const stored = await readTasks().catch((error: unknown): Record<string, StoredTask> => {
-      logOnce(`reading stored threads failed: ${errorMessage(error)}`);
-      return {};
-    });
-    const threads = await reader.listAllThreads();
-    if (threads === null) return { columns, tasks: [] };
+    // Without the stored names, notes and parked set the board still shows every thread, from live state alone.
+    const [stored, parked, threads] = await Promise.all([
+      readTasks().catch((error: unknown): Record<string, StoredTask> => {
+        logOnce(`reading stored threads failed: ${errorMessage(error)}`);
+        return {};
+      }),
+      readParked().catch((error: unknown): Record<string, number> => {
+        logOnce(`reading parked threads failed: ${errorMessage(error)}`);
+        return {};
+      }),
+      reader.listAllThreads(),
+    ]);
+    if (threads === null) return { columns, tasks: [], wipLimit: wip.view() };
 
     const ids = new Set(threads.map((thread) => thread.id));
     const children = new Map<string, LiveThread[]>();
@@ -242,6 +302,7 @@ export default async function plugin(bb: BbPluginApi) {
         thread.visibility !== "hidden" &&
         (!thread.parentThreadId || !ids.has(thread.parentThreadId)),
     );
+    labels.setBoard(roots.map((thread) => thread.id));
 
     // Forget cached facts for threads no longer listed.
     reader.retain(ids);
@@ -249,17 +310,43 @@ export default async function plugin(bb: BbPluginApi) {
 
     const tasks = await Promise.all(
       roots.map((thread) =>
-        materialize(thread, stored[thread.id], descendantsOf(children, thread.id), (children.get(thread.id) ?? []).length),
+        materialize(
+          thread,
+          stored[thread.id],
+          parked[thread.id] ?? null,
+          descendantsOf(children, thread.id),
+          (children.get(thread.id) ?? []).length,
+        ),
       ),
     );
 
-    const time = (value: string) => Date.parse(value) || 0;
-    // Oldest first within each column (earlier timestamp at the top).
-    tasks.sort((a, b) =>
-      a.column === "wip" && b.column === "wip" ? time(a.createdAt) - time(b.createdAt) : time(a.updatedAt) - time(b.updatedAt),
-    );
+    // Oldest first (earlier timestamp at the top): running threads by when they started, the rest by last update.
+    const sortTime = (task: BoardTask) => Date.parse(task.status === "wip" ? task.createdAt : task.updatedAt) || 0;
+    tasks.sort((a, b) => sortTime(a) - sortTime(b));
 
-    return { columns, tasks };
+    return { columns, tasks, wipLimit: wip.view() };
+  }
+
+  /** Park an idle thread, or unpark one; returns its card. A running thread can't be parked. */
+  async function parkTask(threadId: string, parked: boolean): Promise<BoardTask> {
+    const [thread, descendants] = await Promise.all([
+      reader.threadsById([threadId]).then((threads) => threads.get(threadId)),
+      reader.listDescendants(threadId),
+    ]);
+    if (!thread || thread.archivedAt !== null) throw new Error(`No thread ${threadId} on the board.`);
+    const children = descendants ?? [];
+    if (parked && isWorking(thread, children)) {
+      throw new Error(`${thread.title ?? threadId} is running; park it once it settles.`);
+    }
+    await setParked(threadId, parked);
+    const [stored, parkedAll] = await Promise.all([readTasks(), readParked()]);
+    return materialize(
+      thread,
+      stored[threadId],
+      parkedAll[threadId] ?? null,
+      children,
+      children.filter((entry) => entry.parentThreadId === threadId).length,
+    );
   }
 
   async function preferThreadNotifications(threadId: string) {
@@ -346,6 +433,7 @@ export default async function plugin(bb: BbPluginApi) {
     // Every BB thread is a card, so archiving works for threads the plugin never tracked.
     const archived = options.archiveThread === true && (await safe(() => bb.sdk.threads.archive({ threadId }))) !== null;
     const { previous } = await editTask(threadId, () => undefined);
+    await setParked(threadId, false);
     if (previous) {
       await safe(() =>
         bb.sdk.threads.updatePluginMetadata({
@@ -364,11 +452,13 @@ export default async function plugin(bb: BbPluginApi) {
     board_list: listBoard,
     board_spawn_task: spawnTask,
     board_remove_task: async ({ threadId }) => ({ removed: await removeTask(threadId, { archiveThread: true }) }),
+    board_park_task: ({ threadId, parked }) => parkTask(threadId, parked),
     board_mark_read: async ({ threadId }) => {
       const ok = (await safe(() => bb.sdk.threads.markRead({ threadId }))) !== null;
       publishBoardChanged();
       return { ok };
     },
+    board_set_wip_limit: ({ limit }) => wip.setLimit(limit),
     board_search: ({ query }) => search.search(query),
     reviews_list: () => reviews.list(),
     reviews_draft: ({ id }) => reviews.draft(id),
@@ -377,7 +467,7 @@ export default async function plugin(bb: BbPluginApi) {
     reviews_submit: ({ id, verdict, body }) => reviews.submit(id, verdict, body),
   });
 
-  const boardApi = { listBoard, spawnTask, updateTask, markTaskResult, removeTask };
+  const boardApi = { listBoard, spawnTask, updateTask, markTaskResult, removeTask, parkTask };
   registerAgentTools(bb, boardApi);
   registerCli(bb, boardApi);
 
@@ -389,6 +479,8 @@ export default async function plugin(bb: BbPluginApi) {
   }
 
   on("thread.active", async ({ thread }) => {
+    // Running again takes a thread out of Parked; when it settles it goes where its new state says.
+    await setParked(thread.id, false);
     const task = (await readTasks())[thread.id];
     if (task?.column === "queue" && !task.result) await storeUpdate({ threadId: thread.id, column: "wip" });
   });
@@ -434,6 +526,7 @@ export default async function plugin(bb: BbPluginApi) {
     labels.dispose();
     search.dispose();
     reviews.dispose();
+    wip.dispose();
     bb.log.info("disposed");
   });
 }
