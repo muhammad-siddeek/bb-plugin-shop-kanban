@@ -1,6 +1,7 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { hostContract, type Forge, type ForgePr, type ForgePrDetail } from "../contract";
+import { CALL_TIMEOUT_MS, NO_HOST, createPoller, message, parseSearch, prId, searchLines, type ForgeSearch } from "./forge-search";
 import { indexHostId } from "./hosts";
 import { hashText } from "./labels";
 import { REVIEW_SUMMARY_VERSION, REVIEW_SYSTEM, draftPrompt, parseReviewSummary, reviewPrompt } from "./review-prompt";
@@ -8,10 +9,10 @@ import { reviewRiskSchema, type ReviewCard, type ReviewScope, type ReviewSource,
 import { safe } from "./text";
 
 // Review queue: open pull requests waiting on the user's review, read through the forge CLIs (`dt`, `gh`) on the
-// user's persistent host and listed at the top of the board's Queue column. The searches come from settings, so
-// each user gets their own and their teams' requests; pull requests they already reviewed drop off. The labeler
-// model writes each one a "[risk] what, why" first read, cached per head commit. Read, archived and reviewed
-// marks and the summaries live in KV.
+// user's persistent host and listed in the Queue column's In tab. The searches come from settings, so each
+// user gets their own and their teams' requests; pull requests they already reviewed drop off. The labeler model
+// writes each one a "[risk] what, why" first read, cached per head commit. Read, archived and reviewed marks and
+// the summaries live in KV.
 
 const MARKS_KEY = "reviews-v1";
 /** Newest pull requests read per search. */
@@ -26,29 +27,14 @@ const LOG_REPEAT_MS = 60 * 60_000;
  * 256KB: three full kinds take ~110KB, leaving room for the summaries of every listed pull request.
  */
 const MARKS_MAX = 500;
-/** Delta hosts shop/world; a Delta search that names no repository searches it. */
-const DELTA_DEFAULT_REPO = "shop/world";
-const NO_HOST = "No connected persistent host to read pull requests on.";
-/** Host calls end a little after the host's own 30s (60s for a review) CLI timeout, so its clearer error wins. */
-const CALL_TIMEOUT_MS = 35_000;
+/** Reviews end a little after the host's own 60s CLI timeout, so its clearer error wins. */
 const REVIEW_CALL_TIMEOUT_MS = 65_000;
-/** Searches re-run once the last run is this old. */
-const POLL_MS = 5 * 60_000;
-/** ...or this old when a search failed (offline, no host, a CLI timeout), so the queue recovers soon after. */
-const RETRY_MS = 60_000;
-/** A board read re-runs searches older than this, so a board on screen trails the forges by about a minute. */
-const READ_FRESH_MS = 60_000;
-/**
- * How often the poll checks the age of the last run. Ages are wall-clock: timers stop while the machine sleeps,
- * so a plain 5-minute interval left the queue up to 5 minutes stale after waking.
- */
-const POLL_TICK_MS = 30_000;
 
 const LINE_SYNTAX =
   "One search per line: `delta: <query>` reads Delta through `dt` (shop/world unless the query names a `repo:`), `github: <query>` reads GitHub through `gh`. GitHub search syntax with `is:pr is:open` implied; pull requests you already reviewed drop off until new commits land.";
 
 type Labeler = { complete(hostId: string, system: string, prompt: string, timeoutMs: number): Promise<string> };
-type Search = { line: string; scope: ReviewScope; forge: Forge; repo: string | null; query: string };
+type Search = ForgeSearch & { scope: ReviewScope };
 /**
  * A listed pull request, the search lines that found it, whether one's `reviewed-by:@me` lists it, and its scope:
  * Me when any search for the user found it.
@@ -71,26 +57,6 @@ const marksSchema = z.object({
 });
 type Marks = z.infer<typeof marksSchema>;
 
-/**
- * A setting line as a search: `delta: <query>` or `github: <query>` in GitHub search syntax. `is:pr is:open` is
- * implied, GitHub skips archived repositories, and a Delta line without `repo:` searches shop/world. Null for any
- * other line.
- */
-function parseSearch(line: string, scope: ReviewScope): Search | null {
-  const match = line.match(/^(delta|github)\s*:\s*(\S.*)$/iu);
-  if (!match || line.length > 900) return null;
-  const forge: Forge = match[1].toLowerCase() === "delta" ? "delta" : "github";
-  const query = match[2].trim();
-  const named = query.match(/(?:^|\s)repo:(\S+)/u)?.[1] ?? null;
-  const implied = [
-    forge === "delta" && !named ? `repo:${DELTA_DEFAULT_REPO}` : null,
-    /(?:^|\s)is:pr\b/u.test(query) ? null : "is:pr",
-    /(?:^|\s)is:(?:open|closed|merged|unmerged)\b/u.test(query) ? null : "is:open",
-    forge === "github" && !/(?:^|\s)archived:/u.test(query) ? "archived:false" : null,
-  ].filter((part): part is string => part !== null);
-  return { line, scope, forge, repo: forge === "delta" ? named ?? DELTA_DEFAULT_REPO : null, query: [...implied, query].join(" ") };
-}
-
 function failedSource(search: { line: string; scope: ReviewScope }, error: string, missing: boolean): ReviewSource {
   return { search: search.line, scope: search.scope, count: 0, total: 0, error, missing };
 }
@@ -104,23 +70,15 @@ function configuredSearches(values: { reviewSearchesMe: string; reviewSearchesTe
   const invalid: ReviewSource[] = [];
   const scopes: ReviewScope[] = [];
   for (const [scope, value] of [["me", values.reviewSearchesMe], ["team", values.reviewSearchesTeam]] as const) {
-    const lines = value.split(/\r?\n/u).map((line) => line.trim()).filter((line) => line && !line.startsWith("#"));
+    const lines = searchLines(value);
     if (lines.length > 0) scopes.push(scope);
     for (const line of lines) {
-      const search = parseSearch(line, scope);
-      if (search) searches.push(search);
+      const search = parseSearch(line, { is: "pr", state: "open" });
+      if (search) searches.push({ ...search, scope });
       else invalid.push(failedSource({ line, scope }, "Start the line with delta: or github:", false));
     }
   }
   return { searches, invalid, scopes };
-}
-
-function prId(forge: Forge, pr: { repo: string; number: number }): string {
-  return `${forge}:${pr.repo}#${pr.number}`;
-}
-
-function message(cause: unknown): string {
-  return cause instanceof Error ? cause.message : String(cause);
 }
 
 function capped<T>(record: Record<string, T>, at: (value: T) => number): Record<string, T> {
@@ -134,14 +92,14 @@ export function createReviewQueue(bb: BbPluginApi, labeler: Labeler) {
     reviewSearchesMe: {
       type: "string",
       label: "Review queue: requested of you",
-      description: `Open pull requests asking for your review by name, under Me in the board's Reviews section. ${LINE_SYNTAX} Delta's \`review-requested:@me\` and GitHub's \`user-review-requested:@me\` leave out your teams' requests. Leave empty to hide Me.`,
+      description: `Open pull requests asking for your review by name, under Me in the Queue column's In tab. ${LINE_SYNTAX} Delta's \`review-requested:@me\` and GitHub's \`user-review-requested:@me\` leave out your teams' requests. Leave empty to hide Me.`,
       default: "delta: review-requested:@me -author:@me -is:draft\ngithub: user-review-requested:@me -author:@me -is:draft",
       experimental_multiline: true,
     },
     reviewSearchesTeam: {
       type: "string",
       label: "Review queue: requested of your teams",
-      description: `Open pull requests asking your teams for review, under Team in the board's Reviews section; one a search for you also finds is listed under Me only. ${LINE_SYNTAX} Delta's \`team-review-requested:@me\` matches every team you are on; on GitHub, \`review-requested:@me -user-review-requested:@me\` does. For one team, Delta takes the team slug (\`team-review-requested:exp\`) and GitHub \`team-review-requested:<org>/<team>\`. Leave empty to hide Team.`,
+      description: `Open pull requests asking your teams for review, under Team in the Queue column's In tab; one a search for you also finds is listed under Me only. ${LINE_SYNTAX} Delta's \`team-review-requested:@me\` matches every team you are on; on GitHub, \`review-requested:@me -user-review-requested:@me\` does. For one team, Delta takes the team slug (\`team-review-requested:exp\`) and GitHub \`team-review-requested:<org>/<team>\`. Leave empty to hide Team.`,
       default:
         "delta: team-review-requested:@me -author:@me -is:draft\ngithub: review-requested:@me -user-review-requested:@me -author:@me -is:draft",
       experimental_multiline: true,
@@ -153,12 +111,7 @@ export function createReviewQueue(bb: BbPluginApi, labeler: Labeler) {
   let marksWrite: Promise<unknown> = Promise.resolve();
   let entries: Entry[] = [];
   let sources: ReviewSource[] = [];
-  let error: string | null = null;
-  let refreshedAt: number | null = null;
-  let refreshing: Promise<void> | null = null;
-  let refreshAgain = false;
-  /** The last run had a search fail in a way worth retrying before the next regular poll. */
-  let retrySoon = false;
+  const poller = createPoller(runRefresh, changed, 8_000);
   let hostId: string | null = null;
   let disposed = false;
   let changedTimer: ReturnType<typeof setTimeout> | undefined;
@@ -181,7 +134,7 @@ export function createReviewQueue(bb: BbPluginApi, labeler: Labeler) {
     marks.archived = capped(marks.archived, (at) => at);
     marks.reviewed = capped(marks.reviewed, (mark) => mark.at);
     // Summaries cache the listed pull requests' first reads; one no longer listed only eats into the KV value.
-    if (refreshedAt !== null) {
+    if (poller.refreshedAt !== null) {
       const listed = new Set(entries.map((entry) => entry.id));
       marks.summaries = Object.fromEntries(Object.entries(marks.summaries).filter(([id]) => listed.has(id)));
     }
@@ -269,7 +222,6 @@ export function createReviewQueue(bb: BbPluginApi, labeler: Labeler) {
   /** Re-reads every search; resolves true when one failed in a way worth retrying soon. */
   async function runRefresh(): Promise<boolean> {
     const { searches, invalid } = configuredSearches(await settings.get());
-    error = null;
     if (searches.length === 0) {
       entries = [];
       sources = invalid;
@@ -329,40 +281,6 @@ export function createReviewQueue(bb: BbPluginApi, labeler: Labeler) {
     return searched.some((source) => source.error !== null && !source.missing);
   }
 
-  /** No run has finished yet, or the last one ended at least `maxAgeMs` ago (or in the future: the clock moved back). */
-  function due(maxAgeMs: number): boolean {
-    if (refreshedAt === null) return true;
-    const age = Date.now() - refreshedAt;
-    return age >= maxAgeMs || age < 0;
-  }
-
-  /** Re-reads every search; a call while one runs joins it and queues one more run. */
-  function refresh(): Promise<void> {
-    if (refreshing) {
-      refreshAgain = true;
-      return refreshing;
-    }
-    changed();
-    refreshing = runRefresh()
-      .then((failed) => {
-        retrySoon = failed;
-      })
-      .catch((cause) => {
-        error = message(cause);
-        retrySoon = true;
-      })
-      .finally(() => {
-        refreshing = null;
-        refreshedAt = Date.now();
-        changed();
-        if (refreshAgain && !disposed) {
-          refreshAgain = false;
-          void refresh();
-        }
-      });
-    return refreshing;
-  }
-
   async function readDetail(entry: Entry) {
     const target = hostId;
     if (!target) return;
@@ -417,7 +335,7 @@ export function createReviewQueue(bb: BbPluginApi, labeler: Labeler) {
   }
 
   function card(entry: Entry, marks: Marks, reviewedSha: string | null): ReviewCard {
-    const { lines, reviewed, labels, headSha, ...pr } = entry;
+    const { lines, reviewed, labels, headSha, kind, mergedAt, ...pr } = entry;
     const detail = details.get(entry.id)?.detail ?? null;
     const sha = currentHead(entry);
     const read = marks.read[entry.id];
@@ -439,7 +357,7 @@ export function createReviewQueue(bb: BbPluginApi, labeler: Labeler) {
     const [marks, values] = await Promise.all([load(), settings.get()]);
     // Any board read (opening it, the page showing again after the machine wakes, its 1-minute poll) re-runs
     // searches over a minute old, so a new request shows within one search round instead of at the next poll.
-    if (!refreshing && due(READ_FRESH_MS)) void refresh();
+    poller.readFresh();
     return {
       scopes: configuredSearches(values).scopes,
       reviews: entries.flatMap((entry) => {
@@ -447,9 +365,9 @@ export function createReviewQueue(bb: BbPluginApi, labeler: Labeler) {
         return state.hidden ? [] : [card(entry, marks, state.reviewedSha)];
       }),
       sources,
-      refreshing: refreshing !== null,
-      refreshedAt,
-      error,
+      refreshing: poller.refreshing,
+      refreshedAt: poller.refreshedAt,
+      error: poller.error,
     };
   }
 
@@ -502,17 +420,12 @@ export function createReviewQueue(bb: BbPluginApi, labeler: Labeler) {
   }
 
   settings.onChange((next, prev) => {
-    if (next.reviewSearchesMe !== prev.reviewSearchesMe || next.reviewSearchesTeam !== prev.reviewSearchesTeam) void refresh();
+    if (next.reviewSearchesMe !== prev.reviewSearchesMe || next.reviewSearchesTeam !== prev.reviewSearchesTeam) void poller.refresh();
   });
-  const startupTimer = setTimeout(() => void refresh(), 8_000);
-  const pollTimer = setInterval(() => {
-    if (!refreshing && due(retrySoon ? RETRY_MS : POLL_MS)) void refresh();
-  }, POLL_TICK_MS);
 
   function dispose() {
     disposed = true;
-    clearTimeout(startupTimer);
-    clearInterval(pollTimer);
+    poller.dispose();
     clearTimeout(changedTimer);
   }
 

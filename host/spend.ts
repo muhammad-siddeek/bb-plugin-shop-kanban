@@ -342,7 +342,7 @@ async function readChanged(path: string, size: number, known: FileSpend | undefi
   return { bytes: await readFile(path), base: 0, previous: null };
 }
 
-/** One read per file at a time; requests for the same tree overlap while a turn is running. */
+/** One read per file at a time; requests for the same tree overlap while a turn is in progress. */
 function spendOnce(path: string, now: number): Promise<FileSpend | null> {
   let pending = reading.get(path);
   if (!pending) {

@@ -5,7 +5,7 @@ description: Spawn BB threads on the Shop Kanban board (one per theory, or a chi
 
 # Shop Kanban
 
-The Shop Kanban board shows every non-archived top-level BB thread, placed by its live state: not started → Queue, running → WIP, waiting on the user or errored → a red Blocked card in WIP, finished → Done. Parked is the user's own later pile. Child threads roll up into their parent.
+The Shop Kanban board shows every non-archived top-level BB thread, placed by its live state: not started → Queue, working (a turn in progress) → Working, waiting on the user or errored → a red Blocked card in Working, finished → Done. Parked is the user's own later pile. Child threads roll up into their parent.
 
 Nothing needs reporting: the board reads bb's thread state and a model-written title and summary. Use the plugin only when the user asks to spawn board threads or to look at the board.
 

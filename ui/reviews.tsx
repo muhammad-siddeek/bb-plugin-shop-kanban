@@ -1,18 +1,17 @@
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { experimental_Icon as Icon, useBbContext, useBbNavigate } from "@get-bb/plugin-sdk/app";
-import { PLUGIN_SLUG } from "../brand";
 import { ACCENT_BADGE, ACCENT_TEXT, errorMessage, formatShortAge, type ReviewCard, type ReviewScope } from "./model";
 import type { ReviewVerdict, ReviewsApi } from "./hooks";
+import { ArchiveOverlay, GroupHeader, MARK_FRAME, ROW_ACTION, ROW_ICON_ACTION, ShowMore, Spinner } from "./primitives";
 
-// Review queue near the top of the Queue column: a two-line card per pull request waiting on the user, toggled
-// between requests of the user by name (Me, where the board always opens) and of their teams (Team). The title
-// opens a new-thread draft asking for what changed, why, and how risky it is; the second line opens the pull
+// Reviews, the first list in the Queue column's In tab: a two-line card per pull request waiting on the user,
+// toggled between requests of the user by name (Me, where the board always opens) and of their teams (Team). The
+// title opens a new-thread draft asking for what changed, why, and how risky it is; the second line opens the pull
 // request (marking it read), approves after a confirming second click, or requests changes with a reason.
 
 const SHOWN_MAX = 8;
 const CONFIRM_MS = 3_000;
-const COLLAPSED_KEY = `${PLUGIN_SLUG}:reviews-collapsed`;
 const FORGE_NAME = { delta: "Delta", github: "GitHub" } as const;
 const SCOPE = {
   me: { label: "Me", hint: "Requested of you by name", empty: "Nothing requested of you." },
@@ -23,16 +22,6 @@ const RISK_CHIP = {
   medium: { label: "Med", tone: ACCENT_BADGE.amber },
   high: { label: "High", tone: ACCENT_BADGE.rose },
 } as const;
-// Same 16px mark frame as thread cards, so both kinds of card line up in the column.
-const MARK_FRAME = "mt-px inline-flex size-4 shrink-0 items-center justify-center";
-// 20px actions; 28px on touch screens.
-const ACTION =
-  "inline-flex h-5 shrink-0 items-center justify-center rounded-md text-muted-foreground/70 transition-[color,background-color] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:pointer-events-none disabled:opacity-50 pointer-coarse:h-7";
-const ICON_ACTION = `${ACTION} w-5 pointer-coarse:w-7`;
-
-function Spinner() {
-  return <span aria-hidden className="inline-flex size-3 animate-spin rounded-full border-[1.5px] border-muted-foreground/25 border-t-muted-foreground" />;
-}
 
 function RiskChip({ review }: { review: ReviewCard }) {
   if (review.risk) {
@@ -145,7 +134,7 @@ function ReviewRow({ review, now, unread, actions }: { review: ReviewCard; now: 
               type="button"
               onClick={() => void attempt(() => actions.onOpen(review))}
               title={`Open in ${forge}`}
-              className={`${ACTION} gap-0.5 px-1 text-[10.5px] font-medium hover:bg-accent hover:text-foreground`}
+              className={`${ROW_ACTION} gap-0.5 px-1 text-[10.5px] font-medium hover:bg-accent hover:text-foreground`}
             >
               {forge}
               <Icon name="ExternalLink" className="size-3" aria-hidden />
@@ -158,8 +147,8 @@ function ReviewRow({ review, now, unread, actions }: { review: ReviewCard; now: 
               onClick={() => (confirming ? void submit("approve", "") : setConfirming(true))}
               className={
                 confirming
-                  ? `${ACTION} bg-emerald-500 px-1.5 text-[10px] font-semibold text-white hover:bg-emerald-600`
-                  : `${ICON_ACTION} hover:bg-emerald-500/10 hover:text-[light-dark(var(--color-emerald-700),var(--color-emerald-500))]`
+                  ? `${ROW_ACTION} bg-emerald-500 px-1.5 text-[10px] font-semibold text-white hover:bg-emerald-600`
+                  : `${ROW_ICON_ACTION} hover:bg-emerald-500/10 hover:text-[light-dark(var(--color-emerald-700),var(--color-emerald-500))]`
               }
             >
               {pending === "approve" ? <Spinner /> : confirming ? "Approve?" : <Icon name="Check" className="size-3.5" aria-hidden />}
@@ -171,7 +160,7 @@ function ReviewRow({ review, now, unread, actions }: { review: ReviewCard; now: 
               title="Request changes"
               disabled={pending !== null}
               onClick={() => setDeclining((open) => !open)}
-              className={`${ICON_ACTION} hover:bg-rose-500/10 hover:text-[light-dark(var(--color-rose-700),var(--color-rose-500))] ${declining ? `bg-rose-500/10 ${ACCENT_TEXT.rose}` : ""}`}
+              className={`${ROW_ICON_ACTION} hover:bg-rose-500/10 hover:text-[light-dark(var(--color-rose-700),var(--color-rose-500))] ${declining ? `bg-rose-500/10 ${ACCENT_TEXT.rose}` : ""}`}
             >
               <Icon name="X" className="size-3.5" aria-hidden />
             </button>
@@ -211,18 +200,7 @@ function ReviewRow({ review, now, unread, actions }: { review: ReviewCard; now: 
         </div>
       </div>
 
-      {/* Archive: same hover overlay as thread cards, over the end of the title line. */}
-      <span className="absolute right-1.5 top-[5px] flex bg-card opacity-0 transition-opacity duration-150 before:pointer-events-none before:absolute before:inset-y-0 before:right-full before:w-3 before:bg-linear-to-l before:from-card before:to-transparent before:content-[''] group-hover:opacity-100 group-focus-within:opacity-100 has-[:focus-visible]:opacity-100 [@media(hover:none)]:opacity-100 pointer-coarse:right-1 pointer-coarse:top-px">
-        <button
-          type="button"
-          title="Archive: hide this pull request from the queue"
-          aria-label="Archive pull request"
-          className="inline-flex size-5 items-center justify-center rounded-md text-muted-foreground/70 transition-[color,background-color] duration-150 hover:bg-destructive/10 hover:text-destructive focus-visible:bg-destructive/10 focus-visible:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 pointer-coarse:size-7"
-          onClick={() => void attempt(() => actions.onArchive(review))}
-        >
-          <Icon name="Archive" className="size-3.5" aria-hidden />
-        </button>
-      </span>
+      <ArchiveOverlay label="Archive pull request" title="Archive: hide this pull request from the queue" onClick={() => void attempt(() => actions.onArchive(review))} />
     </article>
   );
 }
@@ -259,19 +237,16 @@ function ScopeToggle({ scopes, active, counts, unread, onSelect }: {
   );
 }
 
-function readCollapsed(): boolean {
-  try {
-    return window.localStorage.getItem(COLLAPSED_KEY) === "1";
-  } catch {
-    return false;
-  }
+/** Reviews requested of the user by name (not their teams), and how many are new: the In tab's count. */
+export function visibleReviews(reviews: ReviewsApi): { count: number; fresh: number } {
+  const listed = (reviews.state?.reviews ?? []).filter((review) => review.scope === "me");
+  return { count: listed.length, fresh: listed.filter((review) => review.unread).length };
 }
 
-export function ReviewSection({ reviews, now }: { reviews: ReviewsApi; now: number }) {
+export function ReviewGroup({ reviews, now }: { reviews: ReviewsApi; now: number }) {
   const navigate = useBbNavigate();
   const context = useBbContext();
   const { state } = reviews;
-  const [collapsed, setCollapsed] = useState(readCollapsed);
   const [showAll, setShowAll] = useState(false);
   // Not stored: the board opens on Me every time it is shown.
   const [chosenScope, setChosenScope] = useState<ReviewScope>("me");
@@ -309,7 +284,6 @@ export function ReviewSection({ reviews, now }: { reviews: ReviewsApi; now: numb
   // No host, or a forge CLI missing or signed out there: expected on many machines, so a hover hint, not a warning.
   const skipped = [...new Set(state.sources.flatMap((source) => (source.error && source.missing ? [source.error] : [])))];
   const loading = state.refreshedAt === null;
-  if (listed.length === 0 && problems.length === 0 && !loading) return null;
 
   // A scope whose searches were all removed falls back to the one left.
   const scope = state.scopes.includes(chosenScope) ? chosenScope : state.scopes[0];
@@ -349,69 +323,30 @@ export function ReviewSection({ reviews, now }: { reviews: ReviewsApi; now: numb
     },
   };
 
-  const setCollapsedStored = (next: boolean) => {
-    setCollapsed(next);
-    try {
-      window.localStorage.setItem(COLLAPSED_KEY, next ? "1" : "0");
-    } catch {
-      // Storage off: the section still toggles for this session.
-    }
-  };
-
   const selectScope = (next: ReviewScope) => {
     setChosenScope(next);
     setShowAll(false);
-    if (collapsed) setCollapsedStored(false);
   };
 
   return (
-    <div className="space-y-1.5 border-b border-border/40 pb-2">
-      <div className="flex h-5 items-center gap-1.5 px-0.5 pointer-coarse:h-7">
-        <button
-          type="button"
-          onClick={() => setCollapsedStored(!collapsed)}
-          aria-expanded={!collapsed}
-          title={skipped.length > 0 ? ["Not read:", ...skipped].join("\n") : undefined}
-          className="flex min-w-0 items-center gap-1 self-stretch rounded-sm text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
-        >
-          <Icon name={collapsed ? "ChevronRight" : "ChevronDown"} className="size-3" aria-hidden />
-          Reviews
-          {state.scopes.length === 1 ? (
-            <span className="ml-0.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-muted px-1.5 text-[10px] font-semibold normal-case leading-none tracking-normal tabular-nums">
-              {scoped.length}
-            </span>
-          ) : null}
-        </button>
+    <div className="space-y-1.5">
+      <GroupHeader
+        title="Reviews"
+        count={state.scopes.length === 1 ? scoped.length : null}
+        hint={skipped.length > 0 ? ["Not read:", ...skipped].join("\n") : "Open pull requests waiting on your review"}
+        refreshing={state.refreshing}
+        problems={problems}
+      >
         {state.scopes.length > 1 ? <ScopeToggle scopes={state.scopes} active={scope} counts={counts} unread={unread} onSelect={selectScope} /> : null}
         {unread[scope] > 0 ? <span className={`text-[10px] font-medium ${ACCENT_TEXT.sky}`}>{unread[scope]} new</span> : null}
-        <span className="ml-auto flex items-center gap-1">
-          {state.refreshing ? <Spinner /> : null}
-          {problems.length > 0 ? (
-            <span role="img" aria-label={`Review queue problems: ${problems.join("; ")}`} title={problems.join("\n")} className={`inline-flex ${ACCENT_TEXT.amber}`}>
-              <Icon name="AlertCircle" className="size-3.5" aria-hidden />
-            </span>
-          ) : null}
-        </span>
-      </div>
-      {collapsed ? null : (
-        <>
-          {scoped.length === 0 ? (
-            <p className="px-1 text-[11px] text-muted-foreground/90">{loading ? "Reading pull requests…" : SCOPE[scope].empty}</p>
-          ) : null}
-          {shown.map((review) => (
-            <ReviewRow key={review.id} review={review} now={now} unread={isNew(review)} actions={actions} />
-          ))}
-          {scoped.length > SHOWN_MAX ? (
-            <button
-              type="button"
-              onClick={() => setShowAll((all) => !all)}
-              className="w-full rounded-md py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 pointer-coarse:py-2.5"
-            >
-              {showAll ? "Show fewer" : `Show ${scoped.length - SHOWN_MAX} more`}
-            </button>
-          ) : null}
-        </>
-      )}
+      </GroupHeader>
+      {scoped.length === 0 ? (
+        <p className="px-1 text-[11px] text-muted-foreground/90">{loading ? "Reading pull requests…" : SCOPE[scope].empty}</p>
+      ) : null}
+      {shown.map((review) => (
+        <ReviewRow key={review.id} review={review} now={now} unread={isNew(review)} actions={actions} />
+      ))}
+      <ShowMore total={scoped.length} max={SHOWN_MAX} all={showAll} onToggle={() => setShowAll((all) => !all)} />
     </div>
   );
 }

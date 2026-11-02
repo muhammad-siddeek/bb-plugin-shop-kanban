@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
 import type { rpcContract } from "../server/schema";
-import { errorMessage, type ReviewState } from "./model";
+import { errorMessage, type ReviewState, type WorkMark, type WorkState } from "./model";
 
 const BOARD_REFRESH_MS = 1000;
-/** The review queue re-reads on the server's change signal; this clock only backs it up. */
+/** The review queue and work lists re-read on the server's change signal; this clock only backs it up. */
 const REVIEWS_POLL_MS = 60_000;
 const READ_STALL_MS = 60_000;
 
@@ -113,6 +113,23 @@ export function useReviews(): ReviewsApi {
       archive: (id: string) => rpc.call("reviews_archive", { id }).then(() => {}),
       submit: (id: string, verdict: ReviewVerdict, body: string) => rpc.call("reviews_submit", { id, verdict, body }).then(() => {}),
     }),
+    [rpc, state, error],
+  );
+}
+
+export type WorkApi = {
+  state: WorkState | null;
+  /** Why the last list read failed. */
+  error: string | null;
+  mark(id: string, mark: WorkMark, on: boolean): Promise<void>;
+};
+
+export function useWork(): WorkApi {
+  const rpc = useRpc<typeof rpcContract>();
+  const read = useCallback(() => rpc.call("work_list", null), [rpc]);
+  const { value: state, error } = usePolledRead(read, REVIEWS_POLL_MS, "work-changed");
+  return useMemo(
+    () => ({ state, error, mark: (id: string, mark: WorkMark, on: boolean) => rpc.call("work_mark", { id, mark, on }).then(() => {}) }),
     [rpc, state, error],
   );
 }

@@ -18,9 +18,10 @@ export const forgeInput = z.enum(["delta", "github"]);
 export type Forge = z.infer<typeof forgeInput>;
 const repoInput = z.string().regex(/^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/);
 const prNumberInput = z.number().int().min(1).max(Number.MAX_SAFE_INTEGER);
-/** A pull request as a search lists it. Delta's rows carry the head commit; GitHub's need `pr_detail`. */
+/** A pull request or issue as a search lists it. Delta's pull request rows carry the head commit; GitHub's need `pr_detail`. */
 const forgePrSchema = z
   .object({
+    kind: z.enum(["pr", "issue"]),
     repo: z.string(),
     number: z.number(),
     title: z.string(),
@@ -33,6 +34,8 @@ const forgePrSchema = z
     updatedAt: z.string(),
     labels: z.array(z.string()),
     headSha: z.string().nullable(),
+    /** When the pull request merged; null while open, for one closed unmerged, and for issues. */
+    mergedAt: z.string().nullable(),
   })
   .strict();
 export type ForgePr = z.infer<typeof forgePrSchema>;
@@ -133,7 +136,7 @@ export const hostContract = defineRpcContract({
     output: spendsOutput,
   },
   /**
-   * Open pull requests matching a forge search (GitHub search syntax), most recently updated first. `missing` is
+   * Pull requests or issues matching a forge search (GitHub search syntax), most recently updated first. `missing` is
    * true when the forge's CLI is not installed or not signed in on this host. Delta searches one repository, so it
    * needs `repo`.
    */

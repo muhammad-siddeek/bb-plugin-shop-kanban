@@ -3,7 +3,7 @@ import type { KeyboardEvent, PointerEvent } from "react";
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
 import { PLUGIN_NAME } from "../brand";
 import { BOTTOM_BOARD_COLLAPSED_CLASS, BOTTOM_BOARD_HEIGHT_VAR, BOTTOM_BOARD_OPEN_CLASS, STATUS_META, type BoardStatus } from "./model";
-import { useBoard, useReviews } from "./hooks";
+import { useBoard, useReviews, useWork } from "./hooks";
 import { IconButton } from "./primitives";
 import { BoardView } from "./column";
 import { ThreadSearch } from "./search";
@@ -46,6 +46,7 @@ export function BottomBoardOverlay() {
   const resizeCleanupRef = useRef<() => void>(() => {});
   const api = useBoard();
   const reviews = useReviews();
+  const work = useWork();
   const { board } = api;
   const count = (status: BoardStatus) => board?.tasks.filter((task) => task.status === status).length ?? 0;
 
@@ -177,7 +178,7 @@ export function BottomBoardOverlay() {
       </div>
 
       <div className="min-h-0 flex-1">
-        <BoardView api={api} reviews={reviews} />
+        <BoardView api={api} reviews={reviews} work={work} />
       </div>
     </div>
   );

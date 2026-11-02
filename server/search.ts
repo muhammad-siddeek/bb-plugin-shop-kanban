@@ -9,14 +9,14 @@ import { ELLIPSIS, oneLine, safe } from "./text";
 import type { ThreadMessage, ThreadReader } from "./threads";
 
 // Thread search: every visible thread, archived included, is exported as one markdown file on a persistent
-// host and indexed there by qmd (BM25). Idle threads are re-exported when their `updatedAt` moves; running
+// host and indexed there by qmd (BM25). Idle threads are re-exported when their `updatedAt` moves; working
 // threads every few minutes, then once more when they settle. Searching never touches the board.
 
 const INDEX_KEY = "search-index-v1";
 /** Quiet period after thread events before syncing. */
 const SYNC_DELAY_MS = 5_000;
 const SYNC_INTERVAL_MS = 10 * 60_000;
-/** Running threads can go hours without settling, and may not bump `updatedAt` mid-turn, so they refresh on a clock. */
+/** Working threads can go hours without settling, and may not bump `updatedAt` mid-turn, so they refresh on a clock. */
 const RUNNING_EXPORT_INTERVAL_MS = 5 * 60_000;
 const STARTUP_DELAY_MS = 15_000;
 const EXPORT_CONCURRENCY = 3;
@@ -106,10 +106,10 @@ export function createSearchIndex(bb: BbPluginApi, reader: ThreadReader) {
   let saveErrorLogged: string | null = null;
   let disposed = false;
   let syncTimer: ReturnType<typeof setTimeout> | undefined;
-  /** When each running thread was last exported by this process. */
+  /** When each working thread was last exported by this process. */
   const runningExports = new Map<string, number>();
 
-  /** Idle: whenever `updatedAt` moved since the export (a mid-run export never matches). Running: on a clock. */
+  /** Idle: whenever `updatedAt` moved since the export (a mid-run export never matches). Working: on a clock. */
   function needsExport(thread: LiveThread, exported: number | null | undefined, now: number): boolean {
     if (!isRunningSelf(thread)) return exported !== (thread.updatedAt ?? 0);
     return now - (runningExports.get(thread.id) ?? 0) >= RUNNING_EXPORT_INTERVAL_MS;

@@ -9,13 +9,18 @@ import type {
   ReviewState,
   SearchResponse,
   Status,
+  WorkItem,
+  WorkList,
+  WorkMark,
+  WorkSource,
+  WorkState,
   rpcContract,
 } from "../server/schema";
 
 // Shared board types, constants, and pure helpers.
 
 // Type-only re-exports of the server's schema types; keeps zod out of the browser bundle.
-export type { BoardSession, BoardTask, ReviewCard, ReviewScope, ReviewState, SearchResponse };
+export type { BoardSession, BoardTask, ReviewCard, ReviewScope, ReviewState, SearchResponse, WorkItem, WorkList, WorkMark, WorkSource, WorkState };
 export type BoardColumn = Column;
 export type BoardStatus = Status;
 export type BoardState = z.infer<(typeof rpcContract)["board_list"]["output"]>;
@@ -153,7 +158,7 @@ export function groupTasksByColumn(
     grouped.get(task.column)?.push(task);
   }
   // Each column keeps the server's timestamp order within these groups.
-  // WIP: blocked cards, which wait on the user, above running ones.
+  // Working: blocked cards, which wait on the user, above working ones.
   const wip = grouped.get("wip") ?? [];
   grouped.set("wip", [...wip.filter((task) => task.status === "blocked"), ...wip.filter((task) => task.status !== "blocked")]);
   // Done: unread cards first, then read ones.

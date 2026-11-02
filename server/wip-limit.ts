@@ -3,17 +3,17 @@ import { WIP_LIMIT_MAX, type WipLimitView } from "./schema";
 import { isRunningSelf, type LiveThread } from "./status";
 import type { ThreadReader } from "./threads";
 
-// WIP limit: at most `limit` cards running at once. A card is the board's: a visible, non-archived top-level thread
-// with its descendants rolled up. It holds a slot while it or a descendant runs and nobody waits on the user
-// (isWorking's rule), so Blocked cards hold none. Every message passes bb's `message.dispatch` checkpoint; one that
-// would start a card that isn't running while `limit` cards are waits as a queued row, and bb sends it once a slot
-// frees. Work inside a running card (steers, follow-ups, child threads) proceeds: the card already holds its slot,
+// Working limit: at most `limit` cards working at once. A card is the board's: a visible, non-archived top-level
+// thread with its descendants rolled up. It holds a slot while it or a descendant has a turn in progress and nobody
+// waits on the user (isWorking's rule), so Blocked cards hold none. Every message passes bb's `message.dispatch`
+// checkpoint; one that would start a card that isn't working while `limit` cards are waits as a queued row, and bb
+// sends it once a slot frees. Work inside a working card (steers, follow-ups, child threads) proceeds: the card already holds its slot,
 // and holding a child its parent waits on would stall the card. The user's Send now on a queued row skips the
 // checkpoint by bb's design.
 
 const LIMIT_KEY = "wip-limit-v1";
 /**
- * A card let through this recently counts as running before its thread shows it: bb flips an idle thread a follow-up
+ * A card let through this recently counts as working before its thread shows it: bb flips an idle thread a follow-up
  * reaches to active only after the checkpoint's lock releases, so the next message decided could miss it. The grace
  * ends early once that thread frees its slot (a turn can finish before any later message is decided).
  */
@@ -43,7 +43,7 @@ export function createWipLimit(bb: BbPluginApi, reader: ThreadReader, onChange: 
       // Anything but a whole number in range (unset, or corrupt) means no limit.
       limit = typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= WIP_LIMIT_MAX ? value : null;
     })
-    .catch((error: unknown) => bb.log.warn(`reading the WIP limit failed: ${String(error)}`));
+    .catch((error: unknown) => bb.log.warn(`reading the working limit failed: ${String(error)}`));
   /** Card (root thread) id → when, and to which thread in it, a message was let through. */
   const admitted = new Map<string, { at: number; threadId: string }>();
   /** Queued rows held by this plugin: row id → thread id. */
@@ -53,7 +53,7 @@ export function createWipLimit(bb: BbPluginApi, reader: ThreadReader, onChange: 
     void bb.experimental_hooks.recheck("message.dispatch").catch(() => undefined);
   }
 
-  /** Cards running now: root thread ids whose tree runs while the root waits on nobody. */
+  /** Cards working now: root thread ids whose tree has a turn in progress while the root waits on nobody. */
   function workingCards(threads: LiveThread[]) {
     const byId = new Map(threads.map((thread) => [thread.id, thread]));
     // A thread whose parent isn't listed (archived) is a card of its own, as on the board.
@@ -94,8 +94,8 @@ export function createWipLimit(bb: BbPluginApi, reader: ThreadReader, onChange: 
     if (busy.has(root.id)) return { action: "proceed" };
     if (busy.size >= max) {
       const reason = max === 0
-        ? "WIP limit is 0: sends when you raise it"
-        : `WIP full (${busy.size} of ${max} running): sends when a WIP thread finishes`;
+        ? "Working limit is 0: sends when you raise it"
+        : `Working limit reached (${busy.size}/${max} working): sends when a working thread finishes`;
       return { action: "wait", reason };
     }
     admitted.set(root.id, { at: now, threadId: ctx.thread.id });
@@ -138,7 +138,7 @@ export function createWipLimit(bb: BbPluginApi, reader: ThreadReader, onChange: 
 
   return {
     view,
-    /** Whether a message to this thread is held for a WIP slot. */
+    /** Whether a message to this thread is held by the working limit. */
     isWaiting(threadId: string): boolean {
       for (const id of waiting.values()) if (id === threadId) return true;
       return false;
@@ -148,7 +148,7 @@ export function createWipLimit(bb: BbPluginApi, reader: ThreadReader, onChange: 
       await bb.storage.kv.set(LIMIT_KEY, next);
       limit = next;
       onChange();
-      // A higher limit or none lets held messages go now; a lower one holds only new starts, never running threads.
+      // A higher limit or none lets held messages go now; a lower one holds only new starts, never working threads.
       recheck();
       return view();
     },

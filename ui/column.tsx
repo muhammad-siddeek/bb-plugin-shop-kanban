@@ -2,17 +2,76 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { DragEvent, FormEvent, KeyboardEvent, ReactElement } from "react";
 import { experimental_Icon as Icon, experimental_useCodeTheme, experimental_useProviders, useBbContext, useBbNavigate } from "@get-bb/plugin-sdk/app";
 import { PLUGIN_SLUG } from "../brand";
-import { CLOCK_TICK_MS, STATUS_META, THREAD_DRAG_TYPE, groupTasksByColumn, isUnread, shortNameFromPrompt, type BoardColumn, type BoardTask } from "./model";
-import { useNow, type BoardApi, type ReviewsApi } from "./hooks";
-import { IconButton } from "./primitives";
+import { ACCENT_BADGE, CLOCK_TICK_MS, STATUS_META, THREAD_DRAG_TYPE, groupTasksByColumn, isUnread, shortNameFromPrompt, type BoardColumn, type BoardTask } from "./model";
+import { useNow, type BoardApi, type ReviewsApi, type WorkApi } from "./hooks";
 import { TaskCard, type ThemeScope } from "./card";
-import { ReviewSection } from "./reviews";
+import { ReviewGroup, visibleReviews } from "./reviews";
 import type { AgentProvider } from "./session";
 import { WipLimitControl } from "./wip-limit";
+import { WorkGroup, useWorkItems } from "./work";
 
 const SCROLL_TO_LATEST_SELECTOR = 'button[aria-label="Scroll to latest event"]';
 /** The new-thread form's text, written on every keystroke so a crash or reload doesn't lose it. */
 const DRAFT_KEY = `${PLUGIN_SLUG}:new-thread-draft`;
+/** The Queue column's open tab, kept across reloads. */
+const QUEUE_TAB_KEY = `${PLUGIN_SLUG}:queue-tab`;
+
+/** The Queue column's tabs: threads waiting to start, work coming to the user, and work going out from them. */
+type QueueTab = "queue" | "incoming" | "outgoing";
+const QUEUE_TABS: { id: QueueTab; label: string; hint: string }[] = [
+  { id: "queue", label: "Queue", hint: "Threads waiting to be started" },
+  { id: "incoming", label: "In", hint: "Pull requests waiting on your review, and issues assigned to you" },
+  { id: "outgoing", label: "Out", hint: "Your open pull requests, and merged ones still to measure or demo" },
+];
+
+function readQueueTab(): QueueTab {
+  try {
+    const stored = window.localStorage.getItem(QUEUE_TAB_KEY);
+    return QUEUE_TABS.some((tab) => tab.id === stored) ? (stored as QueueTab) : "queue";
+  } catch {
+    return "queue";
+  }
+}
+
+/** The Queue column's header: one uppercase tab per list with its count, underlined in the column's accent when open. */
+function QueueTabs({ tabs, active, onSelect }: {
+  tabs: { id: QueueTab; label: string; hint: string; count: number; fresh: number }[];
+  active: QueueTab;
+  onSelect: (tab: QueueTab) => void;
+}) {
+  const meta = STATUS_META.queue;
+  return (
+    // Tabs keep their full labels; a column too narrow for all three scrolls them sideways instead.
+    <div role="tablist" aria-label="Queue column" className="flex min-w-0 items-stretch gap-3 self-stretch overflow-x-auto [scrollbar-width:none]">
+      {tabs.map((tab) => {
+        const selected = tab.id === active;
+        return (
+          <button
+            key={tab.id}
+            type="button"
+            role="tab"
+            aria-selected={selected}
+            title={`${tab.hint}${tab.fresh > 0 ? ` · ${tab.fresh} new` : ""}`}
+            onClick={() => onSelect(tab.id)}
+            className={`relative flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-sm text-[11px] font-bold uppercase leading-none tracking-[0.1em] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/60 ${
+              selected ? meta.title : "text-muted-foreground/70 hover:text-foreground"
+            }`}
+          >
+            <span>{tab.label}</span>
+            <span
+              className={`inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full px-1.5 text-[10px] font-semibold leading-none tracking-normal tabular-nums ${
+                selected ? meta.badge : tab.fresh > 0 ? ACCENT_BADGE.sky : STATUS_META.parked.badge
+              }`}
+            >
+              {tab.count}
+            </span>
+            {selected ? <span aria-hidden className={`pointer-events-none absolute inset-x-0 bottom-0 h-[2px] rounded-full ${meta.accent}`} /> : null}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 function readDraft(): string {
   try {
@@ -170,10 +229,80 @@ function AddTaskForm({ focus, onAdd, onCancel, onError }: {
   );
 }
 
-/** What a column does with a dragged card: Parked parks any idle card, WIP starts a Queue card that has a message waiting. */
+/** What a column does with a dragged card: Parked parks any idle card, Working starts a Queue card that has a message waiting. */
 type ColumnDrop = { label: string; icon: string; onDrop: (threadId: string) => void };
 
-function BoardColumnView({ column, title, tasks, now, readLocally, selectedThreadId, draggingId, startingIds, invertedTheme, providersById, onArchive, onPark, onStart, onDragChange, drop, onOpen, onStartAdding, headerControl, lead, addForm }: {
+/** The Queue tab's Parked section: finished threads set aside to come back to later. Takes dragged idle cards. */
+function ParkedSection({ tasks, dragging, drop, renderCard }: {
+  tasks: BoardTask[];
+  dragging: boolean;
+  drop: ColumnDrop;
+  renderCard: (task: BoardTask) => ReactElement;
+}) {
+  const meta = STATUS_META.parked;
+  const [over, setOver] = useState(false);
+  const depth = useRef(0);
+  useEffect(() => {
+    if (dragging) return;
+    depth.current = 0;
+    setOver(false);
+  }, [dragging]);
+  const takes = (event: DragEvent) => event.dataTransfer.types.includes(THREAD_DRAG_TYPE);
+  return (
+    <div
+      role="group"
+      aria-label="Parked"
+      className={`space-y-1.5 rounded-lg pt-1 transition-colors ${
+        dragging ? (over ? "bg-muted-foreground/12 outline-2 -outline-offset-2 outline-muted-foreground/70" : "outline-2 outline-dashed -outline-offset-2 outline-muted-foreground/45") : ""
+      }`}
+      onDragEnter={(event) => {
+        if (!takes(event)) return;
+        event.preventDefault();
+        depth.current += 1;
+        setOver(true);
+      }}
+      onDragOver={(event) => {
+        if (!takes(event)) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "move";
+      }}
+      onDragLeave={(event) => {
+        if (!takes(event)) return;
+        depth.current = Math.max(0, depth.current - 1);
+        if (depth.current === 0) setOver(false);
+      }}
+      onDrop={(event) => {
+        if (!takes(event)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        depth.current = 0;
+        setOver(false);
+        const threadId = event.dataTransfer.getData(THREAD_DRAG_TYPE);
+        if (threadId) drop.onDrop(threadId);
+      }}
+    >
+      <div className="flex items-center gap-2 px-1 pt-1">
+        <h3 className={`text-[10px] font-bold uppercase leading-none tracking-[0.12em] ${meta.title}`}>Parked</h3>
+        <span className={`inline-flex h-4 min-w-4 items-center justify-center rounded-full px-1.5 text-[10px] font-semibold leading-none tabular-nums ${meta.badge}`}>{tasks.length}</span>
+        <span className="h-px flex-1 bg-border/60" aria-hidden />
+      </div>
+      {dragging ? (
+        <div className={`flex items-center justify-center gap-1.5 rounded-lg border border-dashed px-3 py-4 text-[11px] font-medium ${over ? "border-muted-foreground/70 bg-card text-foreground" : "border-muted-foreground/40 text-muted-foreground"}`}>
+          <Icon name={drop.icon} className="size-3.5" aria-hidden />
+          {drop.label}
+        </div>
+      ) : null}
+      {tasks.length === 0 && !dragging ? (
+        <div className="flex items-center justify-center rounded-lg border border-dashed border-border/60 px-3 py-4 text-center text-[11px] text-muted-foreground/90">
+          Drag a finished thread here to come back to it later
+        </div>
+      ) : null}
+      {tasks.map(renderCard)}
+    </div>
+  );
+}
+
+function BoardColumnView({ column, title, tasks, now, readLocally, selectedThreadId, draggingId, startingIds, invertedTheme, providersById, onArchive, onPark, onStart, onDragChange, drop, onOpen, onStartAdding, headerControl, tabs, body, placement, fit, addForm, parkedTasks, parkDrop }: {
   column: BoardColumn;
   title: string;
   tasks: BoardTask[];
@@ -190,19 +319,47 @@ function BoardColumnView({ column, title, tasks, now, readLocally, selectedThrea
   onPark: (threadId: string, parked: boolean) => void;
   onStart: (threadId: string) => void;
   onDragChange: (threadId: string | null) => void;
-  /** Non-null while this column takes a dragged card: always for Parked, for WIP while a startable card is dragged. */
+  /** Non-null while this column takes a dragged card: always for Parked, for Working while a startable card is dragged. */
   drop: ColumnDrop | null;
   onOpen: (threadId: string) => void;
   onStartAdding: (() => void) | null;
-  /** Drawn at the header's end: the WIP limit picker in WIP. */
+  /** Drawn at the header's end: the working limit picker in Working. */
   headerControl: ReactElement | null;
-  /** Rendered above the column's cards, below the new-thread form or button: the review queue in Queue. */
-  lead: ReactElement | null;
+  /** Drawn instead of the title and count: the Queue column's tabs. */
+  tabs: ReactElement | null;
+  /** Drawn instead of the column's cards: an Incoming or Out tab. */
+  body: ReactElement | null;
+  /** Classes placing the column in the board: snapping on phones, or its share of a stack. */
+  placement: string;
+  /** Sized to its cards, shrinking to scroll only when the stack runs out of room (Done above Parked). */
+  fit: boolean;
   /** The new-thread form; non-null only while it is open. */
   addForm: ReactElement | null;
+  /** The Queue column's Parked section: idle threads set aside to come back to; null in other columns. */
+  parkedTasks: BoardTask[] | null;
+  /** What the Parked section does with a dragged card. */
+  parkDrop: ColumnDrop | null;
 }) {
   const meta = STATUS_META[column];
   const adding = addForm !== null;
+  const renderCard = (task: BoardTask) => (
+      <TaskCard
+        key={task.threadId}
+        task={task}
+        now={now}
+        unread={task.status === "done" && isUnread(task, readLocally)}
+        selected={task.threadId === selectedThreadId}
+        dragging={task.threadId === draggingId}
+        starting={startingIds.has(task.threadId)}
+        invertedTheme={invertedTheme}
+        provider={task.thread?.providerId ? providersById.get(task.thread.providerId) ?? null : null}
+        onArchive={onArchive}
+        onPark={onPark}
+        onStart={onStart}
+        onDragChange={onDragChange}
+        onOpen={onOpen}
+      />
+  );
   // A drag is on its way and this column takes it; `over` while the pointer is inside it. dragenter/dragleave
   // fire for every child crossed, so a depth count tells when the pointer really leaves.
   const awaitingDrop = drop !== null && draggingId !== null;
@@ -222,7 +379,7 @@ function BoardColumnView({ column, title, tasks, now, readLocally, selectedThrea
   return (
     <section
       aria-label={title}
-      className={`relative flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-border/60 bg-muted/35 shadow-xs transition-[background-color,outline-color] duration-150 max-sm:snap-start ${dropClass}`}
+      className={`relative flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-border/60 bg-muted/35 shadow-xs transition-[background-color,outline-color] duration-150 ${placement} ${dropClass}`}
       onDragEnter={(event) => {
         if (!takesDrag(event)) return;
         event.preventDefault();
@@ -250,67 +407,60 @@ function BoardColumnView({ column, title, tasks, now, readLocally, selectedThrea
     >
       <span className={`pointer-events-none absolute inset-x-0 top-0 h-[3px] ${meta.accent} opacity-80`} aria-hidden />
       <header className="flex h-10 shrink-0 items-center gap-2 border-b border-border/40 pl-3 pr-2 pt-[3px]">
-        <h2 className={`truncate text-[11px] font-bold uppercase leading-none tracking-[0.12em] ${meta.title}`}>{title.toUpperCase()}</h2>
-        <span className={`inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full px-1.5 text-[10px] font-semibold leading-none tabular-nums ${meta.badge}`}>{tasks.length}</span>
-        {onStartAdding && !adding ? (
-          <IconButton icon="Plus" label="New thread" onClick={onStartAdding} small className="ml-auto" />
-        ) : null}
+        {tabs ?? (
+          <>
+            <h2 className={`truncate text-[11px] font-bold uppercase leading-none tracking-[0.12em] ${meta.title}`}>{title.toUpperCase()}</h2>
+            <span className={`inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full px-1.5 text-[10px] font-semibold leading-none tabular-nums ${meta.badge}`}>{tasks.length}</span>
+          </>
+        )}
         {headerControl}
       </header>
       {/* Vertical scroller only: `overflow-y-auto` alone makes x `auto` too, so content wider than the column
           would scroll the column sideways and swallow the swipe. Sideways swipes on the cards must chain to the
           board's horizontal scroll, so overscroll is contained on y only. */}
-      <div data-board-column-scroll="" className="min-h-0 flex-1 space-y-1.5 overflow-y-auto overflow-x-hidden overscroll-y-contain p-2 [scrollbar-width:thin]">
-        {addForm}
-        {awaitingDrop && drop ? (
-          <div
-            className={`flex shrink-0 items-center justify-center gap-1.5 rounded-lg border border-dashed px-3 py-5 text-[11px] font-medium transition-colors ${
-              over ? "border-muted-foreground/70 bg-card text-foreground" : "border-muted-foreground/40 text-muted-foreground"
-            }`}
-          >
-            <Icon name={drop.icon} className="size-3.5" aria-hidden />
-            {drop.label}
-          </div>
-        ) : null}
-        {onStartAdding && !adding ? (
-          <button
-            type="button"
-            onClick={onStartAdding}
-            className="flex w-full shrink-0 items-center justify-center gap-1.5 rounded-lg border border-dashed border-border/60 px-3 py-5 text-[11px] text-muted-foreground/90 transition-colors hover:border-sky-500/50 hover:bg-sky-500/5 hover:text-[light-dark(var(--color-sky-700),var(--color-sky-500))] focus-visible:border-sky-500/60 focus-visible:text-[light-dark(var(--color-sky-700),var(--color-sky-500))] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/20"
-          >
-            <Icon name="Plus" className="size-3.5" aria-hidden />
-            New thread
-          </button>
-        ) : tasks.length === 0 && !adding && !awaitingDrop ? (
-          <div className="flex shrink-0 items-center justify-center rounded-lg border border-dashed border-border/60 px-3 py-5 text-center text-[11px] text-muted-foreground/90">
-            {column === "parked" ? "Drag an idle thread here to come back to it later" : "No threads"}
-          </div>
-        ) : null}
-        {lead}
-        {tasks.map((task) => (
-          <TaskCard
-            key={task.threadId}
-            task={task}
-            now={now}
-            unread={task.status === "done" && isUnread(task, readLocally)}
-            selected={task.threadId === selectedThreadId}
-            dragging={task.threadId === draggingId}
-            starting={startingIds.has(task.threadId)}
-            invertedTheme={invertedTheme}
-            provider={task.thread?.providerId ? providersById.get(task.thread.providerId) ?? null : null}
-            onArchive={onArchive}
-            onPark={onPark}
-            onStart={onStart}
-            onDragChange={onDragChange}
-            onOpen={onOpen}
-          />
-        ))}
+      <div
+        data-board-column-scroll=""
+        className={`min-h-0 ${fit ? "flex-[0_1_auto]" : "flex-1"} space-y-1.5 overflow-y-auto overflow-x-hidden overscroll-y-contain p-2 [scrollbar-width:thin]`}
+      >
+        {body ?? (
+          <>
+            {addForm}
+            {awaitingDrop && drop ? (
+              <div
+                className={`flex shrink-0 items-center justify-center gap-1.5 rounded-lg border border-dashed px-3 py-5 text-[11px] font-medium transition-colors ${
+                  over ? "border-muted-foreground/70 bg-card text-foreground" : "border-muted-foreground/40 text-muted-foreground"
+                }`}
+              >
+                <Icon name={drop.icon} className="size-3.5" aria-hidden />
+                {drop.label}
+              </div>
+            ) : null}
+            {onStartAdding && !adding ? (
+              <button
+                type="button"
+                onClick={onStartAdding}
+                className="flex w-full shrink-0 items-center justify-center gap-1.5 rounded-lg border border-dashed border-border/60 px-3 py-5 text-[11px] text-muted-foreground/90 transition-colors hover:border-sky-500/50 hover:bg-sky-500/5 hover:text-[light-dark(var(--color-sky-700),var(--color-sky-500))] focus-visible:border-sky-500/60 focus-visible:text-[light-dark(var(--color-sky-700),var(--color-sky-500))] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/20"
+              >
+                <Icon name="Plus" className="size-3.5" aria-hidden />
+                New thread
+              </button>
+            ) : tasks.length === 0 && !adding && !awaitingDrop ? (
+              <div className="flex shrink-0 items-center justify-center rounded-lg border border-dashed border-border/60 px-3 py-5 text-center text-[11px] text-muted-foreground/90">
+                {column === "parked" ? "Drag an idle thread here to come back to it later" : "No threads"}
+              </div>
+            ) : null}
+            {tasks.map(renderCard)}
+            {parkedTasks && parkDrop ? (
+              <ParkedSection tasks={parkedTasks} dragging={draggingId !== null} drop={parkDrop} renderCard={renderCard} />
+            ) : null}
+          </>
+        )}
       </div>
     </section>
   );
 }
 
-export function BoardView({ api, reviews }: { api: BoardApi; reviews: ReviewsApi }) {
+export function BoardView({ api, reviews, work }: { api: BoardApi; reviews: ReviewsApi; work: WorkApi }) {
   const context = useBbContext();
   const selectedThreadId = context.threadId;
   // The selected card renders in the opposite theme so it pops against the board.
@@ -372,7 +522,7 @@ export function BoardView({ api, reviews }: { api: BoardApi; reviews: ReviewsApi
     else forgetParked(threadId);
     rpc.call("board_park_task", { threadId, parked }).then(
       (task) => {
-        // A thread that started running meanwhile stays where it is.
+        // A thread that started working meanwhile stays where it is.
         if (task.status !== "parked") forgetParked(threadId);
         refetch();
       },
@@ -426,6 +576,92 @@ export function BoardView({ api, reviews }: { api: BoardApi; reviews: ReviewsApi
     rpc.call("board_set_wip_limit", { limit }).then(refetch, report);
   };
 
+  const workItems = useWorkItems(work);
+  const [chosenTab, setChosenTab] = useState<QueueTab>(readQueueTab);
+  const selectTab = (tab: QueueTab) => {
+    setChosenTab(tab);
+    try {
+      window.localStorage.setItem(QUEUE_TAB_KEY, tab);
+    } catch {
+      // Storage off: the tab still switches for this session.
+    }
+  };
+  // A tab shows while its lists load, and once any of them has a search configured.
+  const incoming = visibleReviews(reviews);
+  const tabCounts: Record<QueueTab, { count: number; fresh: number; shown: boolean }> = {
+    queue: { count: grouped.get("queue")?.length ?? 0, fresh: 0, shown: true },
+    incoming: {
+      count: incoming.count + workItems.byList.assigned.length,
+      fresh: incoming.fresh,
+      shown: !reviews.state || !workItems.state || reviews.state.scopes.length > 0 || workItems.lists.includes("assigned"),
+    },
+    outgoing: {
+      count: workItems.byList.open.length + workItems.byList.shipped.length,
+      fresh: 0,
+      shown: !workItems.state || workItems.lists.includes("open") || workItems.lists.includes("shipped"),
+    },
+  };
+  const tabs = QUEUE_TABS.filter((tab) => tabCounts[tab.id].shown).map((tab) => ({ ...tab, ...tabCounts[tab.id] }));
+  const queueTab = tabs.some((tab) => tab.id === chosenTab) ? chosenTab : "queue";
+  const queueBody =
+    queueTab === "incoming" ? (
+      <div className="space-y-3">
+        <ReviewGroup reviews={reviews} now={now} />
+        <WorkGroup list="assigned" work={workItems} now={now} />
+      </div>
+    ) : queueTab === "outgoing" ? (
+      <div className="space-y-3">
+        <WorkGroup list="open" work={workItems} now={now} />
+        <WorkGroup list="shipped" work={workItems} now={now} />
+      </div>
+    ) : null;
+
+  const renderColumn = (column: { id: BoardColumn; title: string }, placement: string, fit: boolean) => (
+    <BoardColumnView
+      key={column.id}
+      column={column.id}
+      title={column.title}
+      tasks={grouped.get(column.id) ?? []}
+      now={now}
+      readLocally={readLocally}
+      selectedThreadId={selectedThreadId}
+      draggingId={draggingId}
+      startingIds={startingIds}
+      invertedTheme={invertedTheme}
+      providersById={providersById}
+      onArchive={archiveTask}
+      onPark={parkTask}
+      onStart={startTask}
+      onDragChange={setDraggingId}
+      drop={
+        column.id === "wip" && draggingStartable ? { label: "Drop to start now", icon: "Play", onDrop: startTask } : null
+      }
+      onOpen={openTask}
+      onStartAdding={column.id === "queue" ? () => setAdding("opened") : null}
+      headerControl={
+        column.id === "wip" && board ? (
+          <WipLimitControl
+            limit={board.wipLimit.limit}
+            working={(grouped.get("wip") ?? []).filter((task) => task.status === "wip").length}
+            waiting={board.wipLimit.waiting}
+            onChange={setWipLimit}
+          />
+        ) : null
+      }
+      tabs={column.id === "queue" && tabs.length > 1 ? <QueueTabs tabs={tabs} active={queueTab} onSelect={selectTab} /> : null}
+      body={column.id === "queue" ? queueBody : null}
+      placement={placement}
+      fit={fit}
+      parkedTasks={column.id === "queue" ? grouped.get("parked") ?? [] : null}
+      parkDrop={column.id === "queue" ? { label: "Drop to park", icon: "Pause", onDrop: dropPark } : null}
+      addForm={
+        column.id === "queue" && adding !== "closed" ? (
+          <AddTaskForm focus={adding === "opened"} onAdd={addTask} onCancel={() => setAdding("closed")} onError={report} />
+        ) : null
+      }
+    />
+  );
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       {error ? (
@@ -437,50 +673,8 @@ export function BoardView({ api, reviews }: { api: BoardApi; reviews: ReviewsApi
       {board ? (
         // Phones: one column per screen with a peek of the next, snapping as you swipe.
         <div data-board-scroll="" className="grid min-h-0 flex-1 auto-cols-[minmax(250px,1fr)] grid-flow-col gap-2.5 overflow-x-auto overscroll-x-contain p-3 [scrollbar-width:thin] max-sm:auto-cols-[calc(100%-2.5rem)] max-sm:snap-x max-sm:snap-mandatory max-sm:scroll-px-3">
-          {board.columns.map((column) => (
-            <BoardColumnView
-              key={column.id}
-              column={column.id}
-              title={column.title}
-              tasks={grouped.get(column.id) ?? []}
-              now={now}
-              readLocally={readLocally}
-              selectedThreadId={selectedThreadId}
-              draggingId={draggingId}
-              startingIds={startingIds}
-              invertedTheme={invertedTheme}
-              providersById={providersById}
-              onArchive={archiveTask}
-              onPark={parkTask}
-              onStart={startTask}
-              onDragChange={setDraggingId}
-              drop={
-                column.id === "parked"
-                  ? { label: "Drop to park", icon: "Pause", onDrop: dropPark }
-                  : column.id === "wip" && draggingStartable
-                    ? { label: "Drop to start now", icon: "Play", onDrop: startTask }
-                    : null
-              }
-              onOpen={openTask}
-              onStartAdding={column.id === "queue" ? () => setAdding("opened") : null}
-              headerControl={
-                column.id === "wip" ? (
-                  <WipLimitControl
-                    limit={board.wipLimit.limit}
-                    running={(grouped.get("wip") ?? []).filter((task) => task.status === "wip").length}
-                    waiting={board.wipLimit.waiting}
-                    onChange={setWipLimit}
-                  />
-                ) : null
-              }
-              lead={column.id === "queue" ? <ReviewSection reviews={reviews} now={now} /> : null}
-              addForm={
-                column.id === "queue" && adding !== "closed" ? (
-                  <AddTaskForm focus={adding === "opened"} onAdd={addTask} onCancel={() => setAdding("closed")} onError={report} />
-                ) : null
-              }
-            />
-          ))}
+          {/* Parked is a section of the Queue column, not a column of its own. */}
+          {board.columns.filter((column) => column.id !== "parked").map((column) => renderColumn(column, "max-sm:snap-start", false))}
         </div>
       ) : error ? null : (
         // Before the first board arrives; if reads fail, only the error above shows while they retry.

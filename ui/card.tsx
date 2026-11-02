@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
 import { ACCENT_TEXT, STATUS_META, THREAD_DRAG_TYPE, formatRelativeTime, taskActivityTime, taskCardTitle, type BoardStatus, type BoardTask } from "./model";
-import { CardTooltip, HarnessMeta, type AgentProvider } from "./session";
+import { CardTooltip, ContextPie, ModelMark, SessionCost, type AgentProvider } from "./session";
 
 // All marks share one 16px frame so they line up with the 18px title line (mt-px centers them).
 const MARK_FRAME = "mt-px inline-flex size-4 shrink-0 items-center justify-center";
@@ -76,11 +76,34 @@ function boardCardLayoutKey(card: HTMLElement): string | null {
 /** Theme class that re-scopes bb's color tokens for a subtree (`.light` / `.dark`). */
 export type ThemeScope = "light" | "dark";
 
+/** The Working mark's petals, from 12 o'clock clockwise; each fades a step further behind the leading one. */
+const PETALS = Array.from({ length: 8 }, (_, i) => ({ angle: i * 45, opacity: 1 - i * 0.11 }));
+
 function TaskStatusMark({ status, unread }: { status: BoardStatus; unread: boolean }) {
   if (status === "wip") {
+    // A petal spinner, ticking a petal at a time: a stroked arc would read as the context pie below it.
     return (
-      <span role="img" aria-label="In progress" className={MARK_FRAME}>
-        <span className="block size-3.5 animate-spin rounded-full border-[1.5px] border-amber-500/20 border-t-[light-dark(var(--color-amber-600),var(--color-amber-500))] [animation-duration:900ms]" />
+      <span role="img" aria-label="Working" className={MARK_FRAME}>
+        <svg
+          viewBox="0 0 16 16"
+          className="size-3.5 animate-[spin_800ms_steps(8)_infinite] text-[light-dark(var(--color-amber-600),var(--color-amber-500))]"
+          aria-hidden
+        >
+          {PETALS.map(({ angle, opacity }) => (
+            <line
+              key={angle}
+              x1="8"
+              y1="1.75"
+              x2="8"
+              y2="4.75"
+              stroke="currentColor"
+              strokeWidth="1.75"
+              strokeLinecap="round"
+              strokeOpacity={opacity}
+              transform={`rotate(${-angle} 8 8)`}
+            />
+          ))}
+        </svg>
       </span>
     );
   }
@@ -117,7 +140,7 @@ function TaskStatusMark({ status, unread }: { status: BoardStatus; unread: boole
     );
   }
   return (
-    <span role="img" aria-label="Queued" className={MARK_FRAME}>
+    <span role="img" aria-label="In queue" className={MARK_FRAME}>
       <span className="block size-3.5 rounded-full border-[1.5px] border-dashed border-sky-500/70" />
     </span>
   );
@@ -151,7 +174,7 @@ export function TaskCard({ task, now, unread, selected, dragging, starting, inve
   onArchive: (threadId: string) => void;
   /** Park an idle card, or unpark a parked one. */
   onPark: (threadId: string, parked: boolean) => void;
-  /** Start a startable Queue card now, past the WIP limit. */
+  /** Start a startable Queue card now, past the working limit. */
   onStart: (threadId: string) => void;
   /** A drag of this card started (its thread id) or ended (null). */
   onDragChange: (threadId: string | null) => void;
@@ -236,7 +259,7 @@ export function TaskCard({ task, now, unread, selected, dragging, starting, inve
   const text = (
     <span className="line-clamp-2 text-[12px] leading-[18px] group-hover:line-clamp-3">
       {category ? (
-        <span className="mr-1.5 mt-px inline-flex h-4 max-w-[45%] items-center rounded-[4px] bg-muted px-1 align-top text-[9px] font-semibold uppercase leading-none tracking-[0.06em] text-muted-foreground">
+        <span className="mr-1.5 mt-px inline-flex h-4 max-w-[80%] items-center rounded-[4px] bg-muted px-1 align-top text-[9px] font-semibold uppercase leading-none tracking-[0.04em] text-muted-foreground">
           <span className="truncate">{category}</span>
         </span>
       ) : null}
@@ -259,10 +282,10 @@ export function TaskCard({ task, now, unread, selected, dragging, starting, inve
   const activity = taskActivityTime(task);
   const canOpen = !task.missingThread;
   // Done cards don't repeat "Completed"; parked ones say how they were left, so they do.
-  const reason = task.statusReason && task.status !== "done" && task.statusReason !== "Running" ? task.statusReason : null;
-  // Idle cards can be parked, and parked ones unparked; running ones can't be either.
+  const reason = task.statusReason && task.status !== "done" && task.statusReason !== "Working" ? task.statusReason : null;
+  // Idle cards can be parked, and parked ones unparked; working ones can't be either.
   const parkToggle = canOpen && task.status !== "wip";
-  // Idle cards outside Parked can also be dragged there; a startable Queue card can also be dropped on WIP to start it.
+  // Idle cards outside Parked can also be dragged there; a startable Queue card can also be dropped on Working to start it.
   const canDrag = parkToggle && !parked;
 
   // Selection wins over the column/unread border; the blocked stripe and the parked dashes stay either way.
@@ -326,8 +349,16 @@ export function TaskCard({ task, now, unread, selected, dragging, starting, inve
         canOpen ? "cursor-pointer" : ""
       } ${dragging ? "opacity-40" : ""} ${stateClass} ${surfaceClass}`}
     >
-      <div className="flex items-start gap-2">
+      {/* Status, harness and context fill: one column down the card's left gutter, spread over its padded height
+          (status on the title's first line, the ring on the footer's), so the marks never add height. */}
+      <div className="absolute bottom-1.5 left-2.5 top-2 flex w-4 flex-col items-center justify-between">
         <TaskStatusMark status={task.status} unread={unread} />
+        <ModelMark provider={provider} />
+        <span className="flex h-5 items-center">
+          <ContextPie session={task.session} />
+        </span>
+      </div>
+      <div className="flex items-start gap-2 pl-6">
         {/* Always two lines tall, so the hover's third line overlays the footer instead of resizing the card. */}
         {canOpen ? (
           <button
@@ -352,7 +383,7 @@ export function TaskCard({ task, now, unread, selected, dragging, starting, inve
           <button
             type="button"
             aria-label="Start thread now"
-            title="Start now, past the WIP limit"
+            title="Start now, past the working limit"
             disabled={starting}
             className="inline-flex size-5 items-center justify-center rounded-md text-muted-foreground/70 transition-[color,background-color] duration-150 hover:bg-accent hover:text-foreground focus-visible:bg-accent focus-visible:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:pointer-events-none pointer-coarse:size-7"
             onClick={() => onStart(task.threadId)}
@@ -385,21 +416,19 @@ export function TaskCard({ task, now, unread, selected, dragging, starting, inve
 
       {/* Hidden while the card is hovered: the summary takes the line, and the tooltip has these facts. */}
       <div className="mt-1 flex h-5 items-center gap-2 pl-6 group-hover:pointer-events-none group-hover:opacity-0">
-        <div className="flex min-w-0 flex-1 items-center gap-1">
-          {activity !== null ? (
-            <time
-              dateTime={new Date(activity).toISOString()}
-              className="shrink-0 whitespace-nowrap text-[10.5px] tabular-nums text-muted-foreground/80"
-            >
-              {formatRelativeTime(activity, now)}
-            </time>
-          ) : null}
+        <div className="flex min-w-0 flex-1 items-center gap-1.5">
+          <SessionCost session={task.session} />
           {reason ? <FooterNote tone={`opacity-90 ${meta.title}`} text={reason} /> : null}
           {task.missingThread ? <FooterNote tone={ACCENT_TEXT.rose} text="no thread" /> : null}
         </div>
-        <div className="flex shrink-0 items-center">
-          <HarnessMeta provider={provider} session={task.session} />
-        </div>
+        {activity !== null ? (
+          <time
+            dateTime={new Date(activity).toISOString()}
+            className="shrink-0 whitespace-nowrap text-[10.5px] tabular-nums text-muted-foreground/80"
+          >
+            {formatRelativeTime(activity, now)}
+          </time>
+        ) : null}
       </div>
       {tooltipOpen ? <CardTooltip id={tooltipId} anchor={ref} provider={provider} session={task.session} /> : null}
     </article>

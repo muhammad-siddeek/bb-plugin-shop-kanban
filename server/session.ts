@@ -13,7 +13,7 @@ import type { ProviderSessions, ThreadReader } from "./threads";
 // reports nothing, so omp and Pi threads are read from their transcripts on the thread's host instead
 // (omp's subagents at every depth included). Other harnesses count as bb reports them.
 
-/** Refresh cadence: running threads spend tokens mid-turn without bumping `updatedAt`. */
+/** Refresh cadence: working threads spend tokens mid-turn without bumping `updatedAt`. */
 const RUNNING_REFRESH_MS = 5_000;
 const IDLE_REFRESH_MS = 60_000;
 /** Model catalogs barely change; a cold provider can answer with no models, so retry those sooner. */

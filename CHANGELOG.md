@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.14.1
+
+- One word for a thread with a turn in progress: Working. The WIP column is
+  now Working and its limit the working limit. The chip reads
+  `3/5 working · 2 in queue`, the choices `Max N working`; a card it holds
+  reads "Waiting to start" (was "Waiting for a WIP slot"), and bb's queue row
+  says "Working limit reached" or "Working limit is 0". Card status marks and
+  reasons read Working, `N child threads working` and In queue (were In
+  progress, `N child threads running` and Queued), and parking a working
+  thread from the CLI says it is working. Column ids (`wip` in `board_list`,
+  `bb shop-kanban list`) and `board_set_wip_limit` are unchanged.
+- The Working mark is an amber petal spinner (was a spinning arc), so it
+  doesn't look like the context meter under it.
+- Queue gets three tabs, kept across reloads: **Queue** (its threads),
+  **In** (the review queue, then issues assigned to you) and **Out** (your
+  open pull requests, drafts included, and ones merged in the last 30 days).
+  A merged pull request stays in Out until you mark it Measured and Demoed,
+  or archive it. Each item's title drafts a thread that takes it further:
+  land it, measure and demo it, or work the issue. New settings:
+  `outgoingSearches`, `shippedSearches`, `shippedDays`, `assignedSearches`.
+  Reviews are no longer a collapsible section above Queue's cards, and the
+  header `+` is gone (the New thread button stays).
+- Parked is a section under the Queue tab, below the queued threads (was a
+  column under Done). Drag a finished thread onto it to come back to it later.
+- The In tab's count covers only pull requests requested of you by name, not
+  your teams'.
+- Cards stack the status mark, the harness icon (grey) and a context pie
+  (was a ring with a percentage; dim grey until amber at 70%) down their
+  left edge, at the same card height. The footer has the cost and status on
+  the left and the time on the right (was the other way round). The
+  percentage is in the tooltip.
+- A card's `[tag]` pill takes up to 80% of the title line (was 45%), so it
+  rarely cuts off.
+- A thread that errored and then got a follow-up shows in Queue while the
+  follow-up waits to send, instead of Blocked ("Errored") in Working.
+
 ## 0.14.0
 
 - Agents stop reporting to the board. Columns have followed live thread

@@ -127,8 +127,8 @@ export type LabelView = { title: string | null; summary: string | null; needsInp
 type Derived = { status: Status; reason: string; description: string | null; runningChildren: number };
 
 /**
- * Doing work, itself or through a child, rather than waiting on the user: a card in WIP that is not blocked. Such a
- * thread can't be parked, and a parked one shows in WIP while it works.
+ * Doing work, itself or through a child, rather than waiting on the user: a card in Working that is not blocked. Such a
+ * thread can't be parked, and a parked one shows in Working while it works.
  */
 export function isWorking(thread: LiveThread, descendants: LiveThread[]): boolean {
   return !thread.hasPendingInteraction && (isRunningSelf(thread) || descendants.some(isRunningSelf));
@@ -153,17 +153,18 @@ export function deriveStatus(
   const prompt = excerpt(details.lastUserPrompt);
   const errored = thread.status === "error" || thread.displayStatus === "error" || thread.queuedWork === "failed";
   const childWaiting = descendants.some((child) => child.hasPendingInteraction);
-  const children = `${runningChildren} child thread${runningChildren === 1 ? "" : "s"} running`;
+  const children = `${runningChildren} child thread${runningChildren === 1 ? "" : "s"} working`;
 
   // The first rule that holds wins. `from` lists the description's sources by preference; the labeler's summary,
   // when there is one, beats them all.
   type Rule = [when: () => boolean, status: Status, reason: string, from: (string | null)[]];
   const rules: Rule[] = [
     [() => thread.hasPendingInteraction, "blocked", "Waiting for your response", [reply, prompt]],
-    [() => runningSelf, "wip", "Running", [prompt]],
+    [() => runningSelf, "wip", "Working", [prompt]],
     [() => runningChildren > 0, "wip", children, [prompt]],
-    [() => errored, "blocked", "Errored", [error, reply, prompt]],
+    // A message waiting to send answers the error: the thread waits to start, not on the user.
     [() => thread.status === "pending" || thread.queuedWork === "waiting", "queue", "Queued", [prompt]],
+    [() => errored, "blocked", "Errored", [error, reply, prompt]],
     [() => childWaiting, "blocked", "A child thread is waiting for your response", [reply, prompt]],
     [() => !details.output?.trim(), "queue", "Not started", [prompt]],
     [() => label.needsInput ?? asksForInput(details.output ?? ""), "blocked", "Asked a question", [reply]],

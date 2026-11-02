@@ -24,6 +24,7 @@ import { createThreadReader } from "./server/threads";
 import { createSearchIndex } from "./server/search";
 import { createReviewQueue } from "./server/reviews";
 import { createWipLimit } from "./server/wip-limit";
+import { createWorkLists } from "./server/work";
 
 export { rpcContract } from "./server/schema";
 
@@ -81,6 +82,7 @@ export default async function plugin(bb: BbPluginApi) {
   const sessions = createSessionInfo(bb, reader);
   const search = createSearchIndex(bb, reader);
   const reviews = createReviewQueue(bb, labels);
+  const work = createWorkLists(bb);
   const wip = createWipLimit(bb, reader, publishBoardChanged);
   const loggedAt = new Map<string, number>();
 
@@ -201,7 +203,7 @@ export default async function plugin(bb: BbPluginApi) {
       note: derived.description,
       childCount,
       runningChildCount: derived.runningChildren,
-      statusReason: derived.status === "queue" && wip.isWaiting(thread.id) ? "Waiting for a WIP slot" : derived.reason,
+      statusReason: derived.status === "queue" && wip.isWaiting(thread.id) ? "Waiting to start" : derived.reason,
       startable: derived.status === "queue" && thread.queuedWork === "waiting",
       unread: thread.latestAttentionAt !== null && (thread.lastReadAt === null || thread.latestAttentionAt > thread.lastReadAt),
       createdAt: stored?.createdAt ?? iso(thread.createdAt),
@@ -308,14 +310,14 @@ export default async function plugin(bb: BbPluginApi) {
       ),
     );
 
-    // Oldest first (earlier timestamp at the top): running threads by when they started, the rest by last update.
+    // Oldest first (earlier timestamp at the top): working threads by when they started, the rest by last update.
     const sortTime = (task: BoardTask) => Date.parse(task.status === "wip" ? task.createdAt : task.updatedAt) || 0;
     tasks.sort((a, b) => sortTime(a) - sortTime(b));
 
     return { columns, tasks, wipLimit: wip.view() };
   }
 
-  /** Park an idle thread, or unpark one; returns its card. A running thread can't be parked. */
+  /** Park an idle thread, or unpark one; returns its card. A working thread can't be parked. */
   async function parkTask(threadId: string, parked: boolean): Promise<BoardTask> {
     const [thread, descendants] = await Promise.all([
       reader.threadsById([threadId]).then((threads) => threads.get(threadId)),
@@ -324,7 +326,7 @@ export default async function plugin(bb: BbPluginApi) {
     if (!thread || thread.archivedAt !== null) throw new Error(`No thread ${threadId} on the board.`);
     const children = descendants ?? [];
     if (parked && isWorking(thread, children)) {
-      throw new Error(`${thread.title ?? threadId} is running; park it once it settles.`);
+      throw new Error(`${thread.title ?? threadId} is working; park it once it settles.`);
     }
     await setParked(threadId, parked);
     const [stored, parkedAll] = await Promise.all([readTasks(), readParked()]);
@@ -338,7 +340,7 @@ export default async function plugin(bb: BbPluginApi) {
   }
 
   /**
-   * Start a Queue card now: send its thread's next waiting message with bb's Send now, which skips the WIP limit (and
+   * Start a Queue card now: send its thread's next waiting message with bb's Send now, which skips the working limit (and
    * any other dispatch hold) by bb's design, as the composer's Send now does. Returns its card.
    */
   async function startTask(threadId: string): Promise<BoardTask> {
@@ -369,7 +371,7 @@ export default async function plugin(bb: BbPluginApi) {
       children,
       children.filter((entry) => entry.parentThreadId === threadId).length,
     );
-    // Nothing to send is fine when the card already left Queue (a second click, or a WIP slot freed meanwhile).
+    // Nothing to send is fine when the card already left Queue (a second click, or a working slot freed meanwhile).
     if (!row && card.status === "queue") throw new Error("Nothing is waiting to be sent in this thread.");
     return card;
   }
@@ -458,6 +460,8 @@ export default async function plugin(bb: BbPluginApi) {
     reviews_mark_read: ({ id }) => reviews.markRead(id),
     reviews_archive: ({ id }) => reviews.archive(id),
     reviews_submit: ({ id, verdict, body }) => reviews.submit(id, verdict, body),
+    work_list: () => work.list(),
+    work_mark: ({ id, mark, on }) => work.mark(id, mark, on),
   });
 
   const boardApi = { listBoard, spawnTask, removeTask, parkTask };
@@ -472,7 +476,7 @@ export default async function plugin(bb: BbPluginApi) {
   }
 
   on("thread.active", async ({ thread }) => {
-    // Running again takes a thread out of Parked; when it settles it goes where its new state says.
+    // Working again takes a thread out of Parked; when it settles it goes where its new state says.
     await setParked(thread.id, false);
   });
 
@@ -519,6 +523,7 @@ export default async function plugin(bb: BbPluginApi) {
     labels.dispose();
     search.dispose();
     reviews.dispose();
+    work.dispose();
     wip.dispose();
     bb.log.info("disposed");
   });

@@ -39,6 +39,8 @@ const searchSchema = z
           updated_at: z.string(),
           labels: z.array(z.object({ name: z.string() }).loose()).nullish(),
           head: z.object({ sha: z.string() }).loose().nullish(),
+          /** Present on pull request rows only. */
+          pull_request: z.object({ merged_at: z.string().nullish() }).loose().nullish(),
         })
         .loose(),
     ),
@@ -122,15 +124,18 @@ export async function prSearch(input: { forge: Forge; repo: string | null; query
   const result = await api(input.forge, input.repo, endpoint, searchSchema, signal);
   if (!result.ok) return { prs: [], total: 0, error: result.error, missing: result.missing };
   const prs = result.value.items.flatMap((item): ForgePr[] => {
-    // Search rows are issues too; a pull request's page is `/<owner>/<repo>/pull/<n>`.
-    const repo = item.html_url.match(/^https?:\/\/[^/]+\/([^/]+\/[^/]+)\/pulls?\/\d+/)?.[1];
-    if (!repo) return [];
+    // Search rows are pull requests (`/<owner>/<repo>/pull/<n>`) or issues (`/<owner>/<repo>/issues/<n>`).
+    const page = item.html_url.match(/^https?:\/\/[^/]+\/([^/]+\/[^/]+)\/(pulls?|issues)\/\d+/);
+    if (!page) return [];
+    const repo = page[1];
+    const kind = page[2] === "issues" && !item.pull_request ? "issue" : "pr";
     const brand = item.user?.service_brand?.display_name;
     const login = item.user?.login ?? "";
     // Delta logins are email addresses; their local part is the name people know.
     const author = brand ?? login.replace(/\[bot\]$/, "").replace(/@.*$/, "");
     return [
       {
+        kind,
         repo,
         number: item.number,
         title: item.title,
@@ -142,6 +147,7 @@ export async function prSearch(input: { forge: Forge; repo: string | null; query
         updatedAt: item.updated_at,
         labels: (item.labels ?? []).map((label) => label.name),
         headSha: item.head?.sha ?? null,
+        mergedAt: item.pull_request?.merged_at ?? null,
       },
     ];
   });

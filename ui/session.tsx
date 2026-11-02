@@ -7,14 +7,15 @@ export type AgentProvider = PluginProvidersState["providers"][number];
 
 const VIEWPORT_MARGIN = 8;
 const ANCHOR_GAP = 8;
-/** Context fill (0-1) where the ring turns amber, then red. */
+/** Context fill (0-1) where the pie turns amber, then red. */
 const CONTEXT_WARN = 0.7;
 const CONTEXT_CRITICAL = 0.9;
-// The ring is drawn in currentColor, so its percentage and stroke share the accent.
+// The pie is drawn in currentColor, so its wedge and disc share the accent.
 const WARN_TONE = { ring: ACCENT_TEXT.amber, bar: "bg-amber-500" };
 const CRITICAL_TONE = { ring: ACCENT_TEXT.rose, bar: "bg-rose-500" };
-const RING_RADIUS = 4.5;
-const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
+/** The pie's outer radius in its 12-unit box. Its wedge is a circle at half this radius stroked the full radius wide. */
+const PIE_RADIUS = 5.5;
+const WEDGE_CIRCUMFERENCE = Math.PI * PIE_RADIUS;
 /**
  * bb wraps provider artwork in a `min-w-max` span, and the artwork's SVG is `size-full` with no width or
  * height, so Safari sizes it at the 300px SVG default and every card overflows its column by ~270px.
@@ -68,36 +69,53 @@ function sessionFacts(session: BoardSession | null) {
   return { cost, spent, fill, percent, tone, tokens, details };
 }
 
-/** Harness icon, session cost and context-window fill for a card's footer; the card's tooltip has the details. */
-export function HarnessMeta({ provider, session }: { provider: AgentProvider | null; session: BoardSession | null }) {
-  const { cost, spent, fill, percent, tone } = sessionFacts(session);
-  if (!provider && cost === null && percent === null) return null;
+/** The session's cost for a card's footer; the card's tooltip has the details. */
+export function SessionCost({ session }: { session: BoardSession | null }) {
+  const { cost, spent } = sessionFacts(session);
+  if (cost === null) return null;
   return (
-    <span
-      role="img"
-      aria-label={[provider?.displayName, spent, percent && `${percent} of context used`].filter(Boolean).join(", ")}
-      className="inline-flex h-5 shrink-0 items-center gap-2 whitespace-nowrap text-[10.5px] tabular-nums text-muted-foreground/80"
-    >
-      {cost !== null ? <span>{cost}</span> : null}
-      {fill !== null ? (
-        <span className={`inline-flex items-center gap-0.5 ${tone?.ring ?? ""}`}>
-          <svg viewBox="0 0 12 12" className="size-3 -rotate-90" aria-hidden>
-            <circle cx="6" cy="6" r={RING_RADIUS} fill="none" stroke="currentColor" strokeOpacity={0.25} strokeWidth="2" />
-            <circle
-              cx="6"
-              cy="6"
-              r={RING_RADIUS}
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeDasharray={`${RING_CIRCUMFERENCE * Math.min(fill, 1)} ${RING_CIRCUMFERENCE}`}
-            />
-          </svg>
-          {percent}
-        </span>
-      ) : null}
-      {provider ? <ProviderIcon providerKind="agent" provider={provider} className={PROVIDER_ICON} aria-hidden /> : null}
+    <span aria-label={spent ?? undefined} className="inline-flex h-5 shrink-0 items-center whitespace-nowrap text-[10.5px] tabular-nums text-muted-foreground/80">
+      {cost}
     </span>
+  );
+}
+
+/** The thread's harness icon, small and greyed so it sits under the status mark without competing with it. */
+export function ModelMark({ provider }: { provider: AgentProvider | null }) {
+  if (!provider) return null;
+  return (
+    <span role="img" aria-label={provider.displayName} title={provider.displayName} className="inline-flex">
+      <ProviderIcon providerKind="agent" provider={provider} className="size-3 shrink-0 opacity-60 grayscale [&>svg]:size-3" aria-hidden />
+    </span>
+  );
+}
+
+/**
+ * Context-window fill as a pie: a solid wedge over a faint disc. Dimmer than the grey harness icon above it until it
+ * turns amber, then red, as the window fills. Filled rather than stroked, so it never reads as the Working spinner.
+ */
+export function ContextPie({ session }: { session: BoardSession | null }) {
+  const { fill, percent, tone } = sessionFacts(session);
+  if (fill === null) return null;
+  return (
+    <svg
+      role="img"
+      aria-label={`${percent} of context used`}
+      viewBox="0 0 12 12"
+      className={`size-3 -rotate-90 ${tone?.ring ?? "text-muted-foreground/45"}`}
+    >
+      <title>{`${percent} of context used`}</title>
+      <circle cx="6" cy="6" r={PIE_RADIUS} fill="currentColor" fillOpacity={0.2} />
+      <circle
+        cx="6"
+        cy="6"
+        r={PIE_RADIUS / 2}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={PIE_RADIUS}
+        strokeDasharray={`${WEDGE_CIRCUMFERENCE * Math.min(fill, 1)} ${WEDGE_CIRCUMFERENCE}`}
+      />
+    </svg>
   );
 }
 

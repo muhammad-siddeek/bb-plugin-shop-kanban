@@ -2,7 +2,7 @@ import { z } from "zod";
 import { forgeInput } from "../contract";
 
 /**
- * A card's state. Blocked cards (waiting on the user or errored) sit in the WIP column, marked red; Parked holds idle
+ * A card's state. Blocked cards (waiting on the user or errored) sit in the Working column, marked red; Parked holds idle
  * threads the user set aside to come back to.
  */
 export const STATUS_IDS = ["queue", "wip", "blocked", "done", "parked"] as const;
@@ -28,11 +28,11 @@ export const COLUMNS: Record<Column, z.infer<typeof boardColumnSchema>> = {
   queue: { id: "queue", title: "Queue", description: "Threads waiting to be started." },
   wip: {
     id: "wip",
-    title: "WIP",
-    description: "Threads running or with running children, and idle threads blocked on user input or an error.",
+    title: "Working",
+    description: "Threads with a turn in progress, themselves or in a child thread, and idle threads blocked on user input or an error.",
   },
   done: { id: "done", title: "Done", description: "Idle threads whose last message reported completion." },
-  parked: { id: "parked", title: "Parked", description: "Idle threads set aside for later, until they run again." },
+  parked: { id: "parked", title: "Parked", description: "Idle threads set aside for later, until they start working again." },
 };
 
 const threadSummarySchema = z.object({
@@ -87,7 +87,7 @@ const boardTaskSchema = z.object({
   childCount: z.number(),
   runningChildCount: z.number(),
   statusReason: z.string().nullable(),
-  /** In Queue with a message waiting to send (held for a WIP slot, or otherwise queued), so starting it now can send it. */
+  /** In Queue with a message waiting to send (held by the working limit, or otherwise queued), so starting it now can send it. */
   startable: z.boolean(),
   /** bb's unread state: new activity since the user last opened the thread. */
   unread: z.boolean(),
@@ -99,9 +99,9 @@ const boardTaskSchema = z.object({
   session: boardSessionSchema.nullable(),
 });
 
-/** The highest WIP limit the board takes. */
+/** The highest working limit the board takes. */
 export const WIP_LIMIT_MAX = 50;
-/** The WIP limit: at most `limit` cards running at once (null: no limit), and how many threads wait for a slot. */
+/** The working limit: at most `limit` cards working at once (null: no limit), and how many threads wait for a slot. */
 const wipLimitSchema = z.object({ limit: z.number().int().nullable(), waiting: z.number().int() });
 export type WipLimitView = z.infer<typeof wipLimitSchema>;
 
@@ -189,6 +189,59 @@ const reviewStateSchema = z.object({
   error: z.string().nullable(),
 });
 
+/**
+ * The Queue column's pull request lists beside Reviews: `open`, the user's open pull requests, drafts included;
+ * `shipped`, their recently merged ones not yet both measured and demoed; `assigned`, open issues assigned to them.
+ */
+export const workListSchema = z.enum(["open", "shipped", "assigned"]);
+
+/** A pull request or issue in one of the work lists. */
+const workItemSchema = z.object({
+  /** `<forge>:<owner>/<repo>#<number>` */
+  id: z.string(),
+  list: workListSchema,
+  forge: forgeInput,
+  kind: z.enum(["pr", "issue"]),
+  repo: z.string(),
+  number: z.number(),
+  url: z.string(),
+  title: z.string(),
+  author: z.string(),
+  draft: z.boolean(),
+  labels: z.array(z.string()),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  mergedAt: z.string().nullable(),
+  /** Shipped only: the user marked its impact measured, or its change demoed. */
+  measured: z.boolean(),
+  demoed: z.boolean(),
+});
+
+const workSourceSchema = z.object({
+  search: z.string(),
+  list: workListSchema,
+  /** Matches read, before archived (and, for shipped, measured-and-demoed) ones are hidden. */
+  count: z.number(),
+  total: z.number(),
+  error: z.string().nullable(),
+  /** Cannot run here: no connected persistent host, or the forge's CLI is not installed or not signed in. Shown quietly. */
+  missing: z.boolean(),
+});
+
+const workStateSchema = z.object({
+  /** Lists with at least one search line; a list without one is hidden. */
+  lists: z.array(workListSchema),
+  /** Open and assigned: most recently updated first. Shipped: most recently merged first. */
+  items: z.array(workItemSchema),
+  sources: z.array(workSourceSchema),
+  refreshing: z.boolean(),
+  refreshedAt: z.number().nullable(),
+  error: z.string().nullable(),
+});
+
+/** What a work mark records: archived hides an item for good; shipped ones leave once both measured and demoed. */
+export const workMarkSchema = z.enum(["archived", "measured", "demoed"]);
+
 const reviewRefSchema = z.object({ id: z.string().min(1).max(300) });
 const okSchema = z.object({ ok: z.boolean() });
 
@@ -204,12 +257,12 @@ export const rpcContract = {
     output: boardTaskSchema,
   },
   board_remove_task: { input: threadRefSchema, output: z.object({ removed: z.boolean() }) },
-  /** Park an idle thread (it stays in Parked until it runs again), or unpark it. */
+  /** Park an idle thread (it stays in Parked until it starts working again), or unpark it. */
   board_park_task: { input: z.object({ threadId: z.string(), parked: z.boolean() }), output: boardTaskSchema },
-  /** Start a Queue card now: send its waiting message with bb's Send now, past the WIP limit. */
+  /** Start a Queue card now: send its waiting message with bb's Send now, past the working limit. */
   board_start_task: { input: threadRefSchema, output: boardTaskSchema },
   board_mark_read: { input: threadRefSchema, output: z.object({ ok: z.boolean() }) },
-  /** Set the WIP limit (null: none); messages that would start another card past it wait in their thread's queue. */
+  /** Set the working limit (null: none); messages that would start another card past it wait in their thread's queue. */
   board_set_wip_limit: { input: z.object({ limit: z.number().int().min(0).max(WIP_LIMIT_MAX).nullable() }), output: wipLimitSchema },
   board_search: { input: z.object({ query: z.string().trim().min(1).max(200) }), output: searchResponseSchema },
   reviews_list: { input: z.null(), output: reviewStateSchema },
@@ -227,6 +280,9 @@ export const rpcContract = {
     }),
     output: okSchema,
   },
+  work_list: { input: z.null(), output: workStateSchema },
+  /** Set or clear a mark on a work item. */
+  work_mark: { input: z.object({ id: reviewRefSchema.shape.id, mark: workMarkSchema, on: z.boolean() }), output: okSchema },
 };
 
 /**
@@ -254,3 +310,8 @@ export type ReviewScope = z.infer<typeof reviewScopeSchema>;
 export type ReviewCard = z.infer<typeof reviewCardSchema>;
 export type ReviewSource = z.infer<typeof reviewSourceSchema>;
 export type ReviewState = z.infer<typeof reviewStateSchema>;
+export type WorkList = z.infer<typeof workListSchema>;
+export type WorkMark = z.infer<typeof workMarkSchema>;
+export type WorkItem = z.infer<typeof workItemSchema>;
+export type WorkSource = z.infer<typeof workSourceSchema>;
+export type WorkState = z.infer<typeof workStateSchema>;
