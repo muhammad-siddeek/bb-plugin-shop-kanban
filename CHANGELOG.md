@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.15.0
+
+- The title bar shows how close the bb machine is to running out of CPU,
+  memory, disk or battery, also when you open bb from another device. Each
+  gauge is a half-transparent capsule in the metric's color with a solid icon
+  and a percentage cut out of it, where high always means danger: CPU busy
+  (blue chip), memory pressure (red memory stick; not "used", which macOS
+  keeps full), disk full (yellow hard drive), and battery drain (green
+  battery, AC when plugged in). A capsule turns amber, then rose, as it nears
+  running out. Click for a Headroom / Busy / Strained verdict, advice, exact
+  figures, swap activity and the heaviest apps. New RPCs: `system_stats`,
+  `system_processes`.
+
+- The Hide board button is a solid circle (white in dark mode) so it stands out.
+
 ## 0.14.1
 
 - One word for a thread with a turn in progress: Working. The WIP column is

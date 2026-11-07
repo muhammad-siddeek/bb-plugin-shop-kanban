@@ -151,6 +151,35 @@ With labels off, or when the CLI is unavailable, threads use heuristic titles
 and an excerpt of the latest message. A missing CLI is logged once an hour
 with this hint, and labels are retried right after either setting changes.
 
+## Machine resources
+
+The right end of the title bar shows how close the machine bb runs on (the
+one your threads use, even when you open bb from another device) is to running
+out of CPU, memory, disk or battery. Each gauge is a capsule in the metric's
+own color, half transparent, with a solid icon and a percentage cut out of it
+so the title bar shows through: blue CPU (chip), red memory (memory stick),
+yellow disk (hard drive), green battery. Every gauge reads as danger: a high
+number always means trouble, and the capsule turns amber, then red, as it nears
+running out. The panel it opens sums it up as Headroom, Busy or Strained.
+
+- **CPU**: share of all cores busy, averaged over 10 seconds. Amber at 80%, red at 95%.
+- **Memory**: memory pressure, 100 minus what macOS counts as available to apps
+  (not "used", which macOS keeps full on purpose). Amber at 80%, red at 90%.
+  macOS's own pressure warning, or swapping above 10 MB/s, lifts it into amber
+  or red whatever the percentage.
+- **Disk**: how full the home volume is. Amber at 90% or under 25 GB free,
+  red at 96% or under 10 GB free.
+- **Battery**: how much charge is drained while unplugged. Amber at 80%
+  drained (20% left), red at 90%. Plugged in it reads AC beside a charging
+  battery: there is nothing to run out of.
+
+Click it for advice on what to stop or clear, each gauge's exact figures (GB
+available, swap activity, GB free, time left), and the heaviest apps by CPU or
+memory, helper processes counted with their app.
+
+The plugin server samples every 2 seconds while a board is open, and stops
+30 seconds after the last board closes or is hidden.
+
 ## Thread search
 
 The search bar in the board's title bar finds past threads, archived
@@ -329,7 +358,7 @@ bb shop-kanban remove <thread-id> [--json]   # archives the thread; exits 1 if n
 From the bb plugin store, or from this repository:
 
 ```sh
-bb plugin install git:https://github.com/muhammad-siddeek/bb-plugin-shop-kanban.git@^0.14.0
+bb plugin install git:https://github.com/muhammad-siddeek/bb-plugin-shop-kanban.git@^0.15.0
 ```
 
 ## Development

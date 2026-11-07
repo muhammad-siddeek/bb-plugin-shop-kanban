@@ -7,6 +7,7 @@ import { useBoard, useReviews, useWork } from "./hooks";
 import { IconButton } from "./primitives";
 import { BoardView } from "./column";
 import { ThreadSearch } from "./search";
+import { SystemMonitor } from "./system";
 
 const PLUGIN_ICON = "ListTodo";
 const DEFAULT_PANEL_MIN_HEIGHT = 320;
@@ -155,7 +156,7 @@ export function BottomBoardOverlay() {
       </div>
 
       {/* `relative`: on phones the search dropdown spans this bar instead of hanging off the search box. */}
-      <div className="relative flex h-10 shrink-0 items-center gap-2.5 border-b border-border/60 pl-3.5 pr-2 pointer-coarse:h-12 pointer-coarse:pr-1">
+      <div className="relative flex h-10 shrink-0 items-center gap-2.5 border-b border-border/60 pl-3.5 pr-2 pointer-coarse:h-12 pointer-coarse:pr-1 max-sm:gap-1.5 max-sm:pl-2.5 max-sm:pr-1">
         <div className="flex min-w-0 items-center gap-2">
           <span className="inline-flex size-6 shrink-0 items-center justify-center rounded-md bg-muted text-foreground">
             <Icon name={PLUGIN_ICON} className="size-3.5" aria-hidden />
@@ -164,17 +165,20 @@ export function BottomBoardOverlay() {
           <span className="truncate text-[13px] font-semibold tracking-tight text-foreground max-sm:sr-only">{PLUGIN_NAME}</span>
         </div>
         {board ? (
-          <span className="hidden items-center gap-2.5 text-xs tabular-nums text-muted-foreground sm:inline-flex">
+          <span className="hidden items-center gap-2.5 text-xs tabular-nums text-muted-foreground lg:inline-flex">
             <span aria-hidden className="h-3.5 w-px bg-border" />
             {board.tasks.length} thread{board.tasks.length === 1 ? "" : "s"}
           </span>
         ) : null}
         <CountBadge status="blocked" count={count("blocked")} />
-        <div className="ml-3 min-w-0 max-sm:ml-0 max-sm:flex-1">
+        <div className="ml-3 min-w-0 max-lg:ml-0 max-lg:flex-1">
           {/* Header (40px, 48px on touch) plus a little breathing room below the list. */}
           <ThreadSearch maxListHeight={panelHeight - 56} />
         </div>
-        <IconButton icon="ChevronDown" label="Hide board" onClick={() => setOpen(false)} className="ml-auto" />
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+          <SystemMonitor maxPanelHeight={panelHeight - 56} />
+          <IconButton icon="ChevronDown" label="Hide board" onClick={() => setOpen(false)} solid />
+        </div>
       </div>
 
       <div className="min-h-0 flex-1">

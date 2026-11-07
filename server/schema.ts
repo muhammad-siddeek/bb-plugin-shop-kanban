@@ -242,6 +242,85 @@ const workStateSchema = z.object({
 /** What a work mark records: archived hides an item for good; shipped ones leave once both measured and demoed. */
 export const workMarkSchema = z.enum(["archived", "measured", "demoed"]);
 
+/** macOS memory pressure (kern.memorystatus_vm_pressure_level), the signal Activity Monitor's pressure graph shows. */
+export const memoryPressureSchema = z.enum(["normal", "warn", "critical"]);
+
+/**
+ * The bb server machine's resources: the computer bb runs on, not the browser viewing it. Byte counts are bytes, rates
+ * bytes per second. Fields the OS can't report are null.
+ */
+export const systemStatsSchema = z.object({
+  /** The machine's display name ("Muhammad's MacBook Pro"), else its hostname. */
+  name: z.string(),
+  platform: z.string(),
+  uptimeSec: z.number(),
+  sampledAt: z.number(),
+  intervalMs: z.number(),
+  cpu: z.object({
+    /** Share of all cores busy over the last interval, 0-100. */
+    percent: z.number(),
+    cores: z.number(),
+    /** Core clusters (Apple silicon's performance levels), largest first; empty when the OS doesn't group them. */
+    groups: z.array(z.object({ name: z.string(), cores: z.number() })),
+    /** 1, 5 and 15 minute load averages; null on Windows. */
+    load: z.tuple([z.number(), z.number(), z.number()]).nullable(),
+  }),
+  memory: z.object({
+    total: z.number(),
+    /** What Activity Monitor calls Memory Used: app memory + wired + compressed (macOS); total - available (Linux). */
+    used: z.number(),
+    app: z.number().nullable(),
+    wired: z.number().nullable(),
+    compressed: z.number().nullable(),
+    /** File cache macOS hands back to apps on demand. */
+    cached: z.number().nullable(),
+    pressure: memoryPressureSchema.nullable(),
+    /** Share of memory the OS counts as free for apps, 0-100 (kern.memorystatus_level on macOS, MemAvailable on Linux). */
+    availablePercent: z.number().nullable(),
+  }),
+  swap: z
+    .object({
+      total: z.number(),
+      used: z.number(),
+      /** Paging to and from swap over the last interval; null until two samples exist. */
+      inPerSec: z.number().nullable(),
+      outPerSec: z.number().nullable(),
+    })
+    .nullable(),
+  /** The volume holding the home directory, where projects, caches and bb's data live. */
+  disk: z.object({ total: z.number(), free: z.number() }).nullable(),
+  battery: z
+    .object({
+      percent: z.number(),
+      onBattery: z.boolean(),
+      /** "charging", "discharging", "charged", ... as the OS words it. */
+      state: z.string(),
+      /** Minutes left (to empty on battery, to full while charging); null while the OS is still estimating. */
+      minutesLeft: z.number().nullable(),
+    })
+    .nullable(),
+  /** Recent samples, oldest first, one per interval: CPU percent and memory used percent. */
+  history: z.object({ cpu: z.array(z.number()), memory: z.array(z.number()), swapRate: z.array(z.number()) }),
+});
+export type SystemStats = z.infer<typeof systemStatsSchema>;
+
+/** Processes grouped by executable name, the heaviest first by CPU and by memory. */
+export const systemProcessesSchema = z.object({
+  sampledAt: z.number(),
+  groups: z.array(
+    z.object({
+      name: z.string(),
+      count: z.number(),
+      /** Sum of `ps` %CPU (100 = one full core; a decaying average over the last minute on macOS). */
+      cpu: z.number(),
+      /** Resident memory, bytes. */
+      memory: z.number(),
+    }),
+  ),
+  error: z.string().nullable(),
+});
+export type SystemProcesses = z.infer<typeof systemProcessesSchema>;
+
 const reviewRefSchema = z.object({ id: z.string().min(1).max(300) });
 const okSchema = z.object({ ok: z.boolean() });
 
@@ -283,6 +362,10 @@ export const rpcContract = {
   work_list: { input: z.null(), output: workStateSchema },
   /** Set or clear a mark on a work item. */
   work_mark: { input: z.object({ id: reviewRefSchema.shape.id, mark: workMarkSchema, on: z.boolean() }), output: okSchema },
+  /** The bb server machine's CPU, memory, swap, disk and battery; reading starts a sampler that idles once reads stop. */
+  system_stats: { input: z.null(), output: systemStatsSchema },
+  /** The heaviest processes on the bb server machine, grouped by name. */
+  system_processes: { input: z.null(), output: systemProcessesSchema },
 };
 
 /**

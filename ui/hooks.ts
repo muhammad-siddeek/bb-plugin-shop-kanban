@@ -12,7 +12,7 @@ const READ_STALL_MS = 60_000;
  * One `read` at a time, so a slow server can't stack a request per tick; a call made mid-read runs once it
  * ends. A read that never settles fails after READ_STALL_MS, so polling carries on.
  */
-function singleFlight<T>(read: () => Promise<T>, receive: (value: T) => void, fail: (cause: unknown) => void): () => void {
+export function singleFlight<T>(read: () => Promise<T>, receive: (value: T) => void, fail: (cause: unknown) => void): () => void {
   let pending = false;
   let again = false;
   const run = () => {

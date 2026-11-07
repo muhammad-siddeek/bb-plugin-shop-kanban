@@ -25,6 +25,7 @@ import { createSearchIndex } from "./server/search";
 import { createReviewQueue } from "./server/reviews";
 import { createWipLimit } from "./server/wip-limit";
 import { createWorkLists } from "./server/work";
+import { createSystemMonitor } from "./server/system";
 
 export { rpcContract } from "./server/schema";
 
@@ -84,6 +85,7 @@ export default async function plugin(bb: BbPluginApi) {
   const reviews = createReviewQueue(bb, labels);
   const work = createWorkLists(bb);
   const wip = createWipLimit(bb, reader, publishBoardChanged);
+  const system = createSystemMonitor(bb);
   const loggedAt = new Map<string, number>();
 
   function publishBoardChanged() {
@@ -462,6 +464,8 @@ export default async function plugin(bb: BbPluginApi) {
     reviews_submit: ({ id, verdict, body }) => reviews.submit(id, verdict, body),
     work_list: () => work.list(),
     work_mark: ({ id, mark, on }) => work.mark(id, mark, on),
+    system_stats: () => system.stats(),
+    system_processes: () => system.processes(),
   });
 
   const boardApi = { listBoard, spawnTask, removeTask, parkTask };
@@ -525,6 +529,7 @@ export default async function plugin(bb: BbPluginApi) {
     reviews.dispose();
     work.dispose();
     wip.dispose();
+    system.dispose();
     bb.log.info("disposed");
   });
 }
