@@ -30,6 +30,41 @@ function clampPanelHeight(value: number): number {
   return Math.min(Math.max(value, PANEL_MIN_HEIGHT), maxPanelHeight());
 }
 
+/**
+ * Right edge of bb's left sidebar, in px (0 when it is collapsed or hidden, e.g. on phones). The board is a
+ * fixed bottom panel; starting it here instead of at the window's left edge keeps the sidebar's footer
+ * (settings, etc.) reachable. bb's in-flow `[data-sidebar="gap"]` spacer always tracks the sidebar's width,
+ * through collapse, rail mode, resizing and their animations.
+ */
+function useSidebarInset(): number {
+  const [inset, setInset] = useState(0);
+  useEffect(() => {
+    let gap: Element | null = null;
+    const observer = new ResizeObserver(() => measure());
+    const measure = () => {
+      if (!gap?.isConnected) {
+        if (gap) observer.unobserve(gap);
+        gap = document.querySelector('[data-sidebar="gap"]');
+        if (gap) observer.observe(gap);
+      }
+      setInset(gap ? Math.max(0, Math.round(gap.getBoundingClientRect().right)) : 0);
+    };
+    // The sidebar can mount after this overlay or be replaced; re-find it when ours has left the page.
+    const mutations = new MutationObserver(() => {
+      if (!gap?.isConnected) measure();
+    });
+    mutations.observe(document.body, { childList: true, subtree: true });
+    window.addEventListener("resize", measure);
+    measure();
+    return () => {
+      observer.disconnect();
+      mutations.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, []);
+  return inset;
+}
+
 function CountBadge({ status, count }: { status: "blocked" | "done"; count: number }) {
   if (count === 0) return null;
   return (
@@ -45,6 +80,7 @@ export function BottomBoardOverlay() {
     clampPanelHeight(Math.max(DEFAULT_PANEL_MIN_HEIGHT, Math.round(window.innerHeight * 0.48))),
   );
   const resizeCleanupRef = useRef<() => void>(() => {});
+  const sidebarInset = useSidebarInset();
   const api = useBoard();
   const reviews = useReviews();
   const work = useWork();
@@ -135,8 +171,8 @@ export function BottomBoardOverlay() {
 
   return (
     <div
-      className="fixed inset-x-0 bottom-0 z-50 flex flex-col border-t border-border bg-background/95 pb-[env(safe-area-inset-bottom)] shadow-[0_-12px_32px_-16px_rgba(0,0,0,0.35),0_-1px_0_0_rgba(0,0,0,0.04)] backdrop-blur-md"
-      style={{ height: `${panelHeight}px` }}
+      className="fixed right-0 bottom-0 z-50 flex flex-col border-t border-border bg-background/95 pb-[env(safe-area-inset-bottom)] shadow-[0_-12px_32px_-16px_rgba(0,0,0,0.35),0_-1px_0_0_rgba(0,0,0,0.04)] backdrop-blur-md"
+      style={{ height: `${panelHeight}px`, left: `${sidebarInset}px` }}
     >
       <div
         role="separator"

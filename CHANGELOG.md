@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.15.1
+
+- The open board no longer covers the bottom of bb's left sidebar (settings and
+  the other footer controls). The panel now starts at the sidebar's right edge
+  and follows it as it collapses, switches to the rail or is resized; with the
+  sidebar hidden, as on phones, it still spans the full width.
+
 ## 0.15.0
 
 - The title bar shows how close the bb machine is to running out of CPU,
