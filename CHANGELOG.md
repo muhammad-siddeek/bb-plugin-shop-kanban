@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.16.1
 
 - One type scale across the board, its popovers and the title bar: titles 13px,
   body text 12px, secondary text 11px, section labels and badges 10px, chips
