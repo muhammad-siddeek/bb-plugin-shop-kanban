@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.17.0
 
 - Resource chips warn sooner: memory turns amber at 70% and red at 80% (was 80
   and 90), disk at 80% and 90% (was 90 and 96).
