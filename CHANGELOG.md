@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.16.0
 
 - Done cards swap the pause button, which did nothing there, for a "Mark as unread"
   button. It shows on read cards and puts them back at the top of Done as unread.
@@ -18,7 +18,10 @@
   pasted file got a title guessed from the other cards on the board. A title
   written before the board could read the opening message is written afresh
   once. When the user's messages are too short to name the thread ("keep
-  going"), the labeler also reads the agent's last finished reply.
+  going"), the labeler also reads the agent's last finished reply. A thread
+  with no subject ("reply with ok") is filed under `general` instead of
+  borrowing another card's category.
+- Simpler code throughout, about 230 lines shorter, with no change in behavior.
 
 ## 0.15.1
 
