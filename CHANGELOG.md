@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.16.2
+
+- The Shopify AI spend chip only ever sends Shopify credentials. A key from the
+  environment is used only when it is a Shopify proxy key, and a key is minted
+  only when gcloud's active account is on shopify.com. Before, any gcloud
+  account's identity token, or another proxy's `PI_PROXY_API_KEY`, could be sent
+  to the Shopify proxy. Without Shopify credentials the chip stays hidden and
+  the board checks again hourly instead of every 30 seconds.
+- The marketplace overview mentions the resource chips and Mark as unread.
+
 ## 0.16.1
 
 - One type scale across the board, its popovers and the title bar: titles 13px,

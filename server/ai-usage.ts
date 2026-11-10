@@ -3,6 +3,9 @@
 //
 // Auth: a personal proxy key. One from the environment (SHOPIFY_PROXY_KEY / PI_PROXY_API_KEY) when the bb server has
 // it; otherwise minted like the proxy's own CLIs do: a gcloud identity token exchanged at /hmac/personal.
+//
+// Only Shopify credentials ever leave the machine: an environment key must be a Shopify proxy key, and a token is
+// minted only for a gcloud account on shopify.com. Anyone else gets no chip and no requests beyond a local check.
 
 import { execFile } from "node:child_process";
 import { homedir } from "node:os";
@@ -16,6 +19,11 @@ const HMAC_URL = "https://proxy.shopify.io/hmac/personal";
 const CACHE_MS = 60_000;
 /** After a failure, wait this long before trying again rather than hammering gcloud and the proxy. */
 const ERROR_CACHE_MS = 30_000;
+/** Without Shopify credentials, check again this rarely: the user may sign in later. */
+const NO_ACCOUNT_CACHE_MS = 60 * 60_000;
+/** The prefix every Shopify proxy key carries (`shopify-<payload>-<sig>`); keys for any other proxy don't. */
+const SHOPIFY_KEY_PREFIX = "shopify-";
+const SHOPIFY_ACCOUNT = /@shopify\.com$/iu;
 /** Minted keys carry an expiry; without one, mint again after this long. */
 const KEY_FALLBACK_TTL_MS = 6 * 60 * 60_000;
 const REQUEST_TIMEOUT_MS = 10_000;
@@ -58,12 +66,20 @@ function run(command: string, args: string[]): Promise<string | null> {
   });
 }
 
+/** No Shopify credentials on this machine: nothing to read, so the chip stays hidden. */
+class NoShopifyAccount extends Error {}
+
+/** A gcloud identity token for the active account, only when that account is a Shopify one. */
 async function gcloudIdentityToken(): Promise<string> {
   for (const bin of GCLOUD_CANDIDATES) {
+    const account = await run(bin, ["config", "get-value", "account"]);
+    if (account === null) continue;
+    if (!SHOPIFY_ACCOUNT.test(account)) break;
     const token = await run(bin, ["auth", "print-identity-token"]);
     if (token) return token;
+    throw new Error("No gcloud identity token. Run `gcloud auth login` on the bb machine.");
   }
-  throw new Error("No gcloud identity token. Run `gcloud auth login` on the bb machine.");
+  throw new NoShopifyAccount("No Shopify account: sign gcloud in with your shopify.com account, or set SHOPIFY_PROXY_KEY.");
 }
 
 /** `shopify-<base64 json with expiry>-<sig>`: the expiry in ms, if it decodes and is still ahead. */
@@ -95,7 +111,7 @@ async function mintKey(): Promise<Key> {
 }
 
 function envKey(): Key | null {
-  const value = process.env.SHOPIFY_PROXY_KEY || process.env.PI_PROXY_API_KEY;
+  const value = [process.env.SHOPIFY_PROXY_KEY, process.env.PI_PROXY_API_KEY].find((candidate) => candidate?.startsWith(SHOPIFY_KEY_PREFIX));
   return value ? { value, expiresAt: Infinity, fromEnv: true } : null;
 }
 
@@ -146,7 +162,7 @@ function toUsage(body: UsageResponse, sampledAt: number): AiUsage {
 export function createAiUsage(bb: BbPluginApi) {
   let key: Key | null = null;
   let envKeyRejected = false;
-  let cached: { at: number; value: AiUsage } | null = null;
+  let cached: { at: number; value: AiUsage; ttl: number } | null = null;
   let pending: Promise<AiUsage> | null = null;
 
   async function currentKey(forceMint: boolean): Promise<Key> {
@@ -176,11 +192,13 @@ export function createAiUsage(bb: BbPluginApi) {
   return {
     read(): Promise<AiUsage> {
       const now = Date.now();
-      if (cached && now - cached.at < (cached.value.error ? ERROR_CACHE_MS : CACHE_MS)) return Promise.resolve(cached.value);
+      if (cached && now - cached.at < cached.ttl) return Promise.resolve(cached.value);
+      let ttl = CACHE_MS;
       pending ??= request()
         .catch((error: unknown): AiUsage => {
           const message = errorMessage(error);
-          bb.log.warn(`ai usage read failed: ${message}`);
+          ttl = error instanceof NoShopifyAccount ? NO_ACCOUNT_CACHE_MS : ERROR_CACHE_MS;
+          if (!(error instanceof NoShopifyAccount)) bb.log.warn(`ai usage read failed: ${message}`);
           // Keep the last good figures, flagged with the error, so a blip doesn't blank the chip.
           const last = cached?.value;
           return last
@@ -198,7 +216,7 @@ export function createAiUsage(bb: BbPluginApi) {
               };
         })
         .then((value) => {
-          cached = { at: Date.now(), value };
+          cached = { at: Date.now(), value, ttl };
           return value;
         })
         .finally(() => {
