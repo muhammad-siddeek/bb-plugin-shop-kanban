@@ -1,13 +1,23 @@
+import type { BbPluginApi } from "@get-bb/plugin-sdk";
+import type { z } from "zod";
 import type { Forge } from "../contract";
+import type { HostClient } from "./hosts";
+import { errorMessage, safe } from "./text";
 
-// Forge searches the board's pull request lists share: setting lines as searches, ids, and the poll that keeps a
-// list fresh.
+// What the board's pull request lists share: setting lines as searches, ids, the host search call, their KV marks,
+// and the poll that keeps a list fresh.
 
 /** Delta hosts shop/world; a Delta search that names no repository searches it. */
 const DELTA_DEFAULT_REPO = "shop/world";
 export const NO_HOST = "No connected persistent host to read pull requests on.";
 /** Host calls end a little after the host's own 30s CLI timeout, so its clearer error wins. */
 export const CALL_TIMEOUT_MS = 35_000;
+export const INVALID_LINE = "Start the line with delta: or github:";
+/**
+ * Marks kept per kind, newest first. One KV value holds every kind and KV caps values at 256KB: three full kinds
+ * take ~110KB, leaving the review queue room for the summaries of every listed pull request.
+ */
+const MARKS_MAX = 500;
 /** Searches re-run once the last run is this old. */
 const POLL_MS = 5 * 60_000;
 /** ...or this old when a search failed (offline, no host, a CLI timeout), so the list recovers soon after. */
@@ -53,8 +63,39 @@ export function prId(forge: Forge, pr: { repo: string; number: number }): string
   return `${forge}:${pr.repo}#${pr.number}`;
 }
 
-export function message(cause: unknown): string {
-  return cause instanceof Error ? cause.message : String(cause);
+/** A forge search on `hostId`; a failed call reads as a failed search. */
+export function searchPrs(host: HostClient, hostId: string, input: { forge: Forge; repo: string | null; query: string; limit: number }) {
+  return host
+    .call("pr_search", input, { hostId, timeoutMs: CALL_TIMEOUT_MS })
+    .catch((cause: unknown) => ({ prs: [], total: 0, error: errorMessage(cause), missing: false }));
+}
+
+/** `record` cut to its MARKS_MAX newest entries by `at`. */
+export function newestMarks<T>(record: Record<string, T>, at: (value: T) => number): Record<string, T> {
+  const rows = Object.entries(record);
+  if (rows.length <= MARKS_MAX) return record;
+  return Object.fromEntries(rows.sort((a, b) => at(b[1]) - at(a[1])).slice(0, MARKS_MAX));
+}
+
+/**
+ * A list's marks in one KV value: loaded once and shared, so every edit mutates the same record; saves run in order.
+ * Marks that fail to parse start over from `schema`'s defaults.
+ */
+export function marksStore<T>(bb: BbPluginApi, key: string, schema: z.ZodType<T>) {
+  let loading: Promise<T> | null = null;
+  let writing: Promise<unknown> = Promise.resolve();
+  return {
+    load(): Promise<T> {
+      loading ??= safe(() => bb.storage.kv.get<unknown>(key)).then((raw) => {
+        const parsed = schema.safeParse(raw);
+        return parsed.success ? parsed.data : schema.parse({});
+      });
+      return loading;
+    },
+    save(marks: T) {
+      writing = writing.then(() => safe(() => bb.storage.kv.set(key, marks)));
+    },
+  };
 }
 
 /**
@@ -90,7 +131,7 @@ export function createPoller(run: () => Promise<boolean>, onChange: () => void, 
         error = null;
       })
       .catch((cause) => {
-        error = message(cause);
+        error = errorMessage(cause);
         retrySoon = true;
       })
       .finally(() => {

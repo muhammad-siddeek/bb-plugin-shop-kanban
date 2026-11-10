@@ -1,18 +1,25 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
 import type { rpcContract } from "../server/schema";
-import { errorMessage, type ReviewState, type WorkMark, type WorkState } from "./model";
+import { errorMessage, type WorkMark } from "./model";
 
 const BOARD_REFRESH_MS = 1000;
 /** The review queue and work lists re-read on the server's change signal; this clock only backs it up. */
 const REVIEWS_POLL_MS = 60_000;
 const READ_STALL_MS = 60_000;
+const STALLED = "The plugin server is not answering; still retrying.";
 
 /**
  * One `read` at a time, so a slow server can't stack a request per tick; a call made mid-read runs once it
- * ends. A read that never settles fails after READ_STALL_MS, so polling carries on.
+ * ends. A read that never settles fails after `stallMs` with `stallMessage`, so polling carries on.
  */
-export function singleFlight<T>(read: () => Promise<T>, receive: (value: T) => void, fail: (cause: unknown) => void): () => void {
+function singleFlight<T>(
+  read: () => Promise<T>,
+  receive: (value: T) => void,
+  fail: (cause: unknown) => void,
+  stallMs: number,
+  stallMessage: string,
+): () => void {
   let pending = false;
   let again = false;
   const run = () => {
@@ -24,7 +31,7 @@ export function singleFlight<T>(read: () => Promise<T>, receive: (value: T) => v
     again = false;
     let timer = 0;
     const stalled = new Promise<never>((_, reject) => {
-      timer = window.setTimeout(() => reject(new Error("The plugin server is not answering; still retrying.")), READ_STALL_MS);
+      timer = window.setTimeout(() => reject(new Error(stallMessage)), stallMs);
     });
     Promise.race([read(), stalled])
       .then(receive, fail)
@@ -38,10 +45,10 @@ export function singleFlight<T>(read: () => Promise<T>, receive: (value: T) => v
 }
 
 /**
- * Keeps the latest `read` result: reads now, every `intervalMs` while the page is visible, when it becomes
- * visible again, and on the server's `channel` signal. `read` must be stable.
+ * Keeps the latest `read` result: reads now, every `intervalMs` while the page is visible, and when it becomes
+ * visible again. `read` must be stable.
  */
-function usePolledRead<T>(read: () => Promise<T>, intervalMs: number, channel: string) {
+export function usePoll<T>(read: () => Promise<T>, intervalMs: number, stallMs = READ_STALL_MS, stallMessage = STALLED) {
   const [value, setValue] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
   const receive = useCallback((next: T) => {
@@ -49,7 +56,7 @@ function usePolledRead<T>(read: () => Promise<T>, intervalMs: number, channel: s
     setError(null);
   }, []);
   const report = useCallback((cause: unknown) => setError(errorMessage(cause)), []);
-  const refetch = useMemo(() => singleFlight(read, receive, report), [read, receive, report]);
+  const refetch = useMemo(() => singleFlight(read, receive, report, stallMs, stallMessage), [read, receive, report, stallMs, stallMessage]);
 
   useEffect(() => {
     const refetchIfVisible = () => {
@@ -63,9 +70,14 @@ function usePolledRead<T>(read: () => Promise<T>, intervalMs: number, channel: s
       document.removeEventListener("visibilitychange", refetchIfVisible);
     };
   }, [refetch, intervalMs]);
-  useRealtime(channel, refetch);
-
   return { value, error, report, refetch };
+}
+
+/** `usePoll`, also reading on the server's `channel` signal. */
+function usePolledRead<T>(read: () => Promise<T>, intervalMs: number, channel: string) {
+  const poll = usePoll(read, intervalMs);
+  useRealtime(channel, poll.refetch);
+  return poll;
 }
 
 export function useBoard() {
@@ -88,18 +100,8 @@ export type BoardApi = ReturnType<typeof useBoard>;
 
 export type ReviewVerdict = "approve" | "request_changes";
 
-export type ReviewsApi = {
-  state: ReviewState | null;
-  /** Why the last list read failed. */
-  error: string | null;
-  /** Marks read; resolves to the prompt that seeds a thread explaining the pull request. */
-  draft(id: string): Promise<string>;
-  markRead(id: string): Promise<void>;
-  archive(id: string): Promise<void>;
-  submit(id: string, verdict: ReviewVerdict, body: string): Promise<void>;
-};
-
-export function useReviews(): ReviewsApi {
+/** The review queue; `error` is why the last list read failed. */
+export function useReviews() {
   const rpc = useRpc<typeof rpcContract>();
   const read = useCallback(() => rpc.call("reviews_list", null), [rpc]);
   const { value: state, error } = usePolledRead(read, REVIEWS_POLL_MS, "reviews-changed");
@@ -108,6 +110,7 @@ export function useReviews(): ReviewsApi {
     () => ({
       state,
       error,
+      /** Marks read; resolves to the prompt that seeds a thread explaining the pull request. */
       draft: async (id: string) => (await rpc.call("reviews_draft", { id })).prompt,
       markRead: (id: string) => rpc.call("reviews_mark_read", { id }).then(() => {}),
       archive: (id: string) => rpc.call("reviews_archive", { id }).then(() => {}),
@@ -117,14 +120,10 @@ export function useReviews(): ReviewsApi {
   );
 }
 
-export type WorkApi = {
-  state: WorkState | null;
-  /** Why the last list read failed. */
-  error: string | null;
-  mark(id: string, mark: WorkMark, on: boolean): Promise<void>;
-};
+export type ReviewsApi = ReturnType<typeof useReviews>;
 
-export function useWork(): WorkApi {
+/** The work lists; `error` is why the last list read failed. */
+export function useWork() {
   const rpc = useRpc<typeof rpcContract>();
   const read = useCallback(() => rpc.call("work_list", null), [rpc]);
   const { value: state, error } = usePolledRead(read, REVIEWS_POLL_MS, "work-changed");
@@ -133,3 +132,5 @@ export function useWork(): WorkApi {
     [rpc, state, error],
   );
 }
+
+export type WorkApi = ReturnType<typeof useWork>;

@@ -5,7 +5,7 @@ import { experimental_defineHostEntry } from "@get-bb/plugin-sdk/host";
 import { z } from "zod";
 import { hostContract } from "./contract";
 import { prDetail, prReview, prSearch } from "./host/forge";
-import { failure, run } from "./host/run";
+import { failure, parseOutput, run } from "./host/run";
 import { ompSpend, piSpend } from "./host/spend";
 
 const LABELER_FLAGS = [
@@ -99,14 +99,10 @@ export default experimental_defineHostEntry({
       const args = [...QMD_INDEX, "search", "--json", "-n", String(limit), "-c", QMD_COLLECTION, "--", query];
       const result = await run(command, args, QMD_SEARCH_TIMEOUT_MS, context.signal);
       if (result.code !== 0) return { hits: [], error: failure(command, result) };
-      let rows: z.infer<typeof qmdHitsSchema>;
-      try {
-        rows = qmdHitsSchema.parse(JSON.parse(result.stdout));
-      } catch {
-        return { hits: [], error: `${command} returned unexpected output: ${result.stdout.trim().slice(0, 200)}` };
-      }
+      const rows = parseOutput(command, result.stdout, qmdHitsSchema);
+      if (!rows.ok) return { hits: [], error: rows.error };
       const seen = new Set<string>();
-      const hits = rows.flatMap((row) => {
+      const hits = rows.value.flatMap((row) => {
         const threadId = row.file.match(/([^/?#]+)\.md(?:[?#].*)?$/)?.[1];
         if (!threadId || seen.has(threadId)) return [];
         seen.add(threadId);

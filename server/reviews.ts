@@ -1,12 +1,24 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
-import { hostContract, type Forge, type ForgePr, type ForgePrDetail } from "../contract";
-import { CALL_TIMEOUT_MS, NO_HOST, createPoller, message, parseSearch, prId, searchLines, type ForgeSearch } from "./forge-search";
-import { indexHostId } from "./hosts";
+import type { Forge, ForgePr, ForgePrDetail } from "../contract";
+import {
+  CALL_TIMEOUT_MS,
+  INVALID_LINE,
+  NO_HOST,
+  createPoller,
+  marksStore,
+  newestMarks,
+  parseSearch,
+  prId,
+  searchLines,
+  searchPrs,
+  type ForgeSearch,
+} from "./forge-search";
+import { hostClient, indexHostId } from "./hosts";
 import { hashText } from "./labels";
 import { REVIEW_SUMMARY_VERSION, REVIEW_SYSTEM, draftPrompt, parseReviewSummary, reviewPrompt } from "./review-prompt";
 import { reviewRiskSchema, type ReviewCard, type ReviewScope, type ReviewSource, type ReviewState } from "./schema";
-import { safe } from "./text";
+import { coalesced, errorMessage, jobQueue, throttledLog } from "./text";
 
 // Review queue: open pull requests waiting on the user's review, read through the forge CLIs (`dt`, `gh`) on the
 // user's persistent host and listed in the Queue column's In tab. The searches come from settings, so each
@@ -22,11 +34,6 @@ const REVIEWED_LIMIT = 100;
 const SUMMARY_RETRY_MS = 10 * 60_000;
 /** Per-PR failures recur every poll; each distinct one is logged at most this often. */
 const LOG_REPEAT_MS = 60 * 60_000;
-/**
- * Read, archived and reviewed marks kept per kind, newest first. One KV value holds them all and KV caps values at
- * 256KB: three full kinds take ~110KB, leaving room for the summaries of every listed pull request.
- */
-const MARKS_MAX = 500;
 /** Reviews end a little after the host's own 60s CLI timeout, so its clearer error wins. */
 const REVIEW_CALL_TIMEOUT_MS = 65_000;
 
@@ -75,16 +82,10 @@ function configuredSearches(values: { reviewSearchesMe: string; reviewSearchesTe
     for (const line of lines) {
       const search = parseSearch(line, { is: "pr", state: "open" });
       if (search) searches.push({ ...search, scope });
-      else invalid.push(failedSource({ line, scope }, "Start the line with delta: or github:", false));
+      else invalid.push(failedSource({ line, scope }, INVALID_LINE, false));
     }
   }
   return { searches, invalid, scopes };
-}
-
-function capped<T>(record: Record<string, T>, at: (value: T) => number): Record<string, T> {
-  const rows = Object.entries(record);
-  if (rows.length <= MARKS_MAX) return record;
-  return Object.fromEntries(rows.sort((a, b) => at(b[1]) - at(a[1])).slice(0, MARKS_MAX));
 }
 
 export function createReviewQueue(bb: BbPluginApi, labeler: Labeler) {
@@ -105,87 +106,55 @@ export function createReviewQueue(bb: BbPluginApi, labeler: Labeler) {
       experimental_multiline: true,
     },
   });
-  const host = bb.hosts.experimental_client({ contract: hostContract });
-
-  let marksLoad: Promise<Marks> | null = null;
-  let marksWrite: Promise<unknown> = Promise.resolve();
+  const host = hostClient(bb);
+  const store = marksStore(bb, MARKS_KEY, marksSchema);
+  const load = store.load;
+  const changed = coalesced(() => bb.realtime.publish("reviews-changed", { at: Date.now() }), 300);
+  const log = throttledLog(bb, LOG_REPEAT_MS);
   let entries: Entry[] = [];
   let sources: ReviewSource[] = [];
   const poller = createPoller(runRefresh, changed, 8_000);
   let hostId: string | null = null;
   let disposed = false;
-  let changedTimer: ReturnType<typeof setTimeout> | undefined;
   /** Details per pull request, keyed by the `updatedAt` they were read at, and when that read started. */
   const details = new Map<string, { updatedAt: string; detail: ForgePrDetail; at: number }>();
   const detailQueue = workQueue(3, readDetail);
   const summaryQueue = workQueue(2, summarize);
-  const logged = new Map<string, number>();
-
-  function load(): Promise<Marks> {
-    marksLoad ??= (async () => {
-      const parsed = marksSchema.safeParse(await safe(async () => bb.storage.kv.get<unknown>(MARKS_KEY)));
-      return parsed.success ? parsed.data : marksSchema.parse({});
-    })();
-    return marksLoad;
-  }
 
   function persist(marks: Marks) {
-    marks.read = capped(marks.read, (mark) => mark.at);
-    marks.archived = capped(marks.archived, (at) => at);
-    marks.reviewed = capped(marks.reviewed, (mark) => mark.at);
+    marks.read = newestMarks(marks.read, (mark) => mark.at);
+    marks.archived = newestMarks(marks.archived, (at) => at);
+    marks.reviewed = newestMarks(marks.reviewed, (mark) => mark.at);
     // Summaries cache the listed pull requests' first reads; one no longer listed only eats into the KV value.
     if (poller.refreshedAt !== null) {
       const listed = new Set(entries.map((entry) => entry.id));
       marks.summaries = Object.fromEntries(Object.entries(marks.summaries).filter(([id]) => listed.has(id)));
     }
-    marksWrite = marksWrite.then(() => safe(async () => bb.storage.kv.set(MARKS_KEY, marks)));
+    store.save(marks);
     changed();
-  }
-
-  function changed() {
-    if (changedTimer) return;
-    changedTimer = setTimeout(() => {
-      changedTimer = undefined;
-      bb.realtime.publish("reviews-changed", { at: Date.now() });
-    }, 300);
   }
 
   /** Logs a per-PR failure unless the same failure, for any pull request, was logged within `LOG_REPEAT_MS`. */
   function logFailure(kind: "details" | "summary", id: string, cause: string) {
     // A reload retires this generation mid-call ("worker exited", "generation is retired"): noise, not news.
-    if (disposed) return;
-    const now = Date.now();
-    for (const [key, at] of logged) if (now - at >= LOG_REPEAT_MS) logged.delete(key);
-    const key = `${kind}:${cause}`;
-    if (logged.has(key)) return;
-    logged.set(key, now);
-    bb.log.info(`review ${kind} failed for ${id}: ${cause}`);
+    if (!disposed) log(`review ${kind} failed for ${id}: ${cause}`, `${kind}:${cause}`);
   }
 
   /** Runs `job` per entry, `concurrency` at a time; an entry already waiting or running is not queued again. */
   function workQueue(concurrency: number, job: (entry: Entry) => Promise<void>) {
-    const waiting: Entry[] = [];
+    const queue = jobQueue(concurrency, () => disposed);
     const pending = new Set<string>();
-    let active = 0;
-    function pump() {
-      while (!disposed && active < concurrency && waiting.length > 0) {
-        const entry = waiting.shift()!;
-        active += 1;
-        void job(entry).finally(() => {
-          active -= 1;
-          pending.delete(entry.id);
-          changed();
-          pump();
-        });
-      }
-    }
     return {
       pending,
       add(entry: Entry) {
         if (pending.has(entry.id)) return;
         pending.add(entry.id);
-        waiting.push(entry);
-        pump();
+        queue.push(() =>
+          job(entry).finally(() => {
+            pending.delete(entry.id);
+            changed();
+          }),
+        );
       },
     };
   }
@@ -213,12 +182,6 @@ export function createReviewQueue(bb: BbPluginApi, labeler: Labeler) {
     return `v${REVIEW_SUMMARY_VERSION}:${detail.headSha ?? entry.updatedAt}:${hashText(entry.title)}`;
   }
 
-  function callSearch(target: string, input: { forge: Forge; repo: string | null; query: string; limit: number }) {
-    return host
-      .call("pr_search", input, { hostId: target, timeoutMs: CALL_TIMEOUT_MS })
-      .catch((cause: unknown) => ({ prs: [], total: 0, error: message(cause), missing: false }));
-  }
-
   /** Re-reads every search; resolves true when one failed in a way worth retrying soon. */
   async function runRefresh(): Promise<boolean> {
     const { searches, invalid } = configuredSearches(await settings.get());
@@ -238,8 +201,8 @@ export function createReviewQueue(bb: BbPluginApi, labeler: Labeler) {
       searches.map(async (search) => {
         const input = { forge: search.forge, repo: search.repo, query: search.query, limit: SEARCH_LIMIT };
         const [open, reviewed] = await Promise.all([
-          callSearch(target, input),
-          callSearch(target, { ...input, query: `${search.query} reviewed-by:@me`, limit: REVIEWED_LIMIT }),
+          searchPrs(host, target, input),
+          searchPrs(host, target, { ...input, query: `${search.query} reviewed-by:@me`, limit: REVIEWED_LIMIT }),
         ]);
         return { search, open, reviewed };
       }),
@@ -287,7 +250,7 @@ export function createReviewQueue(bb: BbPluginApi, labeler: Labeler) {
     const at = Date.now();
     const result = await host
       .call("pr_detail", { forge: entry.forge, repo: entry.repo, number: entry.number }, { hostId: target, timeoutMs: CALL_TIMEOUT_MS })
-      .catch((cause: unknown) => ({ detail: null, error: message(cause) }));
+      .catch((cause: unknown) => ({ detail: null, error: errorMessage(cause) }));
     if (!result.detail) {
       logFailure("details", entry.id, result.error ?? "no details");
       return;
@@ -327,7 +290,7 @@ export function createReviewQueue(bb: BbPluginApi, labeler: Labeler) {
       marks.summaries[entry.id] = { sig, risk: parsed.risk, text: parsed.text, at: Date.now() };
     } catch (cause) {
       if (disposed) return;
-      logFailure("summary", entry.id, message(cause));
+      logFailure("summary", entry.id, errorMessage(cause));
       // The last head's summary stays on the card until this one succeeds.
       marks.summaries[entry.id] = { sig, risk: previous?.risk ?? null, text: previous?.text ?? null, at: Date.now(), failedAt: Date.now() };
     }
@@ -426,7 +389,7 @@ export function createReviewQueue(bb: BbPluginApi, labeler: Labeler) {
   function dispose() {
     disposed = true;
     poller.dispose();
-    clearTimeout(changedTimer);
+    changed.cancel();
   }
 
   return { list, draft, markRead, archive, submit, dispose };

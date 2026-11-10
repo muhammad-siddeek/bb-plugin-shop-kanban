@@ -1,10 +1,22 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
-import { hostContract, type Forge, type ForgePr } from "../contract";
-import { CALL_TIMEOUT_MS, NO_HOST, createPoller, message, parseSearch, prId, searchLines, type ForgeSearch, type SearchKind } from "./forge-search";
-import { indexHostId } from "./hosts";
+import type { Forge, ForgePr } from "../contract";
+import {
+  INVALID_LINE,
+  NO_HOST,
+  createPoller,
+  marksStore,
+  newestMarks,
+  parseSearch,
+  prId,
+  searchLines,
+  searchPrs,
+  type ForgeSearch,
+  type SearchKind,
+} from "./forge-search";
+import { hostClient, indexHostId } from "./hosts";
 import type { WorkItem, WorkList, WorkMark, WorkSource, WorkState } from "./schema";
-import { safe } from "./text";
+import { coalesced } from "./text";
 
 // Work lists in the Queue column's tabs: the user's open pull requests and their recently merged ones (Out),
 // and issues assigned to them (In, beside the review queue). Read through the forge CLIs on the user's
@@ -15,8 +27,6 @@ import { safe } from "./text";
 const MARKS_KEY = "work-v1";
 /** Newest matches read per search. */
 const SEARCH_LIMIT = 30;
-/** Marks kept per kind, newest first; one KV value holds all three. */
-const MARKS_MAX = 500;
 const LIST_KIND: Record<WorkList, SearchKind> = {
   open: { is: "pr", state: "open" },
   shipped: { is: "pr", state: "merged" },
@@ -35,6 +45,7 @@ const marksSchema = z.object({
 });
 type Marks = z.infer<typeof marksSchema>;
 type Values = { outgoingSearches: string; shippedSearches: string; shippedDays: number; assignedSearches: string };
+const SETTING_KEYS = ["outgoingSearches", "shippedSearches", "shippedDays", "assignedSearches"] as const satisfies readonly (keyof Values)[];
 
 function failedSource(search: { line: string; list: WorkList }, error: string, missing: boolean): WorkSource {
   return { search: search.line, list: search.list, count: 0, total: 0, error, missing };
@@ -61,7 +72,7 @@ function configuredSearches(values: Values, now: number) {
     for (const line of lines) {
       const search = parseSearch(line, LIST_KIND[list]);
       if (!search) {
-        invalid.push(failedSource({ line, list }, "Start the line with delta: or github:", false));
+        invalid.push(failedSource({ line, list }, INVALID_LINE, false));
         continue;
       }
       const query = list === "shipped" && !/(?:^|\s)merged:/u.test(search.query) ? `${search.query} merged:>=${sinceDate(days, now)}` : search.query;
@@ -69,12 +80,6 @@ function configuredSearches(values: Values, now: number) {
     }
   }
   return { searches, invalid, lists };
-}
-
-function capped(record: Record<string, number>): Record<string, number> {
-  const rows = Object.entries(record);
-  if (rows.length <= MARKS_MAX) return record;
-  return Object.fromEntries(rows.sort((a, b) => b[1] - a[1]).slice(0, MARKS_MAX));
 }
 
 export function createWorkLists(bb: BbPluginApi) {
@@ -108,39 +113,13 @@ export function createWorkLists(bb: BbPluginApi) {
       experimental_multiline: true,
     },
   });
-  const host = bb.hosts.experimental_client({ contract: hostContract });
-
-  let marksLoad: Promise<Marks> | null = null;
-  let marksWrite: Promise<unknown> = Promise.resolve();
+  const host = hostClient(bb);
+  const store = marksStore(bb, MARKS_KEY, marksSchema);
+  const changed = coalesced(() => bb.realtime.publish("work-changed", { at: Date.now() }), 300);
   let entries: Entry[] = [];
   let sources: WorkSource[] = [];
   let hostId: string | null = null;
-  let changedTimer: ReturnType<typeof setTimeout> | undefined;
   const poller = createPoller(runRefresh, changed, 10_000);
-
-  function changed() {
-    if (changedTimer) return;
-    changedTimer = setTimeout(() => {
-      changedTimer = undefined;
-      bb.realtime.publish("work-changed", { at: Date.now() });
-    }, 300);
-  }
-
-  function load(): Promise<Marks> {
-    marksLoad ??= (async () => {
-      const parsed = marksSchema.safeParse(await safe(async () => bb.storage.kv.get<unknown>(MARKS_KEY)));
-      return parsed.success ? parsed.data : marksSchema.parse({});
-    })();
-    return marksLoad;
-  }
-
-  function persist(marks: Marks) {
-    marks.archived = capped(marks.archived);
-    marks.measured = capped(marks.measured);
-    marks.demoed = capped(marks.demoed);
-    marksWrite = marksWrite.then(() => safe(async () => bb.storage.kv.set(MARKS_KEY, marks)));
-    changed();
-  }
 
   async function runRefresh(): Promise<boolean> {
     const { searches, invalid } = configuredSearches(await settings.get(), Date.now());
@@ -159,9 +138,7 @@ export function createWorkLists(bb: BbPluginApi) {
     const results = await Promise.all(
       searches.map(async (search) => ({
         search,
-        result: await host
-          .call("pr_search", { forge: search.forge, repo: search.repo, query: search.query, limit: SEARCH_LIMIT }, { hostId: target, timeoutMs: CALL_TIMEOUT_MS })
-          .catch((cause: unknown) => ({ prs: [], total: 0, error: message(cause), missing: false })),
+        result: await searchPrs(host, target, { forge: search.forge, repo: search.repo, query: search.query, limit: SEARCH_LIMIT }),
       })),
     );
     // Keyed per list: a pull request can be both open in one search and, say, merged in another's stale row.
@@ -191,24 +168,8 @@ export function createWorkLists(bb: BbPluginApi) {
   }
 
   function item(entry: Entry, marks: Marks): WorkItem {
-    return {
-      id: entry.id,
-      list: entry.list,
-      forge: entry.forge,
-      kind: entry.kind,
-      repo: entry.repo,
-      number: entry.number,
-      url: entry.url,
-      title: entry.title,
-      author: entry.author,
-      draft: entry.draft,
-      labels: entry.labels,
-      createdAt: entry.createdAt,
-      updatedAt: entry.updatedAt,
-      mergedAt: entry.mergedAt,
-      measured: entry.id in marks.measured,
-      demoed: entry.id in marks.demoed,
-    };
+    const { lines, bot, headSha, ...rest } = entry;
+    return { ...rest, measured: entry.id in marks.measured, demoed: entry.id in marks.demoed };
   }
 
   function hidden(entry: Entry, marks: Marks): boolean {
@@ -217,7 +178,7 @@ export function createWorkLists(bb: BbPluginApi) {
   }
 
   async function list(): Promise<WorkState> {
-    const [marks, values] = await Promise.all([load(), settings.get()]);
+    const [marks, values] = await Promise.all([store.load(), settings.get()]);
     poller.readFresh();
     return {
       lists: configuredSearches(values, Date.now()).lists,
@@ -230,27 +191,24 @@ export function createWorkLists(bb: BbPluginApi) {
   }
 
   async function mark(id: string, kind: WorkMark, on: boolean) {
-    const marks = await load();
+    const marks = await store.load();
     if (on) marks[kind][id] = Date.now();
     else delete marks[kind][id];
-    persist(marks);
+    marks.archived = newestMarks(marks.archived, (at) => at);
+    marks.measured = newestMarks(marks.measured, (at) => at);
+    marks.demoed = newestMarks(marks.demoed, (at) => at);
+    store.save(marks);
+    changed();
     return { ok: true };
   }
 
   settings.onChange((next, prev) => {
-    if (
-      next.outgoingSearches !== prev.outgoingSearches ||
-      next.shippedSearches !== prev.shippedSearches ||
-      next.shippedDays !== prev.shippedDays ||
-      next.assignedSearches !== prev.assignedSearches
-    ) {
-      void poller.refresh();
-    }
+    if (SETTING_KEYS.some((key) => next[key] !== prev[key])) void poller.refresh();
   });
 
   function dispose() {
     poller.dispose();
-    clearTimeout(changedTimer);
+    changed.cancel();
   }
 
   return { list, mark, dispose };

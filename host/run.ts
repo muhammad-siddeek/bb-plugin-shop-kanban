@@ -3,6 +3,7 @@ import type { ChildProcessByStdio } from "node:child_process";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import type { Readable } from "node:stream";
+import type { z } from "zod";
 
 export type RunResult = { code: number | null; stdout: string; stderr: string };
 
@@ -84,4 +85,13 @@ export function run(command: string, args: string[], timeoutMs: number, signal: 
 /** The tail of what a failed command printed, for an error message. */
 export function failure(command: string, result: RunResult): string {
   return (result.stderr || result.stdout).trim().slice(-500) || `${command} exited with ${result.code}`;
+}
+
+/** A command's JSON output read with `schema`, or why it couldn't be; `label` names the command in the error. */
+export function parseOutput<T>(label: string, stdout: string, schema: z.ZodType<T>): { ok: true; value: T } | { ok: false; error: string } {
+  try {
+    return { ok: true, value: schema.parse(JSON.parse(stdout)) };
+  } catch {
+    return { ok: false, error: `${label} returned unexpected output: ${stdout.trim().slice(0, 200)}` };
+  }
 }

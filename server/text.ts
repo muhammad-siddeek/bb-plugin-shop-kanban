@@ -1,3 +1,6 @@
+import type { BbPluginApi } from "@get-bb/plugin-sdk";
+import type { z } from "zod";
+
 export function nowIso(): string {
   return new Date().toISOString();
 }
@@ -53,3 +56,81 @@ export async function safe<T>(fn: () => Promise<T>): Promise<T | null> {
   }
 }
 
+/** A model reply's JSON object: from its first `{` to its last `}`, parsed; undefined when there is none. */
+export function replyJson(text: string): unknown {
+  const json = text.match(/\{[\s\S]*\}/u)?.[0];
+  if (!json) return undefined;
+  try {
+    return JSON.parse(json);
+  } catch {
+    return undefined;
+  }
+}
+
+export function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Logs a line unless the same `key` was logged within `intervalMs`: failures repeat for every thread or pull request,
+ * and one line per distinct failure per interval keeps the plugin log readable.
+ */
+export function throttledLog(bb: BbPluginApi, intervalMs: number) {
+  const loggedAt = new Map<string, number>();
+  return (line: string, key = line) => {
+    const now = Date.now();
+    for (const [seen, at] of loggedAt) if (now - at >= intervalMs) loggedAt.delete(seen);
+    if (loggedAt.has(key)) return;
+    loggedAt.set(key, now);
+    bb.log.info(line);
+  };
+}
+
+/** Calls `fn` once, `ms` after the first call since it last ran; `cancel` stops it for good. */
+export function coalesced(fn: () => void, ms: number) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const call = () => {
+    if (timer) return;
+    timer = setTimeout(() => {
+      timer = undefined;
+      fn();
+    }, ms);
+  };
+  return Object.assign(call, { cancel: () => clearTimeout(timer) });
+}
+
+/** Runs queued jobs `concurrency` at a time, until `stopped` says otherwise. */
+export function jobQueue(concurrency: number, stopped: () => boolean = () => false) {
+  const waiting: Array<() => Promise<void>> = [];
+  let active = 0;
+  function pump() {
+    while (!stopped() && active < concurrency && waiting.length > 0) {
+      const job = waiting.shift()!;
+      active += 1;
+      void job().finally(() => {
+        active -= 1;
+        pump();
+      });
+    }
+  }
+  return {
+    push(job: () => Promise<void>) {
+      waiting.push(job);
+      pump();
+    },
+    clear() {
+      waiting.length = 0;
+    },
+  };
+}
+
+/** A stored `id → value` KV record; entries that don't parse are dropped. */
+export function parseRecord<T>(raw: unknown, schema: z.ZodType<T>): Record<string, T> {
+  const record: Record<string, T> = {};
+  if (!raw || typeof raw !== "object") return record;
+  for (const [id, value] of Object.entries(raw)) {
+    const parsed = schema.safeParse(value);
+    if (parsed.success) record[id] = parsed.data;
+  }
+  return record;
+}

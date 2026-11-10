@@ -1,12 +1,11 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { DragEvent, FormEvent, KeyboardEvent, ReactElement } from "react";
+import type { DragEvent, FormEvent, KeyboardEvent, ReactElement, ReactNode } from "react";
 import { experimental_Icon as Icon, experimental_useProviders, useBbContext, useBbNavigate } from "@get-bb/plugin-sdk/app";
 import { PLUGIN_SLUG } from "../brand";
-import { ACCENT_BADGE, CLOCK_TICK_MS, STATUS_META, THREAD_DRAG_TYPE, groupTasksByColumn, isUnread, shortNameFromPrompt, type BoardColumn, type BoardTask } from "./model";
+import { ACCENT_BADGE, CLOCK_TICK_MS, STATUS_META, THREAD_DRAG_TYPE, groupTasksByColumn, isUnread, shortNameFromPrompt, type BoardColumn, type BoardState, type BoardTask } from "./model";
 import { useNow, type BoardApi, type ReviewsApi, type WorkApi } from "./hooks";
 import { TaskCard } from "./card";
 import { ReviewGroup, visibleReviews } from "./reviews";
-import type { AgentProvider } from "./session";
 import { WipLimitControl } from "./wip-limit";
 import { WorkGroup, useWorkItems } from "./work";
 
@@ -24,13 +23,130 @@ const QUEUE_TABS: { id: QueueTab; label: string; hint: string }[] = [
   { id: "outgoing", label: "Out", hint: "Your open pull requests, and merged ones still to measure or demo" },
 ];
 
-function readQueueTab(): QueueTab {
+/** A localStorage value; null when storage is off. */
+function readStored(key: string): string | null {
   try {
-    const stored = window.localStorage.getItem(QUEUE_TAB_KEY);
-    return QUEUE_TABS.some((tab) => tab.id === stored) ? (stored as QueueTab) : "queue";
+    return window.localStorage.getItem(key);
   } catch {
-    return "queue";
+    return null;
   }
+}
+
+/** Store `value` (empty removes it); with storage off it lives only as long as the page. */
+function writeStored(key: string, value: string) {
+  try {
+    if (value) window.localStorage.setItem(key, value);
+    else window.localStorage.removeItem(key);
+  } catch {
+    // Storage off.
+  }
+}
+
+function readQueueTab(): QueueTab {
+  const stored = readStored(QUEUE_TAB_KEY);
+  return QUEUE_TABS.some((tab) => tab.id === stored) ? (stored as QueueTab) : "queue";
+}
+
+/** `set` with `id` added, or `set` itself when it already holds it. */
+function withId(set: ReadonlySet<string>, id: string): ReadonlySet<string> {
+  return set.has(id) ? set : new Set([...set, id]);
+}
+
+/** `set` without `id`, or `set` itself when it doesn't hold it. */
+function withoutId(set: ReadonlySet<string>, id: string): ReadonlySet<string> {
+  if (!set.has(id)) return set;
+  const next = new Set(set);
+  next.delete(id);
+  return next;
+}
+
+/**
+ * Thread ids the board applied before the server's board caught up. Each is dropped once the board no longer
+ * `holds` its card (the server agrees, or the card left the board).
+ */
+function useLocalIds(board: BoardState | null, holds: (task: BoardTask) => boolean) {
+  const [ids, setIds] = useState<ReadonlySet<string>>(() => new Set());
+  useEffect(() => {
+    if (!board || ids.size === 0) return;
+    const next = new Set(board.tasks.filter((task) => holds(task) && ids.has(task.threadId)).map((task) => task.threadId));
+    if (next.size !== ids.size) setIds(next);
+    // `holds` is a pure test written inline: only the board and the ids change its answer.
+  }, [board, ids]);
+  return [ids, setIds] as const;
+}
+
+/** Outline of a column or section while a dragged card is on its way: dashed, solid once the card is over it. */
+function dropOutline(awaiting: boolean, over: boolean): string {
+  if (!awaiting) return "";
+  return over
+    ? "bg-muted-foreground/12 outline-2 -outline-offset-2 outline-muted-foreground/70"
+    : "outline-2 outline-dashed -outline-offset-2 outline-muted-foreground/45";
+}
+
+/**
+ * Drop-target handlers for a dragged card, taken while `onDrop` is set; `over` while the pointer is inside.
+ * dragenter/dragleave fire for every child crossed, so a depth count tells when the pointer really leaves. `awaiting`
+ * is whether a drag this target takes is on its way; `over` resets once it isn't.
+ */
+function useCardDrop(onDrop: ((threadId: string) => void) | null, awaiting: boolean, stopPropagation = false) {
+  const [over, setOver] = useState(false);
+  const depth = useRef(0);
+  useEffect(() => {
+    if (awaiting) return;
+    depth.current = 0;
+    setOver(false);
+  }, [awaiting]);
+  const takes = (event: DragEvent) => onDrop !== null && event.dataTransfer.types.includes(THREAD_DRAG_TYPE);
+  const handlers = {
+    onDragEnter(event: DragEvent) {
+      if (!takes(event)) return;
+      event.preventDefault();
+      depth.current += 1;
+      setOver(true);
+    },
+    onDragOver(event: DragEvent) {
+      if (!takes(event)) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "move";
+    },
+    onDragLeave(event: DragEvent) {
+      if (!takes(event)) return;
+      depth.current = Math.max(0, depth.current - 1);
+      if (depth.current === 0) setOver(false);
+    },
+    onDrop(event: DragEvent) {
+      if (!takes(event)) return;
+      event.preventDefault();
+      if (stopPropagation) event.stopPropagation();
+      depth.current = 0;
+      setOver(false);
+      const threadId = event.dataTransfer.getData(THREAD_DRAG_TYPE);
+      if (threadId) onDrop?.(threadId);
+    },
+  };
+  return { over, handlers };
+}
+
+/** Where a dragged card lands, and what dropping it there does. */
+function DropHint({ over, icon, label }: { over: boolean; icon: string; label: string }) {
+  return (
+    <div
+      className={`flex shrink-0 items-center justify-center gap-1.5 rounded-md border border-dashed px-3 py-3 text-[11px] font-medium transition-colors ${
+        over ? "border-muted-foreground/70 bg-card text-foreground" : "border-muted-foreground/40 text-muted-foreground"
+      }`}
+    >
+      <Icon name={icon} className="size-3.5" aria-hidden />
+      {label}
+    </div>
+  );
+}
+
+function EmptySlot({ children }: { children: ReactNode }) {
+  return (
+    <div className="flex shrink-0 items-center justify-center rounded-md border border-dashed border-foreground/15 px-3 py-3 text-center text-[11px] text-muted-foreground/90">
+      {children}
+    </div>
+  );
 }
 
 /** The Queue column's header: one uppercase tab per list with its count, underlined in the column's accent when open. */
@@ -74,20 +190,7 @@ function QueueTabs({ tabs, active, onSelect }: {
 }
 
 function readDraft(): string {
-  try {
-    return window.localStorage.getItem(DRAFT_KEY) ?? "";
-  } catch {
-    return "";
-  }
-}
-
-function writeDraft(text: string) {
-  try {
-    if (text) window.localStorage.setItem(DRAFT_KEY, text);
-    else window.localStorage.removeItem(DRAFT_KEY);
-  } catch {
-    // Storage off: the draft lives only as long as the form.
-  }
+  return readStored(DRAFT_KEY) ?? "";
 }
 
 /**
@@ -149,11 +252,11 @@ function AddTaskForm({ focus, onAdd, onCancel, onError }: {
 
   const edit = (text: string) => {
     setPrompt(text);
-    writeDraft(text);
+    writeStored(DRAFT_KEY, text);
   };
   // Cancel means discard; only an open form keeps a draft.
   const cancel = () => {
-    writeDraft("");
+    writeStored(DRAFT_KEY, "");
     onCancel();
   };
   const submit = async (event?: FormEvent<HTMLFormElement>) => {
@@ -233,95 +336,37 @@ function AddTaskForm({ focus, onAdd, onCancel, onError }: {
 type ColumnDrop = { label: string; icon: string; onDrop: (threadId: string) => void };
 
 /** The Queue tab's Parked section: finished threads set aside to come back to later. Takes dragged idle cards. */
-function ParkedSection({ tasks, dragging, drop, renderCard }: {
+function ParkedSection({ tasks, dragging, onDrop, renderCard }: {
   tasks: BoardTask[];
   dragging: boolean;
-  drop: ColumnDrop;
+  onDrop: (threadId: string) => void;
   renderCard: (task: BoardTask) => ReactElement;
 }) {
   const meta = STATUS_META.parked;
-  const [over, setOver] = useState(false);
-  const depth = useRef(0);
-  useEffect(() => {
-    if (dragging) return;
-    depth.current = 0;
-    setOver(false);
-  }, [dragging]);
-  const takes = (event: DragEvent) => event.dataTransfer.types.includes(THREAD_DRAG_TYPE);
+  const { over, handlers } = useCardDrop(onDrop, dragging, true);
   return (
-    <div
-      role="group"
-      aria-label="Parked"
-      className={`space-y-1 rounded-md pt-1 transition-colors ${
-        dragging ? (over ? "bg-muted-foreground/12 outline-2 -outline-offset-2 outline-muted-foreground/70" : "outline-2 outline-dashed -outline-offset-2 outline-muted-foreground/45") : ""
-      }`}
-      onDragEnter={(event) => {
-        if (!takes(event)) return;
-        event.preventDefault();
-        depth.current += 1;
-        setOver(true);
-      }}
-      onDragOver={(event) => {
-        if (!takes(event)) return;
-        event.preventDefault();
-        event.dataTransfer.dropEffect = "move";
-      }}
-      onDragLeave={(event) => {
-        if (!takes(event)) return;
-        depth.current = Math.max(0, depth.current - 1);
-        if (depth.current === 0) setOver(false);
-      }}
-      onDrop={(event) => {
-        if (!takes(event)) return;
-        event.preventDefault();
-        event.stopPropagation();
-        depth.current = 0;
-        setOver(false);
-        const threadId = event.dataTransfer.getData(THREAD_DRAG_TYPE);
-        if (threadId) drop.onDrop(threadId);
-      }}
-    >
+    <div role="group" aria-label="Parked" className={`space-y-1 rounded-md pt-1 transition-colors ${dropOutline(dragging, over)}`} {...handlers}>
       <div className="flex h-6 items-center gap-2 px-1">
         <h3 className={`text-[10px] font-bold uppercase leading-none tracking-[0.12em] ${meta.title}`}>Parked</h3>
         <span className={`inline-flex h-4 min-w-4 items-center justify-center rounded-full px-1.5 text-[10px] font-semibold leading-none tabular-nums ${meta.badge}`}>{tasks.length}</span>
         <span className="h-px flex-1 bg-border/60" aria-hidden />
       </div>
-      {dragging ? (
-        <div className={`flex items-center justify-center gap-1.5 rounded-md border border-dashed px-3 py-3 text-[11px] font-medium ${over ? "border-muted-foreground/70 bg-card text-foreground" : "border-muted-foreground/40 text-muted-foreground"}`}>
-          <Icon name={drop.icon} className="size-3.5" aria-hidden />
-          {drop.label}
-        </div>
-      ) : null}
-      {tasks.length === 0 && !dragging ? (
-        <div className="flex items-center justify-center rounded-md border border-dashed border-foreground/15 px-3 py-3 text-center text-[11px] text-muted-foreground/90">
-          Drag a finished thread here to come back to it later
-        </div>
-      ) : null}
+      {dragging ? <DropHint over={over} icon="Pause" label="Drop to park" /> : null}
+      {tasks.length === 0 && !dragging ? <EmptySlot>Drag a finished thread here to come back to it later</EmptySlot> : null}
       {tasks.map(renderCard)}
     </div>
   );
 }
 
-function BoardColumnView({ column, title, tasks, now, readLocally, selectedThreadId, draggingId, startingIds, providersById, onArchive, onPark, onMarkUnread, onStart, onDragChange, drop, onOpen, onStartAdding, headerControl, tabs, body, placement, fit, addForm, parkedTasks, parkDrop }: {
+function BoardColumnView({ column, title, tasks, renderCard, dragging, drop, onStartAdding, headerControl, tabs, body, addForm, parked }: {
   column: BoardColumn;
   title: string;
   tasks: BoardTask[];
-  readLocally: ReadonlySet<string>;
-  now: number;
-  selectedThreadId: string | null;
-  /** The card being dragged, if any. */
-  draggingId: string | null;
-  /** Cards whose start is on its way to the server; their start button waits. */
-  startingIds: ReadonlySet<string>;
-  providersById: ReadonlyMap<string, AgentProvider>;
-  onArchive: (threadId: string) => void;
-  onPark: (threadId: string, parked: boolean) => void;
-  onMarkUnread: (threadId: string) => void;
-  onStart: (threadId: string) => void;
-  onDragChange: (threadId: string | null) => void;
-  /** Non-null while this column takes a dragged card: always for Parked, for Working while a startable card is dragged. */
+  renderCard: (task: BoardTask) => ReactElement;
+  /** A card is being dragged. */
+  dragging: boolean;
+  /** Non-null while this column takes a dragged card: Working, while a startable card is dragged. */
   drop: ColumnDrop | null;
-  onOpen: (threadId: string) => void;
   onStartAdding: (() => void) | null;
   /** Drawn at the header's end: the working limit picker in Working. */
   headerControl: ReactElement | null;
@@ -329,81 +374,20 @@ function BoardColumnView({ column, title, tasks, now, readLocally, selectedThrea
   tabs: ReactElement | null;
   /** Drawn instead of the column's cards: an Incoming or Out tab. */
   body: ReactElement | null;
-  /** Classes placing the column in the board: snapping on phones, or its share of a stack. */
-  placement: string;
-  /** Sized to its cards, shrinking to scroll only when the stack runs out of room (Done above Parked). */
-  fit: boolean;
   /** The new-thread form; non-null only while it is open. */
   addForm: ReactElement | null;
-  /** The Queue column's Parked section: idle threads set aside to come back to; null in other columns. */
-  parkedTasks: BoardTask[] | null;
-  /** What the Parked section does with a dragged card. */
-  parkDrop: ColumnDrop | null;
+  /** The Queue column's Parked section: idle threads set aside to come back to, and what a card dropped there does. */
+  parked: { tasks: BoardTask[]; onDrop: (threadId: string) => void } | null;
 }) {
   const meta = STATUS_META[column];
   const adding = addForm !== null;
-  const renderCard = (task: BoardTask) => (
-      <TaskCard
-        key={task.threadId}
-        task={task}
-        now={now}
-        unread={task.status === "done" && isUnread(task, readLocally)}
-        selected={task.threadId === selectedThreadId}
-        dragging={task.threadId === draggingId}
-        starting={startingIds.has(task.threadId)}
-        provider={task.thread?.providerId ? providersById.get(task.thread.providerId) ?? null : null}
-        onArchive={onArchive}
-        onPark={onPark}
-        onMarkUnread={onMarkUnread}
-        onStart={onStart}
-        onDragChange={onDragChange}
-        onOpen={onOpen}
-      />
-  );
-  // A drag is on its way and this column takes it; `over` while the pointer is inside it. dragenter/dragleave
-  // fire for every child crossed, so a depth count tells when the pointer really leaves.
-  const awaitingDrop = drop !== null && draggingId !== null;
-  const [over, setOver] = useState(false);
-  const dragDepth = useRef(0);
-  useEffect(() => {
-    if (awaitingDrop) return;
-    dragDepth.current = 0;
-    setOver(false);
-  }, [awaitingDrop]);
-  const takesDrag = (event: DragEvent) => drop !== null && event.dataTransfer.types.includes(THREAD_DRAG_TYPE);
-  const dropClass = !awaitingDrop
-    ? ""
-    : over
-      ? "bg-muted-foreground/12 outline-2 -outline-offset-2 outline-muted-foreground/70"
-      : "outline-2 outline-dashed -outline-offset-2 outline-muted-foreground/45";
+  const awaitingDrop = drop !== null && dragging;
+  const { over, handlers } = useCardDrop(drop?.onDrop ?? null, awaitingDrop);
   return (
     <section
       aria-label={title}
-      className={`relative flex min-h-0 min-w-0 flex-col overflow-hidden bg-muted/45 transition-[background-color,outline-color] duration-150 ${placement} ${dropClass}`}
-      onDragEnter={(event) => {
-        if (!takesDrag(event)) return;
-        event.preventDefault();
-        dragDepth.current += 1;
-        setOver(true);
-      }}
-      onDragOver={(event) => {
-        if (!takesDrag(event)) return;
-        event.preventDefault();
-        event.dataTransfer.dropEffect = "move";
-      }}
-      onDragLeave={(event) => {
-        if (!takesDrag(event)) return;
-        dragDepth.current = Math.max(0, dragDepth.current - 1);
-        if (dragDepth.current === 0) setOver(false);
-      }}
-      onDrop={(event) => {
-        if (!takesDrag(event) || !drop) return;
-        event.preventDefault();
-        dragDepth.current = 0;
-        setOver(false);
-        const threadId = event.dataTransfer.getData(THREAD_DRAG_TYPE);
-        if (threadId) drop.onDrop(threadId);
-      }}
+      className={`relative flex min-h-0 min-w-0 flex-col overflow-hidden bg-muted/45 transition-[background-color,outline-color] duration-150 max-sm:snap-start ${dropOutline(awaitingDrop, over)}`}
+      {...handlers}
     >
       {/* Flush columns' accents meet edge to edge: one status strip along the board's top. */}
       <span className={`pointer-events-none absolute inset-x-0 top-0 h-[2px] ${meta.accent} opacity-80`} aria-hidden />
@@ -421,21 +405,12 @@ function BoardColumnView({ column, title, tasks, now, readLocally, selectedThrea
           board's horizontal scroll, so overscroll is contained on y only. */}
       <div
         data-board-column-scroll=""
-        className={`min-h-0 ${fit ? "flex-[0_1_auto]" : "flex-1"} space-y-1 overflow-y-auto overflow-x-hidden overscroll-y-contain p-1.5 [scrollbar-width:thin]`}
+        className="min-h-0 flex-1 space-y-1 overflow-y-auto overflow-x-hidden overscroll-y-contain p-1.5 [scrollbar-width:thin]"
       >
         {body ?? (
           <>
             {addForm}
-            {awaitingDrop && drop ? (
-              <div
-                className={`flex shrink-0 items-center justify-center gap-1.5 rounded-md border border-dashed px-3 py-3 text-[11px] font-medium transition-colors ${
-                  over ? "border-muted-foreground/70 bg-card text-foreground" : "border-muted-foreground/40 text-muted-foreground"
-                }`}
-              >
-                <Icon name={drop.icon} className="size-3.5" aria-hidden />
-                {drop.label}
-              </div>
-            ) : null}
+            {awaitingDrop ? <DropHint over={over} icon={drop.icon} label={drop.label} /> : null}
             {onStartAdding && !adding ? (
               <button
                 type="button"
@@ -446,14 +421,10 @@ function BoardColumnView({ column, title, tasks, now, readLocally, selectedThrea
                 New thread
               </button>
             ) : tasks.length === 0 && !adding && !awaitingDrop ? (
-              <div className="flex shrink-0 items-center justify-center rounded-md border border-dashed border-foreground/15 px-3 py-3 text-center text-[11px] text-muted-foreground/90">
-                {column === "parked" ? "Drag an idle thread here to come back to it later" : "No threads"}
-              </div>
+              <EmptySlot>No threads</EmptySlot>
             ) : null}
             {tasks.map(renderCard)}
-            {parkedTasks && parkDrop ? (
-              <ParkedSection tasks={parkedTasks} dragging={draggingId !== null} drop={parkDrop} renderCard={renderCard} />
-            ) : null}
+            {parked ? <ParkedSection tasks={parked.tasks} dragging={dragging} onDrop={parked.onDrop} renderCard={renderCard} /> : null}
           </>
         )}
       </div>
@@ -469,35 +440,16 @@ export function BoardView({ api, reviews, work }: { api: BoardApi; reviews: Revi
   const providersById = useMemo(() => new Map(providers.map((provider) => [provider.id, provider])), [providers]);
   const navigate = useBbNavigate();
   const { rpc, board, error, report, refetch } = api;
-  // Cards opened from the board count as read right away, before bb's read state round-trips.
-  const [readLocally, setReadLocally] = useState<ReadonlySet<string>>(() => new Set());
+  // Cards opened from the board count as read right away, before bb's read state round-trips; dropped once the
+  // server agrees, so later activity can mark the card unread again.
+  const [readLocally, setReadLocally] = useLocalIds(board, (task) => task.unread);
   // Cards parked from the board move to Parked right away, before the server's board round-trips.
-  const [parkedLocally, setParkedLocally] = useState<ReadonlySet<string>>(() => new Set());
+  const [parkedLocally, setParkedLocally] = useLocalIds(board, (task) => task.status !== "parked");
+  // Cards started from the board: their start button waits until the server's board no longer offers to start them.
+  const [startingIds, setStartingIds] = useLocalIds(board, (task) => task.startable);
   const grouped = useMemo(() => groupTasksByColumn(board, readLocally, parkedLocally), [board, readLocally, parkedLocally]);
-  useEffect(() => {
-    // Drop local overrides once the server agrees, so later activity can mark the card unread again.
-    if (!board || readLocally.size === 0) return;
-    const next = new Set(board.tasks.filter((task) => task.unread && readLocally.has(task.threadId)).map((task) => task.threadId));
-    if (next.size !== readLocally.size) setReadLocally(next);
-  }, [board, readLocally]);
-  useEffect(() => {
-    // Likewise once the server shows them parked, or they left the board.
-    if (!board || parkedLocally.size === 0) return;
-    const next = new Set(
-      board.tasks.filter((task) => task.status !== "parked" && parkedLocally.has(task.threadId)).map((task) => task.threadId),
-    );
-    if (next.size !== parkedLocally.size) setParkedLocally(next);
-  }, [board, parkedLocally]);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const draggingStartable = board?.tasks.some((task) => task.threadId === draggingId && task.startable) ?? false;
-  // Cards started from the board: their start button waits until the server's board shows them started.
-  const [startingIds, setStartingIds] = useState<ReadonlySet<string>>(() => new Set());
-  useEffect(() => {
-    // Drop them once the server's board no longer offers to start them, or they left the board.
-    if (!board || startingIds.size === 0) return;
-    const next = new Set(board.tasks.filter((task) => task.startable && startingIds.has(task.threadId)).map((task) => task.threadId));
-    if (next.size !== startingIds.size) setStartingIds(next);
-  }, [board, startingIds]);
   const now = useNow(CLOCK_TICK_MS);
   // A saved draft means the form was open with text when the app last closed: reopen it, without focus.
   const [adding, setAdding] = useState<"closed" | "restored" | "opened">(() => (readDraft() ? "restored" : "closed"));
@@ -506,18 +458,11 @@ export function BoardView({ api, reviews, work }: { api: BoardApi; reviews: Revi
     rpc.call("board_remove_task", { threadId }).then(refetch, report);
   };
 
-  const forgetParked = (threadId: string) => {
-    setParkedLocally((current) => {
-      if (!current.has(threadId)) return current;
-      const next = new Set(current);
-      next.delete(threadId);
-      return next;
-    });
-  };
+  const forgetParked = (threadId: string) => setParkedLocally((current) => withoutId(current, threadId));
 
   const parkTask = (threadId: string, parked: boolean) => {
     // Parking shows right away; unparking waits for the server, which decides where the card goes.
-    if (parked) setParkedLocally((current) => new Set([...current, threadId]));
+    if (parked) setParkedLocally((current) => withId(current, threadId));
     else forgetParked(threadId);
     rpc.call("board_park_task", { threadId, parked }).then(
       (task) => {
@@ -539,19 +484,15 @@ export function BoardView({ api, reviews, work }: { api: BoardApi; reviews: Revi
   };
 
   const startTask = (threadId: string) => {
-    setStartingIds((current) => new Set([...current, threadId]));
+    setStartingIds((current) => withId(current, threadId));
     rpc.call("board_start_task", { threadId }).then(refetch, (cause) => {
-      setStartingIds((current) => {
-        const next = new Set(current);
-        next.delete(threadId);
-        return next;
-      });
+      setStartingIds((current) => withoutId(current, threadId));
       report(cause);
     });
   };
 
   const openTask = (threadId: string) => {
-    setReadLocally((current) => (current.has(threadId) ? current : new Set([...current, threadId])));
+    setReadLocally((current) => withId(current, threadId));
     rpc.call("board_mark_read", { threadId }).then(refetch, refetch);
     try {
       navigate.toThread(threadId);
@@ -563,12 +504,7 @@ export function BoardView({ api, reviews, work }: { api: BoardApi; reviews: Revi
 
   const markUnreadTask = (threadId: string) => {
     // Drop the local "read" override so the card goes unread as soon as the server's board says so.
-    setReadLocally((current) => {
-      if (!current.has(threadId)) return current;
-      const next = new Set(current);
-      next.delete(threadId);
-      return next;
-    });
+    setReadLocally((current) => withoutId(current, threadId));
     rpc.call("board_mark_unread", { threadId }).then(refetch, (cause) => {
       refetch();
       report(cause);
@@ -593,11 +529,7 @@ export function BoardView({ api, reviews, work }: { api: BoardApi; reviews: Revi
   const [chosenTab, setChosenTab] = useState<QueueTab>(readQueueTab);
   const selectTab = (tab: QueueTab) => {
     setChosenTab(tab);
-    try {
-      window.localStorage.setItem(QUEUE_TAB_KEY, tab);
-    } catch {
-      // Storage off: the tab still switches for this session.
-    }
+    writeStored(QUEUE_TAB_KEY, tab);
   };
   // A tab shows while its lists load, and once any of them has a search configured.
   const incoming = visibleReviews(reviews);
@@ -629,27 +561,34 @@ export function BoardView({ api, reviews, work }: { api: BoardApi; reviews: Revi
       </div>
     ) : null;
 
-  const renderColumn = (column: { id: BoardColumn; title: string }, placement: string, fit: boolean) => (
-    <BoardColumnView
-      key={column.id}
-      column={column.id}
-      title={column.title}
-      tasks={grouped.get(column.id) ?? []}
+  const renderCard = (task: BoardTask) => (
+    <TaskCard
+      key={task.threadId}
+      task={task}
       now={now}
-      readLocally={readLocally}
-      selectedThreadId={selectedThreadId}
-      draggingId={draggingId}
-      startingIds={startingIds}
-      providersById={providersById}
+      unread={task.status === "done" && isUnread(task, readLocally)}
+      selected={task.threadId === selectedThreadId}
+      dragging={task.threadId === draggingId}
+      starting={startingIds.has(task.threadId)}
+      provider={task.thread?.providerId ? providersById.get(task.thread.providerId) ?? null : null}
       onArchive={archiveTask}
       onPark={parkTask}
       onMarkUnread={markUnreadTask}
       onStart={startTask}
       onDragChange={setDraggingId}
-      drop={
-        column.id === "wip" && draggingStartable ? { label: "Drop to start now", icon: "Play", onDrop: startTask } : null
-      }
       onOpen={openTask}
+    />
+  );
+
+  const renderColumn = (column: { id: BoardColumn; title: string }) => (
+    <BoardColumnView
+      key={column.id}
+      column={column.id}
+      title={column.title}
+      tasks={grouped.get(column.id) ?? []}
+      renderCard={renderCard}
+      dragging={draggingId !== null}
+      drop={column.id === "wip" && draggingStartable ? { label: "Drop to start now", icon: "Play", onDrop: startTask } : null}
       onStartAdding={column.id === "queue" ? () => setAdding("opened") : null}
       headerControl={
         column.id === "wip" && board ? (
@@ -663,10 +602,7 @@ export function BoardView({ api, reviews, work }: { api: BoardApi; reviews: Revi
       }
       tabs={column.id === "queue" && tabs.length > 1 ? <QueueTabs tabs={tabs} active={queueTab} onSelect={selectTab} /> : null}
       body={column.id === "queue" ? queueBody : null}
-      placement={placement}
-      fit={fit}
-      parkedTasks={column.id === "queue" ? grouped.get("parked") ?? [] : null}
-      parkDrop={column.id === "queue" ? { label: "Drop to park", icon: "Pause", onDrop: dropPark } : null}
+      parked={column.id === "queue" ? { tasks: grouped.get("parked") ?? [], onDrop: dropPark } : null}
       addForm={
         column.id === "queue" && adding !== "closed" ? (
           <AddTaskForm focus={adding === "opened"} onAdd={addTask} onCancel={() => setAdding("closed")} onError={report} />
@@ -688,7 +624,7 @@ export function BoardView({ api, reviews, work }: { api: BoardApi; reviews: Revi
         // Columns sit flush with the panel and each other, split by hairlines instead of gutters.
         <div data-board-scroll="" className="grid min-h-0 flex-1 auto-cols-[minmax(250px,1fr)] grid-flow-col divide-x divide-border overflow-x-auto overscroll-x-contain [scrollbar-width:thin] max-sm:auto-cols-[calc(100%-2.5rem)] max-sm:snap-x max-sm:snap-mandatory">
           {/* Parked is a section of the Queue column, not a column of its own. */}
-          {board.columns.filter((column) => column.id !== "parked").map((column) => renderColumn(column, "max-sm:snap-start", false))}
+          {board.columns.filter((column) => column.id !== "parked").map(renderColumn)}
         </div>
       ) : error ? null : (
         // Before the first board arrives; if reads fail, only the error above shows while they retry.

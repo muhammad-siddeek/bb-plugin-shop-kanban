@@ -1,15 +1,14 @@
 import { useEffect, useState } from "react";
-import { experimental_Icon as Icon, useBbContext, useBbNavigate } from "@get-bb/plugin-sdk/app";
-import { ACCENT_BADGE, ACCENT_TEXT, CARD_EDGE, CARD_SURFACE, errorMessage, formatShortAge, type WorkItem, type WorkList, type WorkMark, type WorkState } from "./model";
+import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
+import { ACCENT_BADGE, ACCENT_TEXT, CARD_EDGE, CARD_SURFACE, formatShortAge, type WorkItem, type WorkList, type WorkMark, type WorkState } from "./model";
 import type { WorkApi } from "./hooks";
-import { ArchiveOverlay, GroupHeader, MARK_FRAME, ROW_ACTION, ShowMore } from "./primitives";
+import { EMPTY_NOTE, ForgeLink, GroupHeader, MARK_FRAME, ROW_ACTION, RowActions, ShowMore, listProblems, useBbLinks, useRowError } from "./primitives";
 
 // Work lists in the Queue column's tabs, drawn like the review cards: Open and Shipped in Out, Assigned in
 // In. The title opens a new-thread draft that takes the item further (land it, measure and demo it, or work
 // the issue); the second line opens it on its forge, and on shipped pull requests marks it measured or demoed.
 
 const SHOWN_MAX = 8;
-const FORGE_NAME = { delta: "Delta", github: "GitHub" } as const;
 const LIST_META: Record<WorkList, { title: string; hint: string; empty: string; mark: string; tone: string }> = {
   open: {
     title: "Open",
@@ -51,27 +50,17 @@ function draftPrompt(item: WorkItem): string {
   return `Help me land my pull request ${ref}${item.draft ? ", still a draft" : ""}: read its review comments, CI checks and merge readiness, and tell me what is left before it can merge.`;
 }
 
-function WorkRow({ item, now, onDraft, onMark }: {
+function WorkRow({ item, now, onMark }: {
   item: WorkItem;
   now: number;
-  onDraft: (item: WorkItem) => void;
   onMark: (item: WorkItem, mark: WorkMark, on: boolean) => Promise<void>;
 }) {
-  const navigate = useBbNavigate();
-  // Shown on the card itself: the board's own error banner clears on its next read, a second later.
-  const [error, setError] = useState<string | null>(null);
-  const attempt = async (action: () => Promise<void>) => {
-    setError(null);
-    try {
-      await action();
-    } catch (cause) {
-      setError(errorMessage(cause));
-    }
-  };
+  const links = useBbLinks();
+  const { attempt, view: error } = useRowError();
   const meta = LIST_META[item.list];
-  const forge = FORGE_NAME[item.forge];
   const at = Date.parse((item.list === "shipped" ? item.mergedAt : null) ?? item.updatedAt);
   const draftMark = item.kind === "pr" && item.draft;
+  const noun = item.kind === "issue" ? "issue" : "pull request";
   const metaHint = [
     `${item.repo}#${item.number} by ${item.author}`,
     item.draft ? "draft" : null,
@@ -95,7 +84,7 @@ function WorkRow({ item, now, onDraft, onMark }: {
         <div className="min-w-0 flex-1">
           <button
             type="button"
-            onClick={() => onDraft(item)}
+            onClick={() => links.compose(draftPrompt(item))}
             title={`${item.title}\n\nOpen a draft thread: ${draftPrompt(item)}`}
             className="flex h-[18px] w-full min-w-0 items-center rounded-sm text-left text-[13px] font-medium leading-[18px] text-foreground decoration-muted-foreground/40 underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
           >
@@ -125,36 +114,22 @@ function WorkRow({ item, now, onDraft, onMark }: {
                   );
                 })
               : null}
-            <button
-              type="button"
-              onClick={() => {
-                if (!navigate?.openUrl?.(item.url)) window.open(item.url, "_blank", "noopener,noreferrer");
-              }}
-              title={`Open in ${forge}`}
-              className={`${ROW_ACTION} gap-0.5 px-1 text-[10.5px] font-medium hover:bg-accent hover:text-foreground`}
-            >
-              {forge}
-              <Icon name="ExternalLink" className="size-3" aria-hidden />
-            </button>
+            <ForgeLink forge={item.forge} onClick={() => links.openUrl(item.url)} />
           </div>
-          {error ? (
-            <p role="alert" className={`mb-0.5 line-clamp-2 text-[10.5px] leading-[14px] ${ACCENT_TEXT.rose}`} title={error}>
-              {error}
-            </p>
-          ) : null}
+          {error}
         </div>
       </div>
-      <ArchiveOverlay
-        label={`Archive ${item.kind === "issue" ? "issue" : "pull request"}`}
-        title={`Archive: hide this ${item.kind === "issue" ? "issue" : "pull request"} from the list`}
-        onClick={() => void attempt(() => onMark(item, "archived", true))}
+      <RowActions
+        label={`Archive ${noun}`}
+        title={`Archive: hide this ${noun} from the list`}
+        onArchive={() => void attempt(() => onMark(item, "archived", true))}
       />
     </article>
   );
 }
 
 /** The work lists as the board shows them: marks set here apply at once, before the server's next list round-trips. */
-export type WorkItems = {
+type WorkItems = {
   state: WorkState | null;
   error: string | null;
   /** Lists with a search configured. */
@@ -214,23 +189,16 @@ export function useWorkItems(work: WorkApi): WorkItems {
 }
 
 export function WorkGroup({ list, work, now }: { list: WorkList; work: WorkItems; now: number }) {
-  const navigate = useBbNavigate();
-  const context = useBbContext();
   const [showAll, setShowAll] = useState(false);
   const { state } = work;
   if (!state || !work.lists.includes(list)) return null;
   const meta = LIST_META[list];
   const items = work.byList[list];
   const shown = showAll ? items : items.slice(0, SHOWN_MAX);
-  const sources = state.sources.filter((source) => source.list === list);
-  const problems = [
-    ...new Set([work.error, state.error, ...sources.map((source) => (source.error && !source.missing ? `${source.search}: ${source.error}` : null))]),
-  ].filter((problem): problem is string => Boolean(problem));
-  const skipped = [...new Set(sources.flatMap((source) => (source.error && source.missing ? [source.error] : [])))];
-
-  const draft = (item: WorkItem) => {
-    navigate?.toCompose?.({ ...(context?.projectId ? { projectId: context.projectId } : {}), initialPrompt: draftPrompt(item), focusPrompt: true });
-  };
+  const { problems, skipped } = listProblems(
+    [work.error, state.error],
+    state.sources.filter((source) => source.list === list),
+  );
 
   return (
     <div className="space-y-1">
@@ -242,10 +210,10 @@ export function WorkGroup({ list, work, now }: { list: WorkList; work: WorkItems
         problems={problems}
       />
       {items.length === 0 ? (
-        <p className="rounded-md border border-dashed border-foreground/15 px-3 py-2 text-center text-[11px] text-muted-foreground/90">{state.refreshedAt === null ? "Reading pull requests…" : meta.empty}</p>
+        <p className={EMPTY_NOTE}>{state.refreshedAt === null ? "Reading pull requests…" : meta.empty}</p>
       ) : null}
       {shown.map((item) => (
-        <WorkRow key={`${item.list}:${item.id}`} item={item} now={now} onDraft={draft} onMark={work.mark} />
+        <WorkRow key={`${item.list}:${item.id}`} item={item} now={now} onMark={work.mark} />
       ))}
       <ShowMore total={items.length} max={SHOWN_MAX} all={showAll} onToggle={() => setShowAll((all) => !all)} />
     </div>

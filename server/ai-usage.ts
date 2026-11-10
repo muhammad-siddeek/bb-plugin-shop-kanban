@@ -8,6 +8,7 @@ import { execFile } from "node:child_process";
 import { homedir } from "node:os";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import type { AiUsage } from "./schema";
+import { errorMessage } from "./text";
 
 const USAGE_URL = "https://proxy.shopify.ai/apis/proxy/v1/usage.json";
 const HMAC_URL = "https://proxy.shopify.io/hmac/personal";
@@ -178,7 +179,7 @@ export function createAiUsage(bb: BbPluginApi) {
       if (cached && now - cached.at < (cached.value.error ? ERROR_CACHE_MS : CACHE_MS)) return Promise.resolve(cached.value);
       pending ??= request()
         .catch((error: unknown): AiUsage => {
-          const message = error instanceof Error ? error.message : String(error);
+          const message = errorMessage(error);
           bb.log.warn(`ai usage read failed: ${message}`);
           // Keep the last good figures, flagged with the error, so a blip doesn't blank the chip.
           const last = cached?.value;

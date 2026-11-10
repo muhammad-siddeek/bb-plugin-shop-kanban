@@ -172,14 +172,13 @@ export function groupTasksByColumn(
     grouped.get(task.column)?.push(task);
   }
   // Each column keeps the server's timestamp order within these groups.
+  const firstWhere = (column: BoardColumn, test: (task: BoardTask) => boolean) => {
+    const tasks = grouped.get(column) ?? [];
+    grouped.set(column, [...tasks.filter(test), ...tasks.filter((task) => !test(task))]);
+  };
   // Working: blocked cards, which wait on the user, above working ones.
-  const wip = grouped.get("wip") ?? [];
-  grouped.set("wip", [...wip.filter((task) => task.status === "blocked"), ...wip.filter((task) => task.status !== "blocked")]);
+  firstWhere("wip", (task) => task.status === "blocked");
   // Done: unread cards first, then read ones.
-  const done = grouped.get("done") ?? [];
-  grouped.set("done", [
-    ...done.filter((task) => isUnread(task, readLocally)),
-    ...done.filter((task) => !isUnread(task, readLocally)),
-  ]);
+  firstWhere("done", (task) => isUnread(task, readLocally));
   return grouped;
 }

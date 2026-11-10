@@ -6,6 +6,7 @@ import { readFile, statfs } from "node:fs/promises";
 import { cpus, homedir, hostname, loadavg, platform, totalmem, freemem, uptime } from "node:os";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import type { SystemProcesses, SystemStats } from "./schema";
+import { errorMessage } from "./text";
 
 const SAMPLE_MS = 2_000;
 /** Samples kept for the sparklines: two minutes. */
@@ -323,7 +324,7 @@ export function createSystemMonitor(bb: BbPluginApi) {
         history: { cpu: [...history.cpu], memory: [...history.memory], swapRate: [...history.swapRate] },
       };
     } catch (error) {
-      bb.log.warn(`system sample failed: ${error instanceof Error ? error.message : String(error)}`);
+      bb.log.warn(`system sample failed: ${errorMessage(error)}`);
     } finally {
       sampling = false;
     }

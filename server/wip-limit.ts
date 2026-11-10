@@ -139,10 +139,7 @@ export function createWipLimit(bb: BbPluginApi, reader: ThreadReader, onChange: 
   return {
     view,
     /** Whether a message to this thread is held by the working limit. */
-    isWaiting(threadId: string): boolean {
-      for (const id of waiting.values()) if (id === threadId) return true;
-      return false;
-    },
+    isWaiting: (threadId: string): boolean => [...waiting.values()].includes(threadId),
     async setLimit(next: number | null): Promise<WipLimitView> {
       await loaded;
       await bb.storage.kv.set(LIMIT_KEY, next);

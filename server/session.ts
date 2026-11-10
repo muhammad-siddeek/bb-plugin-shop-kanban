@@ -1,5 +1,6 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
-import { hostContract, piSessionIdInput, sessionIdInput } from "../contract";
+import { piSessionIdInput, sessionIdInput } from "../contract";
+import { hostClient } from "./hosts";
 import type { BoardSession } from "./schema";
 import { isRunningSelf, type LiveThread } from "./status";
 import { safe } from "./text";
@@ -74,7 +75,7 @@ export function createSessionInfo(bb: BbPluginApi, reader: ThreadReader) {
   /** Thread ids in each card's tree, as last listed; keeps `spends` of archived descendants across board refreshes. */
   const treeIds = new Map<string, string[]>();
   const spends = new Map<string, ThreadSpend>();
-  const host = bb.hosts.experimental_client({ contract: hostContract });
+  const host = hostClient(bb);
 
   /**
    * Stale-while-revalidate: only the very first read for a key waits on the fetch. A failed fetch (null or thrown)

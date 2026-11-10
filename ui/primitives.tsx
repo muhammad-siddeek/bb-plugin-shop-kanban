@@ -1,13 +1,77 @@
-import type { ReactNode } from "react";
-import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
-import { ACCENT_TEXT } from "./model";
+import { useState, type ReactNode } from "react";
+import { experimental_Icon as Icon, useBbContext, useBbNavigate } from "@get-bb/plugin-sdk/app";
+import { ACCENT_TEXT, errorMessage } from "./model";
 
-// Same 16px mark frame as thread cards, so pull request, issue and thread cards line up in the column.
+// Every card's marks share one 16px frame: they line up with the 18px title line (mt-px centers them), and pull
+// request, issue and thread cards line up in the column.
 export const MARK_FRAME = "mt-px inline-flex size-4 shrink-0 items-center justify-center";
 /** A row's 20px action (28px on touch screens); `ROW_ICON_ACTION` is its square icon-only form. */
 export const ROW_ACTION =
   "inline-flex h-5 shrink-0 items-center justify-center rounded-md text-muted-foreground/70 transition-[color,background-color] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:pointer-events-none disabled:opacity-50 pointer-coarse:h-7";
 export const ROW_ICON_ACTION = `${ROW_ACTION} w-5 pointer-coarse:w-7`;
+export const FORGE_NAME = { delta: "Delta", github: "GitHub" } as const;
+/** A list that has nothing to show, or nothing yet. */
+export const EMPTY_NOTE = "rounded-md border border-dashed border-foreground/15 px-3 py-2 text-center text-[11px] text-muted-foreground/90";
+
+/** bb's composer and links: a new-thread draft in the open thread's project, and URLs (a new tab when bb can't). */
+export function useBbLinks() {
+  const navigate = useBbNavigate();
+  const context = useBbContext();
+  return {
+    compose(initialPrompt: string) {
+      navigate?.toCompose?.({ ...(context?.projectId ? { projectId: context.projectId } : {}), initialPrompt, focusPrompt: true });
+    },
+    openUrl(url: string) {
+      if (!navigate?.openUrl?.(url)) window.open(url, "_blank", "noopener,noreferrer");
+    },
+  };
+}
+
+/**
+ * A row's failure, shown on the row itself: the board's own error banner clears on its next read, a second later.
+ * `attempt` runs an action and keeps its error.
+ */
+export function useRowError() {
+  const [error, setError] = useState<string | null>(null);
+  const attempt = async (action: () => Promise<void>) => {
+    setError(null);
+    try {
+      await action();
+    } catch (cause) {
+      setError(errorMessage(cause));
+    }
+  };
+  const view = error ? (
+    <p role="alert" className={`mb-0.5 line-clamp-2 text-[10.5px] leading-[14px] ${ACCENT_TEXT.rose}`} title={error}>
+      {error}
+    </p>
+  ) : null;
+  return { attempt, view };
+}
+
+/** A list's problems worth a warning, and the searches skipped as expected (no host, a forge CLI missing or signed out). */
+export function listProblems(errors: (string | null)[], sources: { search: string; error: string | null; missing: boolean }[]) {
+  const problems = [
+    ...new Set([...errors, ...sources.map((source) => (source.error && !source.missing ? `${source.search}: ${source.error}` : null))]),
+  ].filter((problem): problem is string => Boolean(problem));
+  const skipped = [...new Set(sources.flatMap((source) => (source.error && source.missing ? [source.error] : [])))];
+  return { problems, skipped };
+}
+
+/** A row's "open on its forge" link. */
+export function ForgeLink({ forge, onClick }: { forge: keyof typeof FORGE_NAME; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={`Open in ${FORGE_NAME[forge]}`}
+      className={`${ROW_ACTION} gap-0.5 px-1 text-[10.5px] font-medium hover:bg-accent hover:text-foreground`}
+    >
+      {FORGE_NAME[forge]}
+      <Icon name="ExternalLink" className="size-3" aria-hidden />
+    </button>
+  );
+}
 
 export function Spinner() {
   return <span aria-hidden className="inline-flex size-3 animate-spin rounded-full border-[1.5px] border-muted-foreground/25 border-t-muted-foreground" />;
@@ -48,16 +112,20 @@ export function GroupHeader({ title, count, hint, refreshing, problems, children
   );
 }
 
-/** A row's archive button: the thread cards' hover overlay, over the end of the title line. */
-export function ArchiveOverlay({ label, title, onClick }: { label: string; title: string; onClick: () => void }) {
+/**
+ * A card's actions, archive last: they overlay the end of the title line (no reflow); a card-colored backdrop with a
+ * short leftward fade hides the truncated title underneath. Revealed on hover/focus, always on touch.
+ */
+export function RowActions({ label, title, onArchive, children }: { label: string; title?: string; onArchive: () => void; children?: ReactNode }) {
   return (
-    <span className="absolute right-1 top-[5px] flex bg-card opacity-0 transition-opacity duration-150 before:pointer-events-none before:absolute before:inset-y-0 before:right-full before:w-3 before:bg-linear-to-l before:from-card before:to-transparent before:content-[''] group-hover:opacity-100 group-focus-within:opacity-100 has-[:focus-visible]:opacity-100 [@media(hover:none)]:opacity-100 pointer-coarse:right-0.5 pointer-coarse:top-px">
+    <span className="absolute right-1 top-[5px] flex gap-0.5 bg-card opacity-0 transition-opacity duration-150 before:pointer-events-none before:absolute before:inset-y-0 before:right-full before:w-3 before:bg-linear-to-l before:from-card before:to-transparent before:content-[''] group-hover:opacity-100 group-focus-within:opacity-100 has-[:focus-visible]:opacity-100 [@media(hover:none)]:opacity-100 pointer-coarse:right-0.5 pointer-coarse:top-px">
+      {children}
       <button
         type="button"
         title={title}
         aria-label={label}
         className="inline-flex size-5 items-center justify-center rounded-md text-muted-foreground/70 transition-[color,background-color] duration-150 hover:bg-destructive/10 hover:text-destructive focus-visible:bg-destructive/10 focus-visible:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 pointer-coarse:size-7"
-        onClick={onClick}
+        onClick={onArchive}
       >
         <Icon name="Archive" className="size-3.5" aria-hidden />
       </button>

@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { Forge, ForgePr, ForgePrDetail } from "../contract";
 import { reviewRiskSchema, type ReviewRisk } from "./schema";
-import { oneLine } from "./text";
+import { oneLine, replyJson } from "./text";
 
 // What the review queue asks of models: the small labeler model's "[risk] what, why" first read of a pull
 // request, and the prompt that seeds a new thread explaining it.
@@ -62,15 +62,7 @@ const summarySchema = z.object({ risk: reviewRiskSchema, what: sentenceField, wh
 
 /** The model's JSON as a risk and up to three sentences: what, why, what could break. */
 export function parseReviewSummary(text: string): { risk: ReviewRisk; text: string } | null {
-  const json = text.match(/\{[\s\S]*\}/u)?.[0];
-  if (!json) return null;
-  let value: unknown;
-  try {
-    value = JSON.parse(json);
-  } catch {
-    return null;
-  }
-  const fields = summarySchema.safeParse(value);
+  const fields = summarySchema.safeParse(replyJson(text));
   if (!fields.success) return null;
   const { risk, what, why, risk_reason } = fields.data;
   const sentences = [what, why, risk_reason].flatMap((field) => {

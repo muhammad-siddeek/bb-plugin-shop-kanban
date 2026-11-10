@@ -1,9 +1,22 @@
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
-import { experimental_Icon as Icon, useBbContext, useBbNavigate } from "@get-bb/plugin-sdk/app";
-import { ACCENT_BADGE, ACCENT_TEXT, CARD_EDGE, CARD_SURFACE, errorMessage, formatShortAge, type ReviewCard, type ReviewScope } from "./model";
+import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
+import { ACCENT_BADGE, ACCENT_TEXT, CARD_EDGE, CARD_SURFACE, formatShortAge, type ReviewCard, type ReviewScope } from "./model";
 import type { ReviewVerdict, ReviewsApi } from "./hooks";
-import { ArchiveOverlay, GroupHeader, MARK_FRAME, ROW_ACTION, ROW_ICON_ACTION, ShowMore, Spinner } from "./primitives";
+import {
+  EMPTY_NOTE,
+  ForgeLink,
+  GroupHeader,
+  MARK_FRAME,
+  ROW_ACTION,
+  ROW_ICON_ACTION,
+  RowActions,
+  ShowMore,
+  Spinner,
+  listProblems,
+  useBbLinks,
+  useRowError,
+} from "./primitives";
 
 // Reviews, the first list in the Queue column's In tab: a two-line card per pull request waiting on the user,
 // toggled between requests of the user by name (Me, where the board always opens) and of their teams (Team). The
@@ -12,7 +25,6 @@ import { ArchiveOverlay, GroupHeader, MARK_FRAME, ROW_ACTION, ROW_ICON_ACTION, S
 
 const SHOWN_MAX = 8;
 const CONFIRM_MS = 3_000;
-const FORGE_NAME = { delta: "Delta", github: "GitHub" } as const;
 const SCOPE = {
   me: { label: "Me", hint: "Requested of you by name", empty: "Nothing requested of you." },
   team: { label: "Team", hint: "Requested of your teams", empty: "Nothing requested of your teams." },
@@ -36,35 +48,25 @@ function RiskChip({ review }: { review: ReviewCard }) {
   return null;
 }
 
-type RowActions = {
+type ReviewActions = {
   onDraft: (review: ReviewCard) => Promise<void>;
   onOpen: (review: ReviewCard) => Promise<void>;
   onArchive: (review: ReviewCard) => Promise<void>;
   onSubmit: (review: ReviewCard, verdict: ReviewVerdict, body: string) => Promise<void>;
 };
 
-function ReviewRow({ review, now, unread, actions }: { review: ReviewCard; now: number; unread: boolean; actions: RowActions }) {
+function ReviewRow({ review, now, unread, actions }: { review: ReviewCard; now: number; unread: boolean; actions: ReviewActions }) {
   const [confirming, setConfirming] = useState(false);
   const [declining, setDeclining] = useState(false);
   const [reason, setReason] = useState("");
   const [pending, setPending] = useState<ReviewVerdict | null>(null);
-  // Shown on the card itself: the board's own error banner clears on its next read, a second later.
-  const [error, setError] = useState<string | null>(null);
+  const { attempt, view: error } = useRowError();
 
   useEffect(() => {
     if (!confirming) return;
     const timer = window.setTimeout(() => setConfirming(false), CONFIRM_MS);
     return () => window.clearTimeout(timer);
   }, [confirming]);
-
-  const attempt = async (action: () => Promise<void>) => {
-    setError(null);
-    try {
-      await action();
-    } catch (cause) {
-      setError(errorMessage(cause));
-    }
-  };
 
   const submit = async (verdict: ReviewVerdict, body: string) => {
     if (pending) return;
@@ -79,7 +81,6 @@ function ReviewRow({ review, now, unread, actions }: { review: ReviewCard; now: 
     if (reason.trim()) void submit("request_changes", reason.trim());
   };
 
-  const forge = FORGE_NAME[review.forge];
   const updated = Date.parse(review.updatedAt);
   const size =
     review.additions !== null && review.deletions !== null
@@ -128,15 +129,7 @@ function ReviewRow({ review, now, unread, actions }: { review: ReviewCard; now: 
               {review.author} · {review.repo.split("/").pop()}#{review.number}
               {review.draft ? " · draft" : ""}
             </span>
-            <button
-              type="button"
-              onClick={() => void attempt(() => actions.onOpen(review))}
-              title={`Open in ${forge}`}
-              className={`${ROW_ACTION} gap-0.5 px-1 text-[10.5px] font-medium hover:bg-accent hover:text-foreground`}
-            >
-              {forge}
-              <Icon name="ExternalLink" className="size-3" aria-hidden />
-            </button>
+            <ForgeLink forge={review.forge} onClick={() => void attempt(() => actions.onOpen(review))} />
             <button
               type="button"
               aria-label={confirming ? "Confirm approval" : "Approve"}
@@ -190,15 +183,11 @@ function ReviewRow({ review, now, unread, actions }: { review: ReviewCard; now: 
               </button>
             </form>
           ) : null}
-          {error ? (
-            <p role="alert" className={`mb-0.5 line-clamp-2 text-[10.5px] leading-[14px] ${ACCENT_TEXT.rose}`} title={error}>
-              {error}
-            </p>
-          ) : null}
+          {error}
         </div>
       </div>
 
-      <ArchiveOverlay label="Archive pull request" title="Archive: hide this pull request from the queue" onClick={() => void attempt(() => actions.onArchive(review))} />
+      <RowActions label="Archive pull request" title="Archive: hide this pull request from the queue" onArchive={() => void attempt(() => actions.onArchive(review))} />
     </article>
   );
 }
@@ -242,8 +231,7 @@ export function visibleReviews(reviews: ReviewsApi): { count: number; fresh: num
 }
 
 export function ReviewGroup({ reviews, now }: { reviews: ReviewsApi; now: number }) {
-  const navigate = useBbNavigate();
-  const context = useBbContext();
+  const links = useBbLinks();
   const { state } = reviews;
   const [showAll, setShowAll] = useState(false);
   // Not stored: the board opens on Me every time it is shown.
@@ -272,15 +260,8 @@ export function ReviewGroup({ reviews, now }: { reviews: ReviewsApi; now: number
   if (!state || state.scopes.length === 0) return null;
   const listed = state.reviews.filter((review) => local.get(review.id) !== "hidden");
 
-  const problems = [
-    ...new Set([
-      reviews.error,
-      state.error,
-      ...state.sources.map((source) => (source.error && !source.missing ? `${source.search}: ${source.error}` : null)),
-    ]),
-  ].filter((problem): problem is string => Boolean(problem));
-  // No host, or a forge CLI missing or signed out there: expected on many machines, so a hover hint, not a warning.
-  const skipped = [...new Set(state.sources.flatMap((source) => (source.error && source.missing ? [source.error] : [])))];
+  // Skipped searches are expected on many machines, so a hover hint, not a warning.
+  const { problems, skipped } = listProblems([reviews.error, state.error], state.sources);
   const loading = state.refreshedAt === null;
 
   // A scope whose searches were all removed falls back to the one left.
@@ -295,15 +276,14 @@ export function ReviewGroup({ reviews, now }: { reviews: ReviewsApi; now: number
   const scoped = listed.filter((review) => review.scope === scope);
   const shown = showAll ? scoped : scoped.slice(0, SHOWN_MAX);
 
-  const actions: RowActions = {
+  const actions: ReviewActions = {
     onDraft: async (review) => {
       mark(review.id, "read");
-      const initialPrompt = await reviews.draft(review.id);
-      navigate?.toCompose?.({ ...(context?.projectId ? { projectId: context.projectId } : {}), initialPrompt, focusPrompt: true });
+      links.compose(await reviews.draft(review.id));
     },
     onOpen: async (review) => {
       mark(review.id, "read");
-      if (!navigate?.openUrl?.(review.url)) window.open(review.url, "_blank", "noopener,noreferrer");
+      links.openUrl(review.url);
       await reviews.markRead(review.id);
     },
     onArchive: async (review) => {
@@ -339,7 +319,7 @@ export function ReviewGroup({ reviews, now }: { reviews: ReviewsApi; now: number
         {unread[scope] > 0 ? <span className={`text-[10px] font-medium ${ACCENT_TEXT.sky}`}>{unread[scope]} new</span> : null}
       </GroupHeader>
       {scoped.length === 0 ? (
-        <p className="rounded-md border border-dashed border-foreground/15 px-3 py-2 text-center text-[11px] text-muted-foreground/90">{loading ? "Reading pull requests…" : SCOPE[scope].empty}</p>
+        <p className={EMPTY_NOTE}>{loading ? "Reading pull requests…" : SCOPE[scope].empty}</p>
       ) : null}
       {shown.map((review) => (
         <ReviewRow key={review.id} review={review} now={now} unread={isNew(review)} actions={actions} />

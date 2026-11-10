@@ -2,14 +2,14 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { PLUGIN_SLUG, TOOL_PREFIX } from "../brand";
 import type { BoardTask } from "./schema";
-import { SHORT_NAME_MAX } from "./text";
+import { SHORT_NAME_MAX, errorMessage } from "./text";
 
 export type TaskSpawn = { shortName: string; prompt: string; projectId?: string; parentThreadId?: string };
 
 type BoardApi = {
   listBoard(): Promise<{ columns: unknown[]; tasks: BoardTask[] }>;
   spawnTask(input: TaskSpawn): Promise<BoardTask>;
-  removeTask(threadId: string, options?: { archiveThread?: boolean }): Promise<boolean>;
+  removeTask(threadId: string, archive?: boolean): Promise<boolean>;
   parkTask(threadId: string, parked: boolean): Promise<BoardTask>;
 };
 
@@ -147,13 +147,13 @@ export function registerCli(bb: BbPluginApi, { listBoard, spawnTask, removeTask,
         if (command === "remove") {
           const [, threadId] = args;
           if (!threadId) return usageError;
-          const removed = await removeTask(threadId, { archiveThread: true });
+          const removed = await removeTask(threadId, true);
           if (!removed) return { exitCode: 1, stderr: `Could not archive thread ${threadId}.` };
           return reply({ removed }, `Archived ${threadId} from the board`);
         }
         return command === undefined || command === "help" || command === "--help" ? { exitCode: 0, stdout: usage } : usageError;
       } catch (error) {
-        return { exitCode: 1, stderr: error instanceof Error ? error.message : String(error) };
+        return { exitCode: 1, stderr: errorMessage(error) };
       }
     },
   });

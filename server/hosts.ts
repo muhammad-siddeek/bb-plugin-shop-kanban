@@ -1,13 +1,22 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
+import { hostContract } from "../contract";
 import { safe } from "./text";
+
+export function hostClient(bb: BbPluginApi) {
+  return bb.hosts.experimental_client({ contract: hostContract });
+}
+export type HostClient = ReturnType<typeof hostClient>;
+
+async function connectedHosts(bb: BbPluginApi) {
+  return ((await safe(() => bb.sdk.hosts.list())) ?? []).filter((entry) => entry.status === "connected");
+}
 
 /**
  * The first connected bb host; null when none is connected or the list is unreadable. A disconnected host would only
  * hold the call until its timeout.
  */
 export async function connectedHostId(bb: BbPluginApi): Promise<string | null> {
-  const list = (await safe(async () => bb.sdk.hosts.list())) ?? [];
-  return list.find((entry) => entry.status === "connected")?.id ?? null;
+  return (await connectedHosts(bb))[0]?.id ?? null;
 }
 
 /**
@@ -16,7 +25,7 @@ export async function connectedHostId(bb: BbPluginApi): Promise<string | null> {
  * hosts are skipped because their files go away with them. Null when no such host is connected.
  */
 export async function indexHostId(bb: BbPluginApi, current: string | null): Promise<string | null> {
-  const connected = ((await safe(async () => bb.sdk.hosts.list())) ?? []).filter((entry) => entry.status === "connected");
+  const connected = await connectedHosts(bb);
   if (current && connected.some((entry) => entry.id === current)) return current;
   return connected.find((entry) => entry.type === "persistent")?.id ?? null;
 }

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { Forge, ForgePr } from "../contract";
-import { failure, run, type RunResult } from "./run";
+import { failure, parseOutput, run, type RunResult } from "./run";
 
 // Pull requests through the forge CLIs the user already signed in to: `dt` for Delta, `gh` for GitHub. Both speak
 // GitHub's REST shapes, so one set of schemas reads either.
@@ -107,11 +107,8 @@ async function api<T>(forge: Forge, repo: string | null, endpoint: string, schem
   const args = forge === "delta" && repo ? ["api", "-R", repo, endpoint] : ["api", endpoint];
   const result = await run(command, args, 30_000, signal);
   if (result.code !== 0) return { ok: false, ...failed(command, result) };
-  try {
-    return { ok: true, value: schema.parse(JSON.parse(result.stdout)) };
-  } catch {
-    return { ok: false, error: `${command} api returned unexpected output: ${result.stdout.trim().slice(0, 200)}`, missing: false };
-  }
+  const parsed = parseOutput(`${command} api`, result.stdout, schema);
+  return parsed.ok ? parsed : { ...parsed, missing: false };
 }
 
 function clip(text: string, max: number): string {

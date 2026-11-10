@@ -1,11 +1,10 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
-import { hostContract } from "../contract";
 import { withoutToolHelp } from "./agents";
-import { commandMissing, indexHostId } from "./hosts";
+import { commandMissing, hostClient, indexHostId } from "./hosts";
 import type { SearchResponse } from "./schema";
 import { isRunningSelf, type LiveThread } from "./status";
-import { ELLIPSIS, oneLine, safe } from "./text";
+import { ELLIPSIS, errorMessage, oneLine, safe } from "./text";
 import type { ThreadMessage, ThreadReader } from "./threads";
 
 // Thread search: every visible thread, archived included, is exported as one markdown file on a persistent
@@ -97,7 +96,7 @@ export function createSearchIndex(bb: BbPluginApi, reader: ThreadReader) {
       default: "qmd",
     },
   });
-  const host = bb.hosts.experimental_client({ contract: hostContract });
+  const host = hostClient(bb);
   let state: IndexState | null = null;
   let syncing = false;
   let syncAgain = false;
@@ -129,7 +128,7 @@ export function createSearchIndex(bb: BbPluginApi, reader: ThreadReader) {
       saveErrorLogged = null;
     } catch (error) {
       // The index keeps working from memory; a restart re-exports what was not saved.
-      const text = error instanceof Error ? error.message : String(error);
+      const text = errorMessage(error);
       if (text !== saveErrorLogged) bb.log.info(`saving the search index state failed: ${text}`);
       saveErrorLogged = text;
     }
@@ -225,7 +224,7 @@ export function createSearchIndex(bb: BbPluginApi, reader: ThreadReader) {
     do {
       syncAgain = false;
       await sync().catch((cause) => {
-        syncError = cause instanceof Error ? cause.message : String(cause);
+        syncError = errorMessage(cause);
       });
     } while (syncAgain && !disposed);
     syncing = false;

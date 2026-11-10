@@ -1,5 +1,5 @@
 import { withoutToolHelp } from "./agents";
-import { oneLine } from "./text";
+import { oneLine, replyJson } from "./text";
 
 export const LABEL_PROMPT_VERSION = 6;
 /** Only in the summary signature: bumping it re-writes every card's summary but keeps the titles. */
@@ -77,7 +77,7 @@ export function labelPrompt(input: {
         : "The agent is still working on the last user message."
       : `Agent's latest reply (it has finished):\n"""\n${clip(input.output, 3_500) || "(none)"}\n"""`,
     input.board.length
-      ? `Titles of the other threads on the board, only to spell a category the same way when it names the same project as this thread; never take a category or title from a thread about something else:\n${input.board.map((title) => `- ${title}`).join("\n")}`
+      ? `Titles of the other threads on the board, only to spell a category the same way when it names the same project as this thread. Most threads are about none of them: never take a category or title from a thread about something else:\n${input.board.map((title) => `- ${title}`).join("\n")}`
       : "No other threads on the board.",
     `Current title of this thread, written from its earlier messages: ${input.currentTitle ?? "(none yet)"}`,
     "",
@@ -96,15 +96,9 @@ export function labelPrompt(input: {
 }
 
 export function parseLabel(text: string): { category: string; intent: string; summary: string; needsInput: boolean } | null {
-  const match = text.match(/\{[\s\S]*\}/u);
-  if (!match) return null;
-  let raw: Record<string, unknown>;
-  try {
-    // The match runs from `{` to `}`, so whatever parses is an object.
-    raw = JSON.parse(match[0]) as Record<string, unknown>;
-  } catch {
-    return null;
-  }
+  // The match runs from `{` to `}`, so whatever parses is an object.
+  const raw = replyJson(text) as Record<string, unknown> | undefined;
+  if (!raw) return null;
   // The model's phrase, whole: one cut short ("rank and", "add PR queue with") reads as a typo, and small models
   // often run a word or two past the asked length. The caps only stop runaway replies, at a word boundary.
   const phrase = (value: unknown, maxChars: number) => {
@@ -116,7 +110,8 @@ export function parseLabel(text: string): { category: string; intent: string; su
     // One word longer than the limit has no boundary to cut at; keep its first maxChars characters.
     return (space > 0 ? cut.slice(0, space) : text.slice(0, maxChars)).trim();
   };
-  const category = phrase(raw.category, 32).toLowerCase();
+  // A thread with no subject ("reply with ok") gets no category from the model rather than a borrowed one.
+  const category = phrase(raw.category, 32).toLowerCase().replace(/^(none|n\/a)$/u, "") || "general";
   const intent = phrase(raw.intent, 60).replace(/[.!]+$/u, "");
   const summary = typeof raw.summary === "string" ? oneLine(raw.summary).slice(0, 280) : "";
   if (!category || !intent || !summary) return null;

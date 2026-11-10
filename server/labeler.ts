@@ -1,10 +1,9 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
-import { hostContract } from "../contract";
 import { HARNESS_NOTICE, LABEL_PROMPT_VERSION, LABEL_SYSTEM, SUMMARY_PROMPT_VERSION, THREAD_MENTION, hashText, labelPrompt, parseLabel } from "./labels";
 import type { LabelView, LiveThread, ThreadDetails } from "./status";
-import { commandMissing, connectedHostId } from "./hosts";
-import { safe } from "./text";
+import { commandMissing, connectedHostId, hostClient } from "./hosts";
+import { coalesced, errorMessage, jobQueue, parseRecord, safe, throttledLog } from "./text";
 
 // Model-written card labels: a small model on the thread's host writes the "[category] intent" title and a
 // summary of the latest interaction. Labels are stored in KV, refreshed in the background with bounded
@@ -62,10 +61,6 @@ function userWords(messages: (string | null)[]): string {
     .trim();
 }
 
-function message(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
 /** `onChange` is called (debounced) whenever a label update should re-render the board. */
 export function createLabeler(bb: BbPluginApi, onChange: () => void) {
   const settings = bb.settings.define({
@@ -90,12 +85,11 @@ export function createLabeler(bb: BbPluginApi, onChange: () => void) {
     return { command, models };
   };
 
-  const host = bb.hosts.experimental_client({ contract: hostContract });
+  const host = hostClient(bb);
   let labels: Promise<Labels> | null = null;
   let labelsWrite: Promise<void> = Promise.resolve();
-  const labelQueue: Array<() => Promise<void>> = [];
+  const labelQueue = jobQueue(LABEL_CONCURRENCY);
   const labelInFlight = new Set<string>();
-  let labelActive = 0;
   const renaming = new Set<string>();
   /** Threads that are cards on the board now; their titles show the labeler what the board already groups. */
   let boardIds: string[] = [];
@@ -104,9 +98,9 @@ export function createLabeler(bb: BbPluginApi, onChange: () => void) {
    * and retry after RETRY_MS, or at once when the thread moves on. Kept in memory: a restart retries.
    */
   const failures = new Map<string, { at: number; sig: string }>();
-  let changedTimer: ReturnType<typeof setTimeout> | undefined;
+  const changedSoon = coalesced(onChange, 400);
   let enabled = true;
-  const loggedAt = new Map<string, number>();
+  const logQuietly = throttledLog(bb, LOG_INTERVAL_MS);
 
   void settings.get().then((values) => (enabled = config(values).models.length > 0), () => {});
   settings.onChange((next) => {
@@ -116,26 +110,9 @@ export function createLabeler(bb: BbPluginApi, onChange: () => void) {
     changedSoon();
   });
 
-  /** Failures repeat for every thread; one line per distinct message per interval keeps the plugin log readable. */
-  function logQuietly(line: string) {
-    const now = Date.now();
-    if (now - (loggedAt.get(line) ?? 0) < LOG_INTERVAL_MS) return;
-    for (const [key, at] of loggedAt) if (now - at >= LOG_INTERVAL_MS) loggedAt.delete(key);
-    loggedAt.set(line, now);
-    bb.log.info(line);
-  }
-
   /** One shared promise, so concurrent first loads mutate and persist the same record. Bad entries are dropped. */
   function load(): Promise<Labels> {
-    labels ??= safe(() => bb.storage.kv.get<unknown>(LABELS_KEY)).then((raw) => {
-      const all: Labels = {};
-      if (!raw || typeof raw !== "object") return all;
-      for (const [id, value] of Object.entries(raw)) {
-        const parsed = cardLabelSchema.safeParse(value);
-        if (parsed.success) all[id] = parsed.data;
-      }
-      return all;
-    });
+    labels ??= safe(() => bb.storage.kv.get<unknown>(LABELS_KEY)).then((raw) => parseRecord(raw, cardLabelSchema));
     return labels;
   }
 
@@ -144,28 +121,9 @@ export function createLabeler(bb: BbPluginApi, onChange: () => void) {
       try {
         await bb.storage.kv.set(LABELS_KEY, await load());
       } catch (error) {
-        logQuietly(`saving thread labels failed: ${message(error)}`);
+        logQuietly(`saving thread labels failed: ${errorMessage(error)}`);
       }
     });
-  }
-
-  function changedSoon() {
-    if (changedTimer) return;
-    changedTimer = setTimeout(() => {
-      changedTimer = undefined;
-      onChange();
-    }, 400);
-  }
-
-  function pumpLabels() {
-    while (labelActive < LABEL_CONCURRENCY && labelQueue.length > 0) {
-      const job = labelQueue.shift()!;
-      labelActive += 1;
-      void job().finally(() => {
-        labelActive -= 1;
-        pumpLabels();
-      });
-    }
   }
 
   /**
@@ -214,7 +172,7 @@ export function createLabeler(bb: BbPluginApi, onChange: () => void) {
         persist();
         renaming.delete(thread.id);
       } catch (error) {
-        logQuietly(`thread rename failed: ${message(error)}`);
+        logQuietly(`thread rename failed: ${errorMessage(error)}`);
         // Every board render would retry it; wait instead.
         setTimeout(() => renaming.delete(thread.id), RETRY_MS).unref?.();
       }
@@ -267,7 +225,7 @@ export function createLabeler(bb: BbPluginApi, onChange: () => void) {
       failures.delete(thread.id);
       persist();
     } catch (error) {
-      logQuietly(`labeler failed${hostId ? ` on host ${hostId}` : ""}: ${message(error)}`);
+      logQuietly(`labeler failed${hostId ? ` on host ${hostId}` : ""}: ${errorMessage(error)}`);
       failures.set(thread.id, { at: Date.now(), sig: `${job.titleSig}|${job.summarySig}` });
     } finally {
       labelInFlight.delete(thread.id);
@@ -307,7 +265,6 @@ export function createLabeler(bb: BbPluginApi, onChange: () => void) {
       labelQueue.push(() =>
         relabel(thread, details, running, { titleSig, summarySig, firstSig, currentTitle: firstChanged ? null : title }, all),
       );
-      pumpLabels();
     }
 
     const shown = fresh || backingOff ? labeled : undefined;
@@ -331,8 +288,8 @@ export function createLabeler(bb: BbPluginApi, onChange: () => void) {
   }
 
   function dispose() {
-    clearTimeout(changedTimer);
-    labelQueue.length = 0;
+    changedSoon.cancel();
+    labelQueue.clear();
   }
 
   /** The threads that are cards on the board, as of the latest board read. */

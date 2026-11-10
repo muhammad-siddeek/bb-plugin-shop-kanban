@@ -1,4 +1,4 @@
-import type { BbPluginApi, PluginThreadEventPayloads } from "@get-bb/plugin-sdk";
+import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { toLiveThread, type LiveThread, type ThreadDetails } from "./status";
 import { compactTitle, safe } from "./text";
 
@@ -21,8 +21,6 @@ export type ProviderSessions = { ids: string[]; afterSeq: string | null };
 type ListEvents = BbPluginApi["sdk"]["threads"]["events"]["list"];
 type EventTypes = NonNullable<Parameters<ListEvents>[0]["types"]>;
 type ThreadEvent = Awaited<ReturnType<ListEvents>>[number];
-/** The SDK names its thread row type only through event payloads. */
-type ThreadResponse = PluginThreadEventPayloads["thread.created"]["thread"];
 
 /** Text parts of a `client/turn/requested` event, joined; null for any other event. */
 function eventText(event: ThreadEvent | undefined): string | null {
@@ -114,14 +112,10 @@ export function createThreadReader(bb: BbPluginApi) {
   /** Which lists (archived or not) already logged hitting MAX_THREADS. */
   const cappedLogged = new Set<boolean>();
 
-  function getThread(threadId: string): Promise<ThreadResponse | null> {
-    return safe(() => bb.sdk.threads.get({ threadId }));
-  }
-
   async function titleChainForParent(parentThreadId: string | undefined) {
     if (!parentThreadId) return { titleChain: null as string | null, projectId: null as string | null };
     const [thread, meta] = await Promise.all([
-      getThread(parentThreadId),
+      safe(() => bb.sdk.threads.get({ threadId: parentThreadId })),
       safe(() => bb.sdk.threads.getPluginMetadata({ threadId: parentThreadId })),
     ]);
     return {
@@ -201,10 +195,7 @@ export function createThreadReader(bb: BbPluginApi) {
     for (let offset = 0; offset < MAX_THREADS; offset += PAGE) {
       const page = await safe(() => bb.sdk.threads.list({ archived, includeHidden: true, limit: PAGE, offset }));
       if (page === null) return offset === 0 ? null : all;
-      for (const row of page) {
-        const thread = toLiveThread(row);
-        if (thread) all.push(thread);
-      }
+      all.push(...page.map(toLiveThread));
       if (page.length < PAGE) return all;
     }
     if (!cappedLogged.has(archived)) bb.log.info(`listing stopped at ${MAX_THREADS} ${archived ? "archived" : "open"} threads`);
@@ -260,10 +251,7 @@ export function createThreadReader(bb: BbPluginApi) {
       const lists = await Promise.all(
         [false, true].map((archived) => safe(() => bb.sdk.threads.list({ threadIds, archived, includeHidden: true }))),
       );
-      for (const row of lists.flatMap((list) => list ?? [])) {
-        const thread = toLiveThread(row);
-        if (thread) byId.set(thread.id, thread);
-      }
+      for (const row of lists.flatMap((list) => list ?? [])) byId.set(row.id, toLiveThread(row));
     }
     return byId;
   }
@@ -303,7 +291,6 @@ export function createThreadReader(bb: BbPluginApi) {
   }
 
   return {
-    getThread,
     titleChainForParent,
     threadDetails,
     listAllThreads,

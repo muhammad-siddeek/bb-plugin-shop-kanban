@@ -5,7 +5,7 @@ import { forgeInput } from "../contract";
  * A card's state. Blocked cards (waiting on the user or errored) sit in the Working column, marked red; Parked holds idle
  * threads the user set aside to come back to.
  */
-export const STATUS_IDS = ["queue", "wip", "blocked", "done", "parked"] as const;
+const STATUS_IDS = ["queue", "wip", "blocked", "done", "parked"] as const;
 export type Status = (typeof STATUS_IDS)[number];
 
 export const COLUMN_IDS = ["queue", "wip", "done", "parked"] as const;
@@ -131,7 +131,7 @@ const searchResponseSchema = z.object({
 
 export const reviewRiskSchema = z.enum(["low", "medium", "high"]);
 /** Whose review a pull request asks for: the user's by name, or one of their teams'. Me first. */
-export const reviewScopeSchema = z.enum(["me", "team"]);
+const reviewScopeSchema = z.enum(["me", "team"]);
 
 /** An open pull request waiting on the user's review: a one-card entry in the Queue column's Reviews section. */
 const reviewCardSchema = z.object({
@@ -193,7 +193,7 @@ const reviewStateSchema = z.object({
  * The Queue column's pull request lists beside Reviews: `open`, the user's open pull requests, drafts included;
  * `shipped`, their recently merged ones not yet both measured and demoed; `assigned`, open issues assigned to them.
  */
-export const workListSchema = z.enum(["open", "shipped", "assigned"]);
+const workListSchema = z.enum(["open", "shipped", "assigned"]);
 
 /** A pull request or issue in one of the work lists. */
 const workItemSchema = z.object({
@@ -240,16 +240,16 @@ const workStateSchema = z.object({
 });
 
 /** What a work mark records: archived hides an item for good; shipped ones leave once both measured and demoed. */
-export const workMarkSchema = z.enum(["archived", "measured", "demoed"]);
+const workMarkSchema = z.enum(["archived", "measured", "demoed"]);
 
 /** macOS memory pressure (kern.memorystatus_vm_pressure_level), the signal Activity Monitor's pressure graph shows. */
-export const memoryPressureSchema = z.enum(["normal", "warn", "critical"]);
+const memoryPressureSchema = z.enum(["normal", "warn", "critical"]);
 
 /**
  * The bb server machine's resources: the computer bb runs on, not the browser viewing it. Byte counts are bytes, rates
  * bytes per second. Fields the OS can't report are null.
  */
-export const systemStatsSchema = z.object({
+const systemStatsSchema = z.object({
   /** The machine's display name ("Muhammad's MacBook Pro"), else its hostname. */
   name: z.string(),
   platform: z.string(),
@@ -305,7 +305,7 @@ export const systemStatsSchema = z.object({
 export type SystemStats = z.infer<typeof systemStatsSchema>;
 
 /** Processes grouped by executable name, the heaviest first by CPU and by memory. */
-export const systemProcessesSchema = z.object({
+const systemProcessesSchema = z.object({
   sampledAt: z.number(),
   groups: z.array(
     z.object({
@@ -326,7 +326,7 @@ export type SystemProcesses = z.infer<typeof systemProcessesSchema>;
  * bb threads. Costs are USD; `today` is the bb machine's local calendar day. Figures are null until a read succeeds;
  * after one has, a failed read keeps them and sets `error`.
  */
-export const aiUsageSchema = z.object({
+const aiUsageSchema = z.object({
   sampledAt: z.number(),
   timezone: z.string(),
   todayCost: z.number().nullable(),

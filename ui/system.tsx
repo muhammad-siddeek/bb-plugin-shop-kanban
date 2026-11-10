@@ -2,8 +2,8 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { useRpc } from "@get-bb/plugin-sdk/app";
 import type { rpcContract } from "../server/schema";
-import { singleFlight } from "./hooks";
-import { ACCENT_BADGE, ACCENT_TEXT, errorMessage, type AiUsage, type SystemProcesses, type SystemStats } from "./model";
+import { usePoll } from "./hooks";
+import { ACCENT_TEXT, type AiUsage, type SystemProcesses, type SystemStats } from "./model";
 
 const STATS_POLL_MS = 2_000;
 const PROCESSES_POLL_MS = 3_000;
@@ -40,7 +40,6 @@ type Level = "ok" | "warn" | "critical";
 type MetricKey = "cpu" | "memory" | "disk" | "battery";
 type Gauge = { danger: number; level: Level };
 type Assessment = {
-  level: Level;
   gauges: Record<MetricKey, Gauge>;
   /** Mean swap in+out rate over the last ~10s, bytes/s. */
   swapRate: number;
@@ -50,34 +49,21 @@ type Assessment = {
 /** Which chip's popover is open: one resource at a time. */
 type PanelKey = MetricKey | "ai";
 
-const LEVEL_RANK: Record<Level, number> = { ok: 0, warn: 1, critical: 2 };
-
-const VERDICT: Record<Level, { label: string; badge: string; dot: string; text: string }> = {
-  ok: { label: "Headroom", badge: ACCENT_BADGE.emerald, dot: "bg-emerald-500", text: ACCENT_TEXT.emerald },
-  warn: { label: "Busy", badge: ACCENT_BADGE.amber, dot: "bg-amber-500", text: ACCENT_TEXT.amber },
-  critical: { label: "Strained", badge: ACCENT_BADGE.rose, dot: "bg-rose-500", text: ACCENT_TEXT.rose },
+const VERDICT: Record<Level, { dot: string; text: string }> = {
+  ok: { dot: "bg-emerald-500", text: ACCENT_TEXT.emerald },
+  warn: { dot: "bg-amber-500", text: ACCENT_TEXT.amber },
+  critical: { dot: "bg-rose-500", text: ACCENT_TEXT.rose },
 };
 
-/** Metrics stay neutral while fine; color is reserved for LEVEL_HUE, so the strip only draws the eye when something is wrong. */
-const HUE = {
-  cpu: { text: "text-muted-foreground", bg: "bg-muted-foreground/60" },
-  memory: { text: "text-muted-foreground", bg: "bg-muted-foreground/60" },
-  disk: { text: "text-muted-foreground", bg: "bg-muted-foreground/60" },
-  battery: { text: "text-muted-foreground", bg: "bg-muted-foreground/60" },
-} satisfies Record<MetricKey, { text: string; bg: string }>;
-
-/** Chip and panel bar colors once a metric nears running out, whatever its hue. */
-const LEVEL_HUE = {
+/** Chip and bar colors: neutral while fine, so the strip only draws the eye when a metric nears running out. */
+const TONE: Record<Level, { text: string; bg: string }> = {
+  ok: { text: "text-muted-foreground", bg: "bg-muted-foreground/60" },
   warn: { text: "text-amber-500", bg: "bg-amber-500" },
   critical: { text: "text-rose-500", bg: "bg-rose-500" },
-} satisfies Record<Exclude<Level, "ok">, { text: string; bg: string }>;
-
-function tone(metric: MetricKey, level: Level) {
-  return level === "ok" ? HUE[metric] : LEVEL_HUE[level];
-}
+};
 
 // Solid glyphs (lucide has only outlines), drawn on a 20px grid and sized so each
-// spans about the same height. They fill with `currentColor`, so a HUE text class tints them.
+// spans about the same height. They fill with `currentColor`, so a text color class tints them.
 /** `x`, `y` and `size` place a glyph nested in another SVG (the chip's cut-out mask). */
 type GlyphProps = { className?: string; x?: number; y?: number; size?: number };
 
@@ -166,23 +152,6 @@ function formatTokens(count: number): string {
   return String(count);
 }
 
-/** Title-bar chip for today's Shopify AI spend: neutral below AI_SPEND_WARN_USD, amber from it. */
-function AiStripMetric({ usage }: { usage: AiUsage }) {
-  if (usage.todayCost === null) return null;
-  const alert = aiLevel(usage) !== "ok";
-  return (
-    <span
-      aria-hidden
-      className={`inline-flex h-5 shrink-0 items-center gap-1 rounded px-1 text-[11px] font-medium leading-none tabular-nums transition-colors duration-300 ${
-        alert ? `${LEVEL_HUE.warn.text} bg-amber-500/15` : "text-muted-foreground group-hover:text-foreground group-aria-expanded:text-foreground"
-      } ${usage.error ? "opacity-60" : ""}`}
-    >
-      <SparkleGlyph className="size-3 shrink-0" />
-      {formatUsd(usage.todayCost, false)}
-    </span>
-  );
-}
-
 const GLYPH: Record<MetricKey, (props: GlyphProps & { charging?: boolean }) => ReactNode> = {
   cpu: CpuGlyph,
   memory: MemoryGlyph,
@@ -195,9 +164,6 @@ function mean(values: number[]): number {
   return recent.length ? recent.reduce((sum, value) => sum + value, 0) / recent.length : 0;
 }
 
-function worst(levels: Level[]): Level {
-  return levels.reduce<Level>((a, b) => (LEVEL_RANK[b] > LEVEL_RANK[a] ? b : a), "ok");
-}
 
 function formatBytes(bytes: number, digits = 1): string {
   if (bytes >= 1000 * GB) return `${(bytes / (1024 * GB)).toFixed(digits)} TB`;
@@ -267,82 +233,35 @@ function assess(stats: SystemStats): Assessment {
   if (battery.level === "warn") add("warn", `Battery at ${charge}%. Plug in before starting long runs.`, "battery");
   if (advice.length === 0) add("ok", "Nothing is close to running out. Fine to start more threads.", null);
 
-  const gauges = { cpu, memory, disk, battery };
-  return { level: worst(Object.values(gauges).map((entry) => entry.level)), gauges, swapRate, advice };
+  return { gauges: { cpu, memory, disk, battery }, swapRate, advice };
 }
 
-/** Polls `read` every `intervalMs` while `enabled` and the page is visible. */
-function usePoll<T>(read: () => Promise<T>, intervalMs: number, enabled: boolean) {
-  const [value, setValue] = useState<T | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const refetch = useMemo(
-    () =>
-      singleFlight(
-        () =>
-          Promise.race([
-            read(),
-            new Promise<never>((_, reject) => window.setTimeout(() => reject(new Error("The plugin server is not answering.")), READ_STALL_MS)),
-          ]),
-        (next: T) => {
-          setValue(next);
-          setError(null);
-        },
-        (cause) => setError(errorMessage(cause)),
-      ),
-    [read],
-  );
-  useEffect(() => {
-    if (!enabled) return;
-    const tick = () => {
-      if (!document.hidden) refetch();
-    };
-    tick();
-    const timer = window.setInterval(tick, intervalMs);
-    document.addEventListener("visibilitychange", tick);
-    return () => {
-      window.clearInterval(timer);
-      document.removeEventListener("visibilitychange", tick);
-    };
-  }, [refetch, intervalMs, enabled]);
-  return { value, error };
+/** The monitor's reads fail sooner than the board's: a stale gauge misleads. */
+function useMonitorPoll<T>(read: () => Promise<T>, intervalMs: number) {
+  return usePoll(read, intervalMs, READ_STALL_MS, "The plugin server is not answering.");
 }
 
-function Bar({ segments, className = "" }: { segments: { value: number; className: string }[]; className?: string }) {
+/** A bar filled `value` percent. */
+function Bar({ value, tint, className = "" }: { value: number; tint: string; className?: string }) {
   return (
     <div className={`flex h-1.5 w-full overflow-hidden rounded-full bg-muted ${className}`}>
-      {segments.map((segment, index) => (
-        <span
-          key={index}
-          className={`h-full transition-[width] duration-500 ease-out ${segment.className}`}
-          style={{ width: `${Math.max(0, segment.value)}%` }}
-        />
-      ))}
+      <span className={`h-full transition-[width] duration-500 ease-out ${tint}`} style={{ width: `${Math.max(0, value)}%` }} />
     </div>
   );
 }
 
-/** One gauge's chip content in the title-bar strip: glyph and danger figure, tinted amber or rose as it nears running out. */
-function StripMetric({ danger, level, metric, charging, text }: {
-  /** 0-100: the figure shown. */
-  danger: number;
-  level: Level;
-  metric: MetricKey;
-  /** Plugged-in battery: the glyph gets a bolt. */
-  charging?: boolean;
-  /** Shown in place of the percentage (plugged-in battery). */
-  text?: string;
-}) {
-  const MetricGlyph = GLYPH[metric];
-  const label = text ?? `${Math.round(danger)}%`;
-  const alert = level !== "ok";
+/** One chip's content in the title-bar strip: glyph and figure, tinted amber or rose as its resource nears running out. */
+function StripChip({ glyph, label, level, dim = false }: { glyph: ReactNode; label: string; level: Level; dim?: boolean }) {
   return (
     <span
       aria-hidden
       className={`inline-flex h-5 shrink-0 items-center gap-1 rounded px-1 text-[11px] font-medium leading-none tabular-nums transition-colors duration-300 ${
-        alert ? `${tone(metric, level).text} ${level === "critical" ? "bg-rose-500/15" : "bg-amber-500/15"}` : "text-muted-foreground group-hover:text-foreground group-aria-expanded:text-foreground"
-      }`}
+        level === "ok"
+          ? "text-muted-foreground group-hover:text-foreground group-aria-expanded:text-foreground"
+          : `${TONE[level].text} ${level === "critical" ? "bg-rose-500/15" : "bg-amber-500/15"}`
+      } ${dim ? "opacity-60" : ""}`}
     >
-      <MetricGlyph charging={charging} className="size-3 shrink-0" />
+      {glyph}
       {label}
     </span>
   );
@@ -370,7 +289,7 @@ const PANEL_LABEL: Record<PanelKey, string> = {
 export function SystemMonitor({ maxPanelHeight }: { maxPanelHeight: number }) {
   const rpc = useRpc<typeof rpcContract>();
   const readStats = useMemo(() => () => rpc.call("system_stats", null), [rpc]);
-  const { value: stats, error } = usePoll(readStats, STATS_POLL_MS, true);
+  const { value: stats, error } = useMonitorPoll(readStats, STATS_POLL_MS);
   const [open, setOpen] = useState<PanelKey | null>(null);
   const [pinned, setPinned] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -378,7 +297,7 @@ export function SystemMonitor({ maxPanelHeight }: { maxPanelHeight: number }) {
   const panelId = useId();
   const assessment = useMemo(() => (stats ? assess(stats) : null), [stats]);
   const readAiUsage = useMemo(() => () => rpc.call("ai_usage", null), [rpc]);
-  const { value: aiUsage } = usePoll<AiUsage>(readAiUsage, AI_USAGE_POLL_MS, true);
+  const { value: aiUsage } = useMonitorPoll<AiUsage>(readAiUsage, AI_USAGE_POLL_MS);
 
   const close = () => {
     window.clearTimeout(hoverTimer.current);
@@ -445,31 +364,36 @@ export function SystemMonitor({ maxPanelHeight }: { maxPanelHeight: number }) {
   );
 
   const pct = (value: number) => `${Math.round(value)}%`;
+  const gauges = assessment?.gauges;
+  const gaugeChip = (metric: MetricKey, { danger, level }: Gauge, summary: string) => {
+    const MetricGlyph = GLYPH[metric];
+    return chip(metric, <StripChip glyph={<MetricGlyph className="size-3 shrink-0" />} label={pct(danger)} level={level} />, summary);
+  };
 
   return (
     // Phones: `static`, so the panel spans the whole title bar like the search results.
     <div ref={rootRef} onPointerLeave={leaveRoot} onPointerEnter={enterRoot} className="relative flex shrink-0 items-center max-sm:static">
-      {stats && assessment ? (
+      {stats && gauges ? (
         <>
-          {chip("cpu", <StripMetric metric="cpu" danger={assessment.gauges.cpu.danger} level={assessment.gauges.cpu.level} />, `CPU ${pct(assessment.gauges.cpu.danger)} busy`)}
-          {chip("memory", <StripMetric metric="memory" danger={assessment.gauges.memory.danger} level={assessment.gauges.memory.level} />, `Memory pressure ${pct(assessment.gauges.memory.danger)}`)}
-          {stats.disk ? chip("disk", <StripMetric metric="disk" danger={assessment.gauges.disk.danger} level={assessment.gauges.disk.level} />, `Disk ${pct(assessment.gauges.disk.danger)} full`) : null}
-          {stats.battery
-            ? chip(
-                "battery",
-                stats.battery.onBattery ? (
-                  <StripMetric metric="battery" danger={assessment.gauges.battery.danger} level={assessment.gauges.battery.level} />
-                ) : (
-                  <StripMetric metric="battery" danger={0} level="ok" charging text="AC" />
-                ),
-                stats.battery.onBattery ? `Battery ${pct(assessment.gauges.battery.danger)} drained` : "Battery plugged in",
-              )
+          {gaugeChip("cpu", gauges.cpu, `CPU ${pct(gauges.cpu.danger)} busy`)}
+          {gaugeChip("memory", gauges.memory, `Memory pressure ${pct(gauges.memory.danger)}`)}
+          {stats.disk ? gaugeChip("disk", gauges.disk, `Disk ${pct(gauges.disk.danger)} full`) : null}
+          {stats.battery?.onBattery ? gaugeChip("battery", gauges.battery, `Battery ${pct(gauges.battery.danger)} drained`) : null}
+          {stats.battery && !stats.battery.onBattery
+            ? chip("battery", <StripChip glyph={<BatteryGlyph charging className="size-3 shrink-0" />} label="AC" level="ok" />, "Battery plugged in")
             : null}
         </>
       ) : (
         <span className="px-1 text-[11px] text-muted-foreground">{error ? "Resources unavailable" : "Reading…"}</span>
       )}
-      {aiUsage?.todayCost != null ? chip("ai", <AiStripMetric usage={aiUsage} />, `Shopify AI spend today ${formatUsd(aiUsage.todayCost)}`) : null}
+      {/* Today's Shopify AI spend: neutral below AI_SPEND_WARN_USD, amber from it. */}
+      {aiUsage?.todayCost != null
+        ? chip(
+            "ai",
+            <StripChip glyph={<SparkleGlyph className="size-3 shrink-0" />} label={formatUsd(aiUsage.todayCost, false)} level={aiLevel(aiUsage)} dim={Boolean(aiUsage.error)} />,
+            `Shopify AI spend today ${formatUsd(aiUsage.todayCost)}`,
+          )
+        : null}
 
       {open ? (
         <div
@@ -494,18 +418,26 @@ export function SystemMonitor({ maxPanelHeight }: { maxPanelHeight: number }) {
   );
 }
 
-function Section({ label, metric, value, level, children }: { label: string; metric: MetricKey; value: ReactNode; level: Level; children: ReactNode }) {
-  const MetricGlyph = GLYPH[metric];
+/** A popover's resource: its glyph, name and figure, and a bar `bar` percent full when it has one. */
+function Section({ label, glyph: SectionGlyph, value, level, bar, children }: {
+  label: string;
+  glyph: (props: GlyphProps) => ReactNode;
+  value: ReactNode;
+  level: Level;
+  bar: number | null;
+  children: ReactNode;
+}) {
   return (
     <section className="px-3.5 py-2.5">
       <div className="mb-1.5 flex items-baseline justify-between gap-3">
         <h4 className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">
-          <MetricGlyph className={`size-3 ${HUE[metric].text}`} />
+          <SectionGlyph className="size-3 text-muted-foreground" />
           {label}
           {level !== "ok" ? <span aria-hidden className={`size-1.5 rounded-full ${VERDICT[level].dot}`} /> : null}
         </h4>
         <span className={`text-[12.5px] font-semibold tabular-nums ${level === "ok" ? "text-foreground" : VERDICT[level].text}`}>{value}</span>
       </div>
+      {bar !== null ? <Bar value={bar} tint={TONE[level].bg} /> : null}
       {children}
     </section>
   );
@@ -528,8 +460,7 @@ function MetricPanel({ metric, stats, assessment, error }: { metric: MetricKey; 
   return (
     <>
       {metric === "cpu" ? (
-        <Section label="CPU busy" metric="cpu" value={`${Math.round(gauges.cpu.danger)}%`} level={gauges.cpu.level}>
-          <Bar segments={[{ value: gauges.cpu.danger, className: tone("cpu", gauges.cpu.level).bg }]} />
+        <Section label="CPU busy" glyph={CpuGlyph} value={`${Math.round(gauges.cpu.danger)}%`} level={gauges.cpu.level} bar={gauges.cpu.danger}>
           <Detail>
             Average of all {cpu.cores} cores over the last 10 seconds.
             {cpu.groups.length ? <span className="block">{cpu.groups.map((group) => `${group.cores} ${group.name}`).join(" + ")}</span> : null}
@@ -539,8 +470,7 @@ function MetricPanel({ metric, stats, assessment, error }: { metric: MetricKey; 
       ) : null}
 
       {metric === "memory" ? (
-        <Section label="Memory pressure" metric="memory" value={`${Math.round(gauges.memory.danger)}%`} level={gauges.memory.level}>
-          <Bar segments={[{ value: gauges.memory.danger, className: tone("memory", gauges.memory.level).bg }]} />
+        <Section label="Memory pressure" glyph={MemoryGlyph} value={`${Math.round(gauges.memory.danger)}%`} level={gauges.memory.level} bar={gauges.memory.danger}>
           <Detail>
             {available !== null ? <span className="block">{formatBytes(available)} of {formatBytes(memory.total, 0)} still available to apps</span> : null}
             {memory.pressure ? (
@@ -569,8 +499,7 @@ function MetricPanel({ metric, stats, assessment, error }: { metric: MetricKey; 
       ) : null}
 
       {metric === "disk" && disk ? (
-        <Section label="Disk full" metric="disk" value={`${Math.round(gauges.disk.danger)}%`} level={gauges.disk.level}>
-          <Bar segments={[{ value: gauges.disk.danger, className: tone("disk", gauges.disk.level).bg }]} />
+        <Section label="Disk full" glyph={DiskGlyph} value={`${Math.round(gauges.disk.danger)}%`} level={gauges.disk.level} bar={gauges.disk.danger}>
           <Detail>
             <span className="font-medium text-foreground/80">{formatBytes(disk.free)} free</span> of {formatBytes(disk.total, 0)} on the home volume
           </Detail>
@@ -578,8 +507,13 @@ function MetricPanel({ metric, stats, assessment, error }: { metric: MetricKey; 
       ) : null}
 
       {metric === "battery" && battery ? (
-        <Section label={battery.onBattery ? "Battery drained" : "Battery"} metric="battery" value={battery.onBattery ? `${Math.round(gauges.battery.danger)}%` : "AC"} level={gauges.battery.level}>
-          <Bar segments={[{ value: gauges.battery.danger, className: tone("battery", gauges.battery.level).bg }]} />
+        <Section
+          label={battery.onBattery ? "Battery drained" : "Battery"}
+          glyph={BatteryGlyph}
+          value={battery.onBattery ? `${Math.round(gauges.battery.danger)}%` : "AC"}
+          level={gauges.battery.level}
+          bar={gauges.battery.danger}
+        >
           <Detail>
             {battery.percent}% charge left · {battery.onBattery ? "on battery" : "plugged in"}, {battery.state}
             {battery.minutesLeft !== null ? ` · ${formatDuration(battery.minutesLeft)} ${battery.onBattery ? "left" : "to full"}` : null}
@@ -612,20 +546,13 @@ function AiUsageSection({ usage }: { usage: AiUsage }) {
   const level = aiLevel(usage);
   const tokens = usage.todayTokens;
   return (
-    <section className="px-3.5 py-2.5">
-      <div className="mb-1.5 flex items-baseline justify-between gap-3">
-        <h4 className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">
-          <SparkleGlyph className="size-3 text-muted-foreground" />
-          Shopify AI today
-          {level !== "ok" ? <span aria-hidden className={`size-1.5 rounded-full ${VERDICT[level].dot}`} /> : null}
-        </h4>
-        <span className={`text-[12.5px] font-semibold tabular-nums ${level === "ok" ? "text-foreground" : VERDICT[level].text}`}>
-          {usage.todayCost !== null ? formatUsd(usage.todayCost) : "—"}
-        </span>
-      </div>
-      {usage.todayCost !== null ? (
-        <Bar segments={[{ value: percent(usage.todayCost, AI_SPEND_WARN_USD), className: level === "ok" ? "bg-muted-foreground/60" : LEVEL_HUE.warn.bg }]} />
-      ) : null}
+    <Section
+      label="Shopify AI today"
+      glyph={SparkleGlyph}
+      value={usage.todayCost !== null ? formatUsd(usage.todayCost) : "—"}
+      level={level}
+      bar={usage.todayCost !== null ? percent(usage.todayCost, AI_SPEND_WARN_USD) : null}
+    >
       {usage.topModels.length > 0 ? (
         <ul className="mt-2 space-y-0.5">
           {usage.topModels.map((model) => (
@@ -653,14 +580,14 @@ function AiUsageSection({ usage }: { usage: AiUsage }) {
         {usage.error ? <span className="block text-destructive">Last update failed: {usage.error}</span> : null}
         <span className="block text-muted-foreground/70">All your Shopify AI proxy use, not just bb threads. Amber from {formatUsd(AI_SPEND_WARN_USD, false)}.</span>
       </Detail>
-    </section>
+    </Section>
   );
 }
 
 function TopProcesses({ cores, sort }: { cores: number; sort: "cpu" | "memory" }) {
   const rpc = useRpc<typeof rpcContract>();
   const read = useMemo(() => () => rpc.call("system_processes", null), [rpc]);
-  const { value, error } = usePoll<SystemProcesses>(read, PROCESSES_POLL_MS, true);
+  const { value, error } = useMonitorPoll<SystemProcesses>(read, PROCESSES_POLL_MS);
   const rows = useMemo(
     () => (value?.groups ?? []).slice().sort((a, b) => (sort === "cpu" ? b.cpu - a.cpu : b.memory - a.memory)).slice(0, PROCESS_ROWS),
     [value, sort],
@@ -683,7 +610,7 @@ function TopProcesses({ cores, sort }: { cores: number; sort: "cpu" | "memory" }
                   <span className="truncate font-medium" title={row.name}>{row.name}</span>
                   {row.count > 1 ? <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">×{row.count}</span> : null}
                 </span>
-                <Bar segments={[{ value: (metric / top) * 100, className: sort === "cpu" ? "bg-blue-500/70" : "bg-red-500/70" }]} className="h-1" />
+                <Bar value={(metric / top) * 100} tint={sort === "cpu" ? "bg-blue-500/70" : "bg-red-500/70"} className="h-1" />
                 <span className="text-right tabular-nums text-muted-foreground">
                   {sort === "cpu" ? `${(row.cpu / 100).toFixed(row.cpu >= 1000 ? 0 : 1)} core${row.cpu === 100 ? "" : "s"}` : formatBytes(row.memory)}
                 </span>

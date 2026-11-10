@@ -1,6 +1,6 @@
 import type { BbPluginApi, PluginThreadEventPayloads } from "@get-bb/plugin-sdk";
 import type { Status } from "./schema";
-import { ELLIPSIS, oneLine } from "./text";
+import { capped, oneLine } from "./text";
 
 export type LiveThread = {
   id: string;
@@ -28,8 +28,7 @@ type ThreadListRow = Awaited<ReturnType<BbPluginApi["sdk"]["threads"]["list"]>>[
 /** A thread as `threads.get`, `threads.spawn` and thread events return it; the SDK names it only through events. */
 type ThreadResponse = PluginThreadEventPayloads["thread.created"]["thread"];
 
-export function toLiveThread(raw: ThreadListRow | ThreadResponse | null | undefined): LiveThread | null {
-  if (!raw) return null;
+export function toLiveThread(raw: ThreadListRow | ThreadResponse): LiveThread {
   // Only list rows carry the host, pending interaction, queued work and activity counts.
   const row = "activity" in raw ? raw : null;
   return {
@@ -108,8 +107,7 @@ function excerpt(text: string | null): string | null {
       .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
       .replace(/^\s*[-*]\s+/gmu, ""),
   );
-  if (!cleaned) return null;
-  return cleaned.length <= 280 ? cleaned : `${cleaned.slice(0, 279).trimEnd()}${ELLIPSIS}`;
+  return cleaned ? capped(cleaned, 280) : null;
 }
 
 export type ThreadDetails = {

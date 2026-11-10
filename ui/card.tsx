@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
 import { ACCENT_TEXT, CARD_EDGE, CARD_SURFACE, STATUS_META, THREAD_DRAG_TYPE, formatRelativeTime, taskActivityTime, taskCardTitle, type BoardStatus, type BoardTask } from "./model";
+import { MARK_FRAME, RowActions, Spinner } from "./primitives";
 import { CardTooltip, ContextPie, ModelMark, SessionCost, type AgentProvider } from "./session";
 
-// All marks share one 16px frame so they line up with the 18px title line (mt-px centers them).
-const MARK_FRAME = "mt-px inline-flex size-4 shrink-0 items-center justify-center";
+const CARD_ACTION =
+  "inline-flex size-5 items-center justify-center rounded-md text-muted-foreground/70 transition-[color,background-color] duration-150 hover:bg-accent hover:text-foreground focus-visible:bg-accent focus-visible:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:pointer-events-none pointer-coarse:size-7";
 const BLOCKED_STRIPE =
   "before:absolute before:inset-y-1.5 before:-left-px before:w-[3px] before:rounded-r-full before:bg-rose-500/70 before:content-['']";
 
@@ -370,9 +371,7 @@ export function TaskCard({ task, now, unread, selected, dragging, starting, prov
         )}
       </div>
 
-      {/* Start or park, and archive: overlay the end of the title line (no reflow); a card-colored backdrop with a
-          short leftward fade hides the truncated title underneath. Revealed on hover/focus, always on touch. */}
-      <span className="absolute right-1 top-[5px] flex gap-0.5 bg-card opacity-0 transition-opacity duration-150 before:pointer-events-none before:absolute before:inset-y-0 before:right-full before:w-3 before:bg-linear-to-l before:from-card before:to-transparent before:content-[''] group-hover:opacity-100 group-focus-within:opacity-100 has-[:focus-visible]:opacity-100 [@media(hover:none)]:opacity-100 pointer-coarse:right-0.5 pointer-coarse:top-px">
+      <RowActions label="Archive thread" onArchive={() => onArchive(task.threadId)}>
         {/* A startable card's next step is to start, so Play takes park's place; it can still be dragged to Parked. */}
         {task.startable ? (
           <button
@@ -380,14 +379,10 @@ export function TaskCard({ task, now, unread, selected, dragging, starting, prov
             aria-label="Start thread now"
             title="Start now, past the working limit"
             disabled={starting}
-            className="inline-flex size-5 items-center justify-center rounded-md text-muted-foreground/70 transition-[color,background-color] duration-150 hover:bg-accent hover:text-foreground focus-visible:bg-accent focus-visible:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:pointer-events-none pointer-coarse:size-7"
+            className={CARD_ACTION}
             onClick={() => onStart(task.threadId)}
           >
-            {starting ? (
-              <span className="inline-flex size-3 animate-spin rounded-full border-[1.5px] border-muted-foreground/25 border-t-muted-foreground" aria-hidden />
-            ) : (
-              <Icon name="Play" className="size-3.5" aria-hidden />
-            )}
+            {starting ? <Spinner /> : <Icon name="Play" className="size-3.5" aria-hidden />}
           </button>
         ) : task.status === "done" ? (
           // A Done card is finished, not something to pause: its action is to bring it back as unread. An unread card
@@ -397,7 +392,7 @@ export function TaskCard({ task, now, unread, selected, dragging, starting, prov
               type="button"
               aria-label="Mark thread unread"
               title="Mark as unread"
-              className="inline-flex size-5 items-center justify-center rounded-md text-muted-foreground/70 transition-[color,background-color] duration-150 hover:bg-accent hover:text-foreground focus-visible:bg-accent focus-visible:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 pointer-coarse:size-7"
+              className={CARD_ACTION}
               onClick={() => onMarkUnread(task.threadId)}
             >
               <Icon name="CircleDot" className="size-3.5" aria-hidden />
@@ -407,21 +402,13 @@ export function TaskCard({ task, now, unread, selected, dragging, starting, prov
           <button
             type="button"
             aria-label={parked ? "Unpark thread" : "Park thread"}
-            className="inline-flex size-5 items-center justify-center rounded-md text-muted-foreground/70 transition-[color,background-color] duration-150 hover:bg-accent hover:text-foreground focus-visible:bg-accent focus-visible:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 pointer-coarse:size-7"
+            className={CARD_ACTION}
             onClick={() => onPark(task.threadId, !parked)}
           >
             <Icon name={parked ? "ArrowTurnBackward" : "Pause"} className="size-3.5" aria-hidden />
           </button>
         ) : null}
-        <button
-          type="button"
-          aria-label="Archive thread"
-          className="inline-flex size-5 items-center justify-center rounded-md text-muted-foreground/70 transition-[color,background-color] duration-150 hover:bg-destructive/10 hover:text-destructive focus-visible:bg-destructive/10 focus-visible:text-destructive focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 pointer-coarse:size-7"
-          onClick={() => onArchive(task.threadId)}
-        >
-          <Icon name="Archive" className="size-3.5" aria-hidden />
-        </button>
-      </span>
+      </RowActions>
 
       {/* Hidden while the card is hovered: the summary takes the line, and the tooltip has these facts. */}
       <div className="mt-0.5 flex h-[18px] items-center gap-2 pl-6 group-hover:pointer-events-none group-hover:opacity-0">
