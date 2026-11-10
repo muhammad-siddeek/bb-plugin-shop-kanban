@@ -8,7 +8,7 @@ import { TaskCard } from "./card";
 import { ReviewGroup, visibleReviews } from "./reviews";
 import { WipLimitControl } from "./wip-limit";
 import { WorkGroup, useWorkItems } from "./work";
-import { TYPE } from "./primitives";
+import { CARD_INSET, TYPE } from "./primitives";
 
 const SCROLL_TO_LATEST_SELECTOR = 'button[aria-label="Scroll to latest event"]';
 /** The new-thread form's text, written on every keystroke so a crash or reload doesn't lose it. */
@@ -290,7 +290,7 @@ function AddTaskForm({ focus, onAdd, onCancel, onError }: {
     <form
       onSubmit={submit}
       aria-busy={pending}
-      className="shrink-0 rounded-md border border-sky-500/50 bg-card p-1.5 shadow-sm ring-1 ring-sky-500/10 transition-[box-shadow,border-color] focus-within:border-sky-500/60 focus-within:ring-2 focus-within:ring-sky-500/20"
+      className="shrink-0 rounded-md border border-sky-500/50 bg-card px-2 py-1.5 shadow-sm ring-1 ring-sky-500/10 transition-[box-shadow,border-color] focus-within:border-sky-500/60 focus-within:ring-2 focus-within:ring-sky-500/20"
     >
       <textarea
         ref={textareaRef}
@@ -300,7 +300,7 @@ function AddTaskForm({ focus, onAdd, onCancel, onError }: {
         placeholder="What should the new thread do?"
         disabled={pending}
         rows={3}
-        className={`block min-h-16 w-full resize-none bg-transparent px-1 py-0.5 ${TYPE.title} leading-snug text-foreground outline-none placeholder:text-muted-foreground/60 disabled:cursor-wait disabled:opacity-60 pointer-coarse:text-base`}
+        className={`block min-h-16 w-full resize-none bg-transparent py-0.5 ${TYPE.title} leading-snug text-foreground outline-none placeholder:text-muted-foreground/60 disabled:cursor-wait disabled:opacity-60 pointer-coarse:text-base`}
       />
       <div className="mt-1.5 flex items-center gap-1.5 border-t border-border/50 pt-1.5">
         <span className={`flex min-w-0 items-center gap-1 truncate ${TYPE.meta} text-muted-foreground/80 pointer-coarse:hidden`} title="Enter to start · Shift+Enter for a new line · Esc to cancel">
@@ -347,7 +347,7 @@ function ParkedSection({ tasks, dragging, onDrop, renderCard }: {
   const { over, handlers } = useCardDrop(onDrop, dragging, true);
   return (
     <div role="group" aria-label="Parked" className={`space-y-1 rounded-md pt-1 transition-colors ${dropOutline(dragging, over)}`} {...handlers}>
-      <div className="flex h-6 items-center gap-2 px-1">
+      <div className={`flex h-6 items-center gap-1.5 ${CARD_INSET}`}>
         <h3 className={`${TYPE.label} leading-none ${meta.title}`}>Parked</h3>
         <span className={`inline-flex h-4 min-w-4 items-center justify-center rounded-full px-1.5 ${TYPE.badge} leading-none ${meta.badge}`}>{tasks.length}</span>
         <span className="h-px flex-1 bg-border/60" aria-hidden />
@@ -392,7 +392,9 @@ function BoardColumnView({ column, title, tasks, renderCard, dragging, drop, onS
     >
       {/* Flush columns' accents meet edge to edge: one status strip along the board's top. */}
       <span className={`pointer-events-none absolute inset-x-0 top-0 h-[2px] ${meta.accent} opacity-80`} aria-hidden />
-      <header className="flex h-8 shrink-0 items-center gap-2 border-b border-border/60 pl-2.5 pr-1.5 pt-[2px]">
+      {/* Text starts on the cards' content edge (column padding + card border + padding), and the stable gutter
+          mirrors the scroller's so the header's end lines up with the cards' right edge. */}
+      <header className="flex h-8 shrink-0 items-center gap-1.5 overflow-hidden border-b border-border/60 pl-[15px] pr-1.5 pt-[2px] [scrollbar-gutter:stable] [scrollbar-width:thin]">
         {tabs ?? (
           <>
             <h2 className={`truncate ${TYPE.heading} leading-none ${meta.title}`}>{title.toUpperCase()}</h2>
@@ -406,7 +408,7 @@ function BoardColumnView({ column, title, tasks, renderCard, dragging, drop, onS
           board's horizontal scroll, so overscroll is contained on y only. */}
       <div
         data-board-column-scroll=""
-        className="min-h-0 flex-1 space-y-1 overflow-y-auto overflow-x-hidden overscroll-y-contain p-1.5 [scrollbar-width:thin]"
+        className="min-h-0 flex-1 space-y-1 overflow-y-auto overflow-x-hidden overscroll-y-contain p-1.5 [scrollbar-gutter:stable] [scrollbar-width:thin]"
       >
         {body ?? (
           <>

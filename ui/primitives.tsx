@@ -26,6 +26,8 @@ export const TYPE = {
   chip: "text-[9px] font-semibold uppercase tracking-[0.06em]",
 } as const;
 
+/** A heading inside a column lines up with the cards' content: their 1px border plus `px-2`. */
+export const CARD_INSET = "px-[9px]";
 // Every card's marks share one 16px frame: they line up with the 18px title line (mt-px centers them), and pull
 // request, issue and thread cards line up in the column.
 export const MARK_FRAME = "mt-px inline-flex size-4 shrink-0 items-center justify-center";
@@ -114,11 +116,11 @@ export function GroupHeader({ title, count, hint, refreshing, problems, children
   children?: ReactNode;
 }) {
   return (
-    <div className="flex h-6 items-center gap-1.5 px-1 pointer-coarse:h-7">
-      <h3 title={hint} className={`flex min-w-0 items-center gap-1 ${TYPE.label} text-muted-foreground`}>
+    <div className={`flex h-6 items-center gap-1.5 ${CARD_INSET} pointer-coarse:h-7`}>
+      <h3 title={hint} className={`flex min-w-0 items-center gap-1.5 ${TYPE.label} text-muted-foreground`}>
         <span className="truncate">{title}</span>
         {count !== null ? (
-          <span className={`ml-0.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-muted px-1.5 ${TYPE.badge} normal-case leading-none tracking-normal`}>
+          <span className={`inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-muted px-1.5 ${TYPE.badge} normal-case leading-none tracking-normal`}>
             {count}
           </span>
         ) : null}

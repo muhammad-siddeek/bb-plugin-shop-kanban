@@ -555,10 +555,10 @@ function AiUsageSection({ usage }: { usage: AiUsage }) {
       bar={usage.todayCost !== null ? percent(usage.todayCost, AI_SPEND_WARN_USD) : null}
     >
       {usage.topModels.length > 0 ? (
-        <ul className="mt-2 space-y-0.5">
+        <ul className="mt-2 space-y-1">
           {usage.topModels.map((model) => (
             <li key={model.name} className={`grid grid-cols-[minmax(0,1fr)_3.5rem_4.5rem] items-center gap-2 ${TYPE.meta}`}>
-              <span className="truncate" title={model.name}>{model.name}</span>
+              <span className="truncate font-medium" title={model.name}>{model.name}</span>
               <span className="text-right tabular-nums text-muted-foreground">{formatTokens(model.tokens)}</span>
               <span className="text-right tabular-nums">{formatUsd(model.cost)}</span>
             </li>

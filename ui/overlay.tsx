@@ -194,9 +194,9 @@ export function BottomBoardOverlay() {
       </div>
 
       {/* `relative`: on phones the search dropdown spans this bar instead of hanging off the search box. */}
-      <div className="relative flex h-9 shrink-0 items-center gap-2 border-b border-border pl-2.5 pr-1.5 pointer-coarse:h-12 pointer-coarse:pr-1 max-sm:gap-1.5 max-sm:pl-2.5 max-sm:pr-1">
+      <div className="relative flex h-9 shrink-0 items-center gap-2 border-b border-border pl-[15px] pr-1.5 pointer-coarse:h-12 pointer-coarse:pr-1 max-sm:gap-1.5 max-sm:pr-1">
         <div className="flex min-w-0 items-center gap-2">
-          <span className="inline-flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground">
+          <span className="inline-flex size-4 shrink-0 items-center justify-center text-muted-foreground">
             <Icon name={PLUGIN_ICON} className="size-4" aria-hidden />
           </span>
           {/* Phones give the name's room to search; the icon stays. */}
@@ -216,6 +216,8 @@ export function BottomBoardOverlay() {
           <SystemMonitor maxPanelHeight={panelHeight - 56} />
           <IconButton icon="ChevronDown" label="Hide board" onClick={() => setOpen(false)} small className="size-7 rounded-md border border-border/70 pointer-coarse:size-9" />
         </div>
+        {/* As wide as the columns' scrollbar gutter (nothing with overlay scrollbars), so the bar ends where the cards do. */}
+        <span aria-hidden className="-ml-2 box-content h-px shrink-0 overflow-y-hidden [scrollbar-gutter:stable] [scrollbar-width:thin] max-sm:-ml-1.5" />
       </div>
 
       <div className="min-h-0 flex-1">

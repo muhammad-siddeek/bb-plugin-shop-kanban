@@ -22,7 +22,7 @@ export function WipLimitControl({ limit, working, waiting, onChange }: {
   return (
     <label
       title="Most threads working at once. Past it, new threads and follow-ups to idle threads wait in Queue until a working thread finishes; at Max 0 they wait until you raise the limit. Blocked threads and child threads of a working one don't count. A waiting card's play button starts it past the limit."
-      className={`relative ml-auto inline-flex h-6 shrink-0 cursor-pointer select-none items-center gap-1 rounded-md px-1.5 ${TYPE.badge} leading-none transition-colors focus-within:ring-2 focus-within:ring-ring pointer-coarse:h-8 ${tone}`}
+      className={`relative ml-auto inline-flex h-5 shrink-0 cursor-pointer select-none items-center gap-1 rounded-full px-2 ${TYPE.badge} leading-none transition-colors focus-within:ring-2 focus-within:ring-ring pointer-coarse:h-8 ${tone}`}
     >
       <span>{limit === null ? "No limit" : `${working}/${limit} working`}</span>
       {waiting > 0 ? <span className="font-medium opacity-80">· {waiting} in queue</span> : null}

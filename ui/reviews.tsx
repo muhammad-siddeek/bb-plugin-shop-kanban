@@ -123,7 +123,7 @@ function ReviewRow({ review, now, unread, actions }: { review: ReviewCard; now: 
             <RiskChip review={review} />
             <span className="min-w-0 truncate">{review.title}</span>
           </button>
-          <div className="mt-0.5 flex h-5 items-center gap-0.5 pointer-coarse:h-7">
+          <div className="-mr-[3px] mt-0.5 flex h-5 items-center gap-0.5 pointer-coarse:h-7">
             <span className={`mr-1 min-w-0 flex-1 truncate ${TYPE.meta} tabular-nums text-muted-foreground/80`} title={metaHint}>
               {Number.isFinite(updated) ? `${formatShortAge(updated, now)} · ` : ""}
               {review.rereview ? <span className={`font-medium ${ACCENT_TEXT.sky}`}>re-review · </span> : null}

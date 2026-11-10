@@ -187,7 +187,7 @@ export function ThreadSearch({ maxListHeight }: { maxListHeight: number }) {
             <div
               role="status"
               aria-live="polite"
-              className={`flex shrink-0 items-start gap-1.5 px-3 py-2 ${TYPE.meta} leading-snug ${results.length > 0 ? "border-t border-border/60" : ""}`}
+              className={`flex shrink-0 items-start gap-1.5 px-3.5 py-2 ${TYPE.meta} leading-snug ${results.length > 0 ? "border-t border-border/60" : ""}`}
             >
               {error ? (
                 <>

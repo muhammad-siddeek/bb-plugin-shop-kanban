@@ -8,6 +8,14 @@
   become five. Review, pull request, issue and search result titles are
   semibold like card titles (bold while unread), times and costs grow from
   10.5px to 11px, and headings share one letter spacing.
+- Text lines up across the board. Column titles, the Queue tabs, section
+  headings (Parked, Reviews, Open…), the new-thread form and the title bar's
+  icon start on the cards' content edge, where the status marks sit. The
+  working-limit picker is a pill like the counts beside it, and it, the hide
+  button and the review and pull request actions end on the cards' right edge,
+  past the scrollbar gutter that every column now keeps. A heading and its
+  count are 6px apart everywhere, and the AI and CPU popovers space and weight
+  their rows the same.
 
 ## 0.16.0
 
