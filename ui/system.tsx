@@ -1,6 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
-import { useRpc } from "@get-bb/plugin-sdk/app";
+import { useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
 import type { rpcContract } from "../server/schema";
 import { usePoll } from "./hooks";
 import { ACCENT_TEXT, type AiUsage, type SystemProcesses, type SystemStats } from "./model";
@@ -10,9 +10,11 @@ const STATS_POLL_MS = 2_000;
 const PROCESSES_POLL_MS = 3_000;
 /** The server caches the proxy's figure for a minute; polling faster would only reread its cache. */
 const AI_USAGE_POLL_MS = 60_000;
-/** Shopify AI spend today (USD) at which the chip turns amber. */
-const AI_SPEND_WARN_USD = 450;
+/** Shopify AI spend in a day (USD) at which the chip turns amber, then red. */
+const AI_SPEND = { warn: 300, critical: 500 };
 const READ_STALL_MS = 15_000;
+/** The server's signal that the AI spend read changed between polls (AI_USAGE_CHANGED in server/ai-usage.ts). */
+const AI_USAGE_CHANGED = "ai-usage-changed";
 /** Usage levels judge the mean of this many recent samples (10s), so one spike doesn't flash the monitor. */
 const SMOOTH_SAMPLES = 5;
 const PROCESS_ROWS = 6;
@@ -29,8 +31,8 @@ const MB = 2 ** 20;
 // Battery: share drained while unplugged; plugged in there is nothing to run out of.
 const LEVELS = {
   cpu: { warn: 80, critical: 95 },
-  memory: { warn: 80, critical: 90 },
-  disk: { warn: 90, critical: 96 },
+  memory: { warn: 70, critical: 80 },
+  disk: { warn: 80, critical: 90 },
   battery: { warn: 80, critical: 90 },
 } satisfies Record<MetricKey, { warn: number; critical: number }>;
 const SWAP_RATE_WARN = 10 * MB;
@@ -138,19 +140,12 @@ function SparkleGlyph(props: GlyphProps) {
   );
 }
 
-function aiLevel(usage: AiUsage | null): Level {
-  return usage?.todayCost != null && usage.todayCost >= AI_SPEND_WARN_USD ? "warn" : "ok";
+function spendLevel(cost: number | null | undefined): Level {
+  return cost == null ? "ok" : cost >= AI_SPEND.critical ? "critical" : cost >= AI_SPEND.warn ? "warn" : "ok";
 }
 
 function formatUsd(value: number, cents = true): string {
   return `$${value.toLocaleString("en-US", { minimumFractionDigits: cents ? 2 : 0, maximumFractionDigits: cents ? 2 : 0 })}`;
-}
-
-function formatTokens(count: number): string {
-  if (count >= 1e9) return `${(count / 1e9).toFixed(count >= 1e10 ? 0 : 1)}B`;
-  if (count >= 1e6) return `${(count / 1e6).toFixed(count >= 1e7 ? 0 : 1)}M`;
-  if (count >= 1e3) return `${Math.round(count / 1e3)}K`;
-  return String(count);
 }
 
 const GLYPH: Record<MetricKey, (props: GlyphProps & { charging?: boolean }) => ReactNode> = {
@@ -298,7 +293,13 @@ export function SystemMonitor({ maxPanelHeight }: { maxPanelHeight: number }) {
   const panelId = useId();
   const assessment = useMemo(() => (stats ? assess(stats) : null), [stats]);
   const readAiUsage = useMemo(() => () => rpc.call("ai_usage", null), [rpc]);
-  const { value: aiUsage } = useMonitorPoll<AiUsage>(readAiUsage, AI_USAGE_POLL_MS);
+  const { value: aiUsage, refetch: refetchAiUsage } = useMonitorPoll<AiUsage>(readAiUsage, AI_USAGE_POLL_MS);
+  // The server signals when the daily figures land between polls.
+  useRealtime(AI_USAGE_CHANGED, refetchAiUsage);
+  // Opening the spend popover reads again (the server answers from its cache), so it never shows a stale empty read.
+  useEffect(() => {
+    if (open === "ai") refetchAiUsage();
+  }, [open, refetchAiUsage]);
 
   const close = () => {
     window.clearTimeout(hoverTimer.current);
@@ -387,11 +388,11 @@ export function SystemMonitor({ maxPanelHeight }: { maxPanelHeight: number }) {
       ) : (
         <span className={`px-1 ${TYPE.meta} text-muted-foreground`}>{error ? "Resources unavailable" : "Reading…"}</span>
       )}
-      {/* Today's Shopify AI spend: neutral below AI_SPEND_WARN_USD, amber from it. */}
+      {/* Today's Shopify AI spend: neutral below AI_SPEND.warn, amber from it, red from AI_SPEND.critical. */}
       {aiUsage?.todayCost != null
         ? chip(
             "ai",
-            <StripChip glyph={<SparkleGlyph className="size-3 shrink-0" />} label={formatUsd(aiUsage.todayCost, false)} level={aiLevel(aiUsage)} dim={Boolean(aiUsage.error)} />,
+            <StripChip glyph={<SparkleGlyph className="size-3 shrink-0" />} label={formatUsd(aiUsage.todayCost, false)} level={spendLevel(aiUsage.todayCost)} dim={Boolean(aiUsage.error)} />,
             `Shopify AI spend today ${formatUsd(aiUsage.todayCost)}`,
           )
         : null}
@@ -543,45 +544,110 @@ function MetricPanel({ metric, stats, assessment, error }: { metric: MetricKey; 
   );
 }
 
-function AiUsageSection({ usage }: { usage: AiUsage }) {
-  const level = aiLevel(usage);
-  const tokens = usage.todayTokens;
+const CHART_HEIGHT = 56;
+const WEEKDAY = new Intl.DateTimeFormat(undefined, { weekday: "narrow", timeZone: "UTC" });
+const LONG_DATE = new Intl.DateTimeFormat(undefined, { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
+
+/** Daily spend over the last 7 days, today last; bars tint at the warn and critical marks, which are drawn as lines. */
+function SpendChart({ days }: { days: AiUsage["days"] }) {
+  const top = Math.max(AI_SPEND.critical * 1.1, ...days.map((day) => day.cost));
+  const y = (cost: number) => (cost / top) * CHART_HEIGHT;
+  const marks = [
+    { cost: AI_SPEND.warn, tint: "border-amber-500/50" },
+    { cost: AI_SPEND.critical, tint: "border-rose-500/50" },
+  ];
   return (
-    <Section
-      label="Shopify AI today"
-      glyph={SparkleGlyph}
-      value={usage.todayCost !== null ? formatUsd(usage.todayCost) : "—"}
-      level={level}
-      bar={usage.todayCost !== null ? percent(usage.todayCost, AI_SPEND_WARN_USD) : null}
-    >
-      {usage.topModels.length > 0 ? (
-        <ul className="mt-2 space-y-1">
-          {usage.topModels.map((model) => (
-            <li key={model.name} className={`grid grid-cols-[minmax(0,1fr)_3.5rem_4.5rem] items-center gap-2 ${TYPE.meta}`}>
-              <span className="truncate font-medium" title={model.name}>{model.name}</span>
-              <span className="text-right tabular-nums text-muted-foreground">{formatTokens(model.tokens)}</span>
-              <span className="text-right tabular-nums">{formatUsd(model.cost)}</span>
-            </li>
-          ))}
-        </ul>
-      ) : null}
+    <div className="mt-2">
+      <div className="relative" style={{ height: CHART_HEIGHT }}>
+        {marks.map((mark) => (
+          <div key={mark.cost} aria-hidden className={`pointer-events-none absolute inset-x-0 border-t border-dashed ${mark.tint}`} style={{ bottom: y(mark.cost) }} />
+        ))}
+        <ol className="absolute inset-0 grid grid-cols-7 items-end gap-1.5">
+          {days.map((day, index) => {
+            const at = Date.parse(`${day.date}T12:00:00Z`);
+            const isToday = index === days.length - 1;
+            const level = spendLevel(day.cost);
+            const label = `${LONG_DATE.format(at)}: ${formatUsd(day.cost)}${isToday ? " so far" : ""}`;
+            return (
+              <li key={day.date} title={label} className="flex h-full items-end justify-center">
+                <span className="sr-only">{label}</span>
+                <span
+                  aria-hidden
+                  className={`w-full rounded-sm transition-[height] duration-500 ${level === "ok" ? (isToday ? "bg-foreground/70" : "bg-muted-foreground/50") : TONE[level].bg}`}
+                  style={{ height: Math.max(2, y(day.cost)) }}
+                />
+              </li>
+            );
+          })}
+        </ol>
+      </div>
+      <ol aria-hidden className={`mt-1 grid grid-cols-7 gap-1.5 ${TYPE.badge} font-medium text-muted-foreground`}>
+        {days.map((day, index) => (
+          <li key={day.date} className={`text-center ${index === days.length - 1 ? "text-foreground" : ""}`}>
+            {WEEKDAY.format(Date.parse(`${day.date}T12:00:00Z`))}
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
+/** A headline figure in the AI popover: label over amount. */
+function SpendStat({ label, value, level, align = "left" }: { label: string; value: string; level: Level; align?: "left" | "right" }) {
+  return (
+    <div className={`flex min-w-0 flex-col gap-0.5 ${align === "right" ? "items-end" : ""}`}>
+      <span className={`${TYPE.label} text-muted-foreground`}>{label}</span>
+      <span className={`${TYPE.title} font-semibold tabular-nums ${level === "ok" ? "text-foreground" : VERDICT[level].text}`}>{value}</span>
+    </div>
+  );
+}
+
+/** The AI spend popover: today and the last 7 days, the 7 days' graph, and the daily average and last hour. */
+function AiUsageSection({ usage }: { usage: AiUsage }) {
+  const level = spendLevel(usage.todayCost);
+  // The proxy's own "seven days" is today plus the 7 before it; it stands in, labelled so, until the daily figures load.
+  const week =
+    usage.weekCost !== null
+      ? { label: "Last 7 days", cost: usage.weekCost, days: 7 }
+      : usage.sevenDaysCost !== null
+        ? { label: "Today + 7 days", cost: usage.sevenDaysCost, days: 8 }
+        : null;
+  const average = week ? week.cost / week.days : null;
+  return (
+    <section className="px-3.5 py-2.5">
+      <h4 className={`mb-2 flex items-center gap-1.5 ${TYPE.label} text-muted-foreground`}>
+        <SparkleGlyph className="size-3 text-muted-foreground" />
+        Shopify AI spend
+      </h4>
+      <div className="grid grid-cols-2 gap-3">
+        <SpendStat label="Today" value={usage.todayCost !== null ? formatUsd(usage.todayCost) : "—"} level={level} />
+        <SpendStat label={week?.label ?? "Last 7 days"} value={week ? formatUsd(week.cost) : "—"} level={spendLevel(average)} align="right" />
+      </div>
+      {usage.days.length > 0 ? (
+        <SpendChart days={usage.days} />
+      ) : (
+        <p className={`pt-2 ${TYPE.meta} ${usage.daysLoading ? "text-muted-foreground" : "text-destructive"}`}>
+          {usage.daysLoading ? "Loading daily spend…" : `Daily spend unavailable: ${usage.daysError ?? usage.error ?? "not read yet."}`}
+        </p>
+      )}
       <Detail>
-        {level !== "ok" ? <span className={`block font-medium ${VERDICT.warn.text}`}>Past the {formatUsd(AI_SPEND_WARN_USD, false)} daily mark.</span> : null}
-        {tokens ? (
+        {average !== null || usage.hourCost !== null ? (
           <span className="block">
-            {formatTokens(tokens.input)} input ({formatTokens(tokens.cachedInput)} cached) · {formatTokens(tokens.output)} output tokens
+            {[average !== null ? `${formatUsd(average)} a day on average` : null, usage.hourCost !== null ? `${formatUsd(usage.hourCost)} last hour` : null]
+              .filter(Boolean)
+              .join(" · ")}
           </span>
         ) : null}
-        {usage.hourCost !== null && usage.sevenDaysCost !== null ? (
+        {usage.pricingStale ? (
+          <span className="block">The proxy has no pricing loaded; costs read $0.</span>
+        ) : (
           <span className="block text-muted-foreground/70">
-            {formatUsd(usage.hourCost)} this hour · {formatUsd(usage.sevenDaysCost)} over 7 days · {usage.timezone}
+            Daily budget {formatUsd(AI_SPEND.warn, false)}, red past {formatUsd(AI_SPEND.critical, false)} (the dashed lines).
           </span>
-        ) : null}
-        {usage.pricingStale ? <span className="block">The proxy has no pricing loaded; costs read $0.</span> : null}
+        )}
         {usage.error ? <span className="block text-destructive">Last update failed: {usage.error}</span> : null}
-        <span className="block text-muted-foreground/70">All your Shopify AI proxy use, not just bb threads. Amber from {formatUsd(AI_SPEND_WARN_USD, false)}.</span>
       </Detail>
-    </Section>
+    </section>
   );
 }
 

@@ -331,14 +331,21 @@ const aiUsageSchema = z.object({
   timezone: z.string(),
   todayCost: z.number().nullable(),
   hourCost: z.number().nullable(),
+  /** The proxy's "seven days": today plus the 7 days before it, so 8 calendar days. */
   sevenDaysCost: z.number().nullable(),
-  todayTokens: z
-    .object({ input: z.number(), cachedInput: z.number(), output: z.number(), cacheWrite: z.number() })
-    .nullable(),
-  /** Today's costliest models, priciest first; `tokens` is input + output. */
-  topModels: z.array(z.object({ name: z.string(), cost: z.number(), tokens: z.number() })),
   /** The proxy has no pricing loaded, so costs read $0: unknown, not free. */
   pricingStale: z.boolean(),
+  /**
+   * The last 7 local days, oldest first, ending today; empty unless every day's spend is known. Past days come from
+   * the data warehouse (or the server's own readings), today from the proxy.
+   */
+  days: z.array(z.object({ date: z.string(), cost: z.number() })),
+  /** The sum of `days`; null without them. */
+  weekCost: z.number().nullable(),
+  /** No `days` yet because the warehouse read is still running. */
+  daysLoading: z.boolean(),
+  /** Why there are no `days`, when the warehouse read failed. */
+  daysError: z.string().nullable(),
   error: z.string().nullable(),
 });
 export type AiUsage = z.infer<typeof aiUsageSchema>;

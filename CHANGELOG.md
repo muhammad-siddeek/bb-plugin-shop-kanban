@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+- Resource chips warn sooner: memory turns amber at 70% and red at 80% (was 80
+  and 90), disk at 80% and 90% (was 90 and 96).
+- The Shopify AI chip turns amber from $300 a day and red from $500 (was amber
+  from $450, never red).
+- The AI spend popover shows today's spend and the last 7 days' total, a bar
+  chart of those 7 days with dashed lines at the $300 daily budget and the $500
+  red mark (hover a bar for its day and amount), and the daily average and last
+  hour's spend. The per-model list and token counts are gone, from the
+  popover and the RPC payload. Past days come from
+  the data warehouse's hourly rollup of proxy spend (via `bq`, signed in as
+  your gcloud account), cut at local midnight; today comes from the proxy. The
+  server also records each day's last proxy reading, read every 5 minutes in
+  the background, and a day shows whichever is higher, so yesterday is whole
+  before the warehouse catches up. Without daily figures the popover says why
+  (or that they are still loading), and the board reads again the moment they
+  land rather than at the next minute's poll.
+- The proxy's "seven days" total is today plus the 7 days before it, 8 days in
+  all. Where it stands in for the 7-day total, it is labelled "Today + 7 days".
+
 ## 0.16.2
 
 - The Shopify AI spend chip only ever sends Shopify credentials. A key from the

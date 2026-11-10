@@ -456,6 +456,7 @@ export default async function plugin(bb: BbPluginApi) {
     work.dispose();
     wip.dispose();
     system.dispose();
+    aiUsage.dispose();
     bb.log.info("disposed");
   });
 }
