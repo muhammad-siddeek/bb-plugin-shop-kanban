@@ -33,10 +33,34 @@ const cardLabelSchema = z.object({
   replacedTitle: z.string().nullable().optional(),
   /** The user renamed the thread themselves; stop syncing and show their title. */
   userTitled: z.boolean().optional(),
+  /**
+   * Hash of the opening user message the title was written from. When the board later reads more of it (an
+   * attachment it couldn't read before), the old title was a guess and is written afresh.
+   */
+  firstSig: z.string().optional(),
 });
 type Labels = Record<string, z.infer<typeof cardLabelSchema>>;
 /** What a queued refresh writes: the signatures it labels and the title the model is shown. */
-type LabelJob = { titleSig: string; summarySig: string; currentTitle: string | null };
+type LabelJob = { titleSig: string; summarySig: string; firstSig: string; currentTitle: string | null };
+
+/** The lines `turnInput` frames an attached file or image with. */
+const ATTACHMENT_MARKS = /^\[(attached (file|image)\b[^\n]*|end of attached file)\]$/gmu;
+/** Closes a text attachment the board read; labels from before 0.16 never saw such text. */
+const READ_ATTACHMENT = /^\[end of attached file\]$/mu;
+/**
+ * Below this many characters of the user's own words (attachment names and harness notices left out), the messages
+ * can't name the thread: "keep going" on its own. The labeler then also reads the agent's last finished reply.
+ */
+const THIN_USER_TEXT = 120;
+
+/** The user's own words across `messages`: attachment markers and harness notices removed. */
+function userWords(messages: (string | null)[]): string {
+  return messages
+    .filter((text): text is string => Boolean(text) && !HARNESS_NOTICE.test(text!))
+    .map((text) => text.replace(ATTACHMENT_MARKS, "").trim())
+    .join(" ")
+    .trim();
+}
 
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -206,6 +230,10 @@ export function createLabeler(bb: BbPluginApi, onChange: () => void) {
         return label?.category && label.intent ? [`[${label.category}] ${label.intent}`] : [];
       });
       const userText = [details.firstUserPrompt, ...details.userPrompts].join("\n");
+      // Too little to name the thread from: let the agent's last finished reply say what it is working on.
+      const thin = userWords([details.firstUserPrompt, ...details.userPrompts]).length < THIN_USER_TEXT;
+      // While the agent works, its last reply answers an earlier message; it only stands in for missing user text.
+      const output = running && !thin ? null : (details.output ?? (thin ? await safe(async () => (await bb.sdk.threads.output({ threadId: thread.id })).output) : null));
       const mentioned = [...new Set(Array.from(userText.matchAll(THREAD_MENTION), (match) => match[1]))].slice(0, 5);
       const mentionTitles = Object.fromEntries(
         (await Promise.all(mentioned.map(async (id) => [id, (await safe(() => bb.sdk.threads.get({ threadId: id })))?.title]))).filter(
@@ -216,7 +244,7 @@ export function createLabeler(bb: BbPluginApi, onChange: () => void) {
         currentTitle: job.currentTitle,
         firstPrompt: details.firstUserPrompt,
         prompts: details.userPrompts,
-        output: details.output,
+        output,
         running,
         board: board.slice(0, 40),
         mentionTitles,
@@ -229,6 +257,7 @@ export function createLabeler(bb: BbPluginApi, onChange: () => void) {
       all[thread.id] = {
         ...previous,
         titleSig: job.titleSig,
+        firstSig: job.firstSig,
         category: keepTitle ? previous.category : parsed.category,
         intent: keepTitle ? previous.intent : parsed.intent,
         summarySig: job.summarySig,
@@ -255,7 +284,9 @@ export function createLabeler(bb: BbPluginApi, onChange: () => void) {
     // before the agent has answered. Harness notices only refresh the summary.
     const written = details.userPrompts.filter((text) => !HARNESS_NOTICE.test(text));
     const answering = running && !HARNESS_NOTICE.test(details.lastUserPrompt ?? "");
-    const titleSig = `v${LABEL_PROMPT_VERSION}:${written.length}:${hashText(written.at(-1) ?? "")}:${answering ? "run" : "idle"}:${hashText(details.firstUserPrompt ?? thread.title ?? thread.id)}`;
+    // Not the thread's title: it is what the board writes, so a rename would retitle the card from its own output.
+    const firstSig = hashText(details.firstUserPrompt ?? thread.titleFallback ?? thread.id);
+    const titleSig = `v${LABEL_PROMPT_VERSION}:${written.length}:${hashText(written.at(-1) ?? "")}:${answering ? "run" : "idle"}:${firstSig}`;
     const summaryVersion = `v${LABEL_PROMPT_VERSION}.${SUMMARY_PROMPT_VERSION}`;
     const summarySig = running
       ? `${summaryVersion}:run:${details.lastUserInputAt ?? 0}`
@@ -263,6 +294,9 @@ export function createLabeler(bb: BbPluginApi, onChange: () => void) {
     const current = all[thread.id];
     const labeled = current?.category && current.intent ? current : undefined;
     const title = labeled ? `[${labeled.category}] ${labeled.intent}` : null;
+    // A title written before the board could read the whole opening message is a guess: don't show it to the
+    // labeler as the title to keep. Labels from before 0.16 carry no firstSig and never saw attached text.
+    const firstChanged = labeled?.firstSig !== undefined ? labeled.firstSig !== firstSig : READ_ATTACHMENT.test(details.firstUserPrompt ?? "");
     const fresh = labeled?.titleSig === titleSig && labeled.summarySig === summarySig;
     const failure = failures.get(thread.id);
     const backingOff = failure?.sig === `${titleSig}|${summarySig}` && Date.now() - failure.at < RETRY_MS;
@@ -270,7 +304,9 @@ export function createLabeler(bb: BbPluginApi, onChange: () => void) {
 
     if (enabled && !fresh && !backingOff && worthLabeling && !labelInFlight.has(thread.id)) {
       labelInFlight.add(thread.id);
-      labelQueue.push(() => relabel(thread, details, running, { titleSig, summarySig, currentTitle: title }, all));
+      labelQueue.push(() =>
+        relabel(thread, details, running, { titleSig, summarySig, firstSig, currentTitle: firstChanged ? null : title }, all),
+      );
       pumpLabels();
     }
 

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { experimental_Icon as Icon, useBbContext, useBbNavigate } from "@get-bb/plugin-sdk/app";
-import { ACCENT_BADGE, ACCENT_TEXT, errorMessage, formatShortAge, type ReviewCard, type ReviewScope } from "./model";
+import { ACCENT_BADGE, ACCENT_TEXT, CARD_EDGE, CARD_SURFACE, errorMessage, formatShortAge, type ReviewCard, type ReviewScope } from "./model";
 import type { ReviewVerdict, ReviewsApi } from "./hooks";
 import { ArchiveOverlay, GroupHeader, MARK_FRAME, ROW_ACTION, ROW_ICON_ACTION, ShowMore, Spinner } from "./primitives";
 
@@ -103,9 +103,7 @@ function ReviewRow({ review, now, unread, actions }: { review: ReviewCard; now: 
 
   return (
     <article
-      className={`group relative rounded-lg border bg-card px-2.5 pb-1 pt-1.5 shadow-xs transition-[border-color,box-shadow] duration-150 hover:shadow-sm ${
-        unread ? "border-sky-500/30 hover:border-sky-500/50" : "border-border/60 hover:border-border"
-      }`}
+      className={`group relative ${CARD_SURFACE} px-2 pb-1 pt-1.5 ${unread ? "border-sky-500/45 hover:border-sky-500/70" : CARD_EDGE}`}
     >
       <div className="flex items-start gap-2">
         <span className={MARK_FRAME} aria-label={unread ? "Pull request, new" : "Pull request"} title={unread ? "New since you last opened it" : "Pull request"}>
@@ -329,7 +327,7 @@ export function ReviewGroup({ reviews, now }: { reviews: ReviewsApi; now: number
   };
 
   return (
-    <div className="space-y-1.5">
+    <div className="space-y-1">
       <GroupHeader
         title="Reviews"
         count={state.scopes.length === 1 ? scoped.length : null}
@@ -341,7 +339,7 @@ export function ReviewGroup({ reviews, now }: { reviews: ReviewsApi; now: number
         {unread[scope] > 0 ? <span className={`text-[10px] font-medium ${ACCENT_TEXT.sky}`}>{unread[scope]} new</span> : null}
       </GroupHeader>
       {scoped.length === 0 ? (
-        <p className="px-1 text-[11px] text-muted-foreground/90">{loading ? "Reading pull requests…" : SCOPE[scope].empty}</p>
+        <p className="rounded-md border border-dashed border-foreground/15 px-3 py-2 text-center text-[11px] text-muted-foreground/90">{loading ? "Reading pull requests…" : SCOPE[scope].empty}</p>
       ) : null}
       {shown.map((review) => (
         <ReviewRow key={review.id} review={review} now={now} unread={isNew(review)} actions={actions} />

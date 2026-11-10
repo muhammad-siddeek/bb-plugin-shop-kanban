@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { experimental_Icon as Icon, useBbContext, useBbNavigate } from "@get-bb/plugin-sdk/app";
-import { ACCENT_BADGE, ACCENT_TEXT, errorMessage, formatShortAge, type WorkItem, type WorkList, type WorkMark, type WorkState } from "./model";
+import { ACCENT_BADGE, ACCENT_TEXT, CARD_EDGE, CARD_SURFACE, errorMessage, formatShortAge, type WorkItem, type WorkList, type WorkMark, type WorkState } from "./model";
 import type { WorkApi } from "./hooks";
 import { ArchiveOverlay, GroupHeader, MARK_FRAME, ROW_ACTION, ShowMore } from "./primitives";
 
@@ -82,7 +82,7 @@ function WorkRow({ item, now, onDraft, onMark }: {
     .join(" · ");
 
   return (
-    <article className="group relative rounded-lg border border-border/60 bg-card px-2.5 pb-1 pt-1.5 shadow-xs transition-[border-color,box-shadow] duration-150 hover:border-border hover:shadow-sm">
+    <article className={`group relative ${CARD_SURFACE} ${CARD_EDGE} px-2 pb-1 pt-1.5`}>
       <div className="flex items-start gap-2">
         <span className={MARK_FRAME} aria-label={draftMark ? "Draft pull request" : meta.hint} title={draftMark ? "Draft" : undefined}>
           <Icon
@@ -233,7 +233,7 @@ export function WorkGroup({ list, work, now }: { list: WorkList; work: WorkItems
   };
 
   return (
-    <div className="space-y-1.5">
+    <div className="space-y-1">
       <GroupHeader
         title={meta.title}
         count={items.length}
@@ -242,7 +242,7 @@ export function WorkGroup({ list, work, now }: { list: WorkList; work: WorkItems
         problems={problems}
       />
       {items.length === 0 ? (
-        <p className="px-1 text-[11px] text-muted-foreground/90">{state.refreshedAt === null ? "Reading pull requests…" : meta.empty}</p>
+        <p className="rounded-md border border-dashed border-foreground/15 px-3 py-2 text-center text-[11px] text-muted-foreground/90">{state.refreshedAt === null ? "Reading pull requests…" : meta.empty}</p>
       ) : null}
       {shown.map((item) => (
         <WorkRow key={`${item.list}:${item.id}`} item={item} now={now} onDraft={draft} onMark={work.mark} />

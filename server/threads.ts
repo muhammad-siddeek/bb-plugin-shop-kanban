@@ -30,9 +30,87 @@ function eventText(event: ThreadEvent | undefined): string | null {
   return event.data.input.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n") || null;
 }
 
+type TurnRequested = Extract<ThreadEvent, { type: "client/turn/requested" }>;
+type InputPart = TurnRequested["data"]["input"][number];
+
+/** How much of a text attachment the labeler sees; the opening of a pasted brief names its subject. */
+const ATTACHMENT_TEXT_MAX = 3_000;
+/** Attachments read per user message; the rest are named only. */
+const ATTACHMENTS_READ_PER_TURN = 2;
+/** Attachments larger than this are named only: a pasted brief is small, a log or dataset is not worth reading. */
+const ATTACHMENT_READ_MAX_BYTES = 2_000_000;
+const ATTACHMENT_CACHE_MAX = 300;
+const TEXT_FILE_NAME = /\.(txt|md|markdown|mdx|rst|org|json|jsonl|ya?ml|toml|ini|csv|tsv|xml|html?|log|diff|patch|tex|[cm]?[jt]sx?|py|rb|go|rs|java|kt|swift|c|h|cc|cpp|hpp|cs|php|sh|zsh|bash|sql|graphql|proto)$/iu;
+
+/** A file whose bytes read as text: by MIME type, or by name when the MIME type is generic or missing. */
+function isTextFile(part: Extract<InputPart, { type: "localFile" }>): boolean {
+  const mime = (part.mimeType ?? "").toLowerCase();
+  if (mime.startsWith("text/") || /[/+](json|xml|yaml|x-yaml|toml|markdown|javascript|typescript|x-sh|sql)\b/u.test(mime)) return true;
+  return (!mime || mime === "application/octet-stream") && TEXT_FILE_NAME.test(part.name ?? part.path);
+}
+
+function fileName(part: { name?: string; path: string }): string {
+  return part.name?.trim() || part.path.split(/[\\/]/u).at(-1) || part.path;
+}
+
 export function createThreadReader(bb: BbPluginApi) {
   const detailsCache = new Map<string, ThreadDetails>();
   const firstPromptCache = new Map<string, string>();
+  /** Opening text of read attachments by `projectId:path`; null when unreadable. Attachments never change. */
+  const attachmentCache = new Map<string, string | null>();
+
+  /**
+   * The opening of a text attachment; null when it isn't text, undefined when the read failed (not cached, so a
+   * later refresh tries again).
+   */
+  async function attachmentText(projectId: string, path: string): Promise<string | null | undefined> {
+    const key = `${projectId}:${path}`;
+    if (attachmentCache.has(key)) return attachmentCache.get(key) ?? null;
+    const read = await safe(() => bb.sdk.projects.attachments.read({ projectId, path }));
+    if (!read) return undefined;
+    let text: string | null = null;
+    if (read.sizeBytes <= ATTACHMENT_READ_MAX_BYTES) {
+      const decoded = new TextDecoder("utf-8").decode(read.bytes.subarray(0, ATTACHMENT_TEXT_MAX * 4)).slice(0, ATTACHMENT_TEXT_MAX);
+      // Binary data mislabelled as text decodes to replacement characters and control bytes.
+      const junk = decoded.match(/[\uFFFD\u0000-\u0008\u000E-\u001F]/gu)?.length ?? 0;
+      text = decoded.trim() && junk <= decoded.length * 0.01 ? decoded.trim() : null;
+    }
+    if (attachmentCache.size >= ATTACHMENT_CACHE_MAX) attachmentCache.delete(attachmentCache.keys().next().value!);
+    attachmentCache.set(key, text);
+    return text;
+  }
+
+  /**
+   * What the user sent in a turn, as the labeler reads it: the typed text, then each attachment named, with the
+   * opening of text files such as a pasted brief. A message made only of attachments then still says what the
+   * thread is about. Null when the turn carries nothing. `missed` is set when an attachment read failed.
+   */
+  async function turnInput(
+    event: ThreadEvent | undefined,
+    projectId: string | null,
+    missed?: { value: boolean },
+  ): Promise<string | null> {
+    if (event?.type !== "client/turn/requested") return null;
+    const pieces: string[] = [];
+    let reads = 0;
+    for (const part of event.data.input) {
+      if (part.type === "text") {
+        if (part.text.trim()) pieces.push(part.text);
+      } else if (part.type === "localFile") {
+        const owner = part.sourceProjectId ?? projectId;
+        const read = owner && reads < ATTACHMENTS_READ_PER_TURN && isTextFile(part) ? await attachmentText(owner, part.path) : null;
+        if (read === undefined && missed) missed.value = true;
+        const text = read ?? null;
+        if (text) reads += 1;
+        pieces.push(text ? `[attached file "${fileName(part)}"]\n${text}\n[end of attached file]` : `[attached file "${fileName(part)}"]`);
+      } else if (part.type === "localImage") {
+        pieces.push(`[attached image "${fileName(part)}"]`);
+      } else if (part.type === "image") {
+        pieces.push("[attached image]");
+      }
+    }
+    return pieces.join("\n") || null;
+  }
   /** Which lists (archived or not) already logged hitting MAX_THREADS. */
   const cappedLogged = new Set<boolean>();
 
@@ -62,26 +140,31 @@ export function createThreadReader(bb: BbPluginApi) {
   }
 
   /** Latest user-initiated turn (time and text) plus the recent user messages, oldest first. */
-  async function lastUserTurn(threadId: string): Promise<{ at: number | null; prompt: string | null; prompts: string[] }> {
+  async function lastUserTurn(
+    threadId: string,
+    projectId: string | null,
+  ): Promise<{ at: number | null; prompt: string | null; prompts: string[] }> {
     const events = (await turnRequests(threadId, "desc", 50)) ?? [];
     const userEvents = events.filter((entry) => entry.type === "client/turn/requested" && entry.data.initiator === "user");
     const event = userEvents[0] ?? events[0];
-    const prompts = userEvents
-      .map(eventText)
+    const prompts = (await Promise.all(userEvents.map((entry) => turnInput(entry, projectId))))
       .filter((text): text is string => Boolean(text))
       .reverse();
-    return { at: event?.createdAt ?? null, prompt: eventText(event), prompts };
+    return { at: event?.createdAt ?? null, prompt: await turnInput(event, projectId), prompts };
   }
 
   /** The thread's opening user request, cached once found (it never changes). */
-  async function firstUserPrompt(threadId: string): Promise<string | null> {
+  async function firstUserPrompt(threadId: string, projectId: string | null): Promise<string | null> {
     const known = firstPromptCache.get(threadId);
     if (known !== undefined) return known;
     const events = (await turnRequests(threadId, "asc", 10)) ?? [];
-    const prompt = eventText(
+    const missed = { value: false };
+    const prompt = await turnInput(
       events.find((entry) => entry.type === "client/turn/requested" && entry.data.initiator === "user") ?? events[0],
+      projectId,
+      missed,
     );
-    if (prompt !== null) firstPromptCache.set(threadId, prompt);
+    if (prompt !== null && !missed.value) firstPromptCache.set(threadId, prompt);
     return prompt;
   }
 
@@ -91,11 +174,11 @@ export function createThreadReader(bb: BbPluginApi) {
     const cached = detailsCache.get(thread.id);
     if (cached && cached.key === key && (cached.output !== null || !needOutput)) return cached;
     const [turn, output, firstPrompt] = await Promise.all([
-      lastUserTurn(thread.id),
+      lastUserTurn(thread.id, thread.projectId),
       needOutput
         ? safe(async () => (await bb.sdk.threads.output({ threadId: thread.id })).output)
         : (cached?.output ?? null),
-      firstUserPrompt(thread.id),
+      firstUserPrompt(thread.id, thread.projectId),
     ]);
     const details: ThreadDetails = {
       key,

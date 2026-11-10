@@ -102,7 +102,7 @@ export function ThreadSearch({ maxListHeight }: { maxListHeight: number }) {
   return (
     // Phones: `static`, so the dropdown spans the whole title bar (the overlay's positioned row) and stays on screen.
     <div ref={rootRef} className="relative min-w-0 max-sm:static">
-      <div className="flex h-7 w-56 items-center gap-1.5 rounded-lg border border-border/70 bg-muted/40 pl-2 pr-1 transition-[border-color,box-shadow,background-color] focus-within:border-ring/60 focus-within:bg-background focus-within:ring-2 focus-within:ring-ring/20 lg:w-72 max-lg:w-full pointer-coarse:h-9">
+      <div className="flex h-7 w-56 items-center gap-1.5 rounded-md border border-border/70 bg-muted/40 pl-2 pr-1 transition-[border-color,box-shadow,background-color] focus-within:border-ring/60 focus-within:bg-background focus-within:ring-2 focus-within:ring-ring/20 lg:w-72 max-lg:w-full pointer-coarse:h-9">
         <Icon name="Search" className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
         <input
           ref={inputRef}

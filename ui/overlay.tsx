@@ -68,8 +68,10 @@ function useSidebarInset(): number {
 function CountBadge({ status, count }: { status: "blocked" | "done"; count: number }) {
   if (count === 0) return null;
   return (
-    <span className={`inline-flex h-5 items-center rounded-full px-2 text-[10px] font-semibold uppercase tracking-wide tabular-nums ${STATUS_META[status].badge}`}>
-      {count} {status}
+    // Phones keep only the count, so the crowded title bar never wraps or overlaps it.
+    <span title={`${count} ${status}`} className={`inline-flex h-5 shrink-0 items-center gap-1 whitespace-nowrap rounded px-1.5 text-[10px] font-semibold uppercase tracking-wide tabular-nums ${STATUS_META[status].badge}`}>
+      {count}
+      <span className="max-sm:sr-only">{status}</span>
     </span>
   );
 }
@@ -192,28 +194,27 @@ export function BottomBoardOverlay() {
       </div>
 
       {/* `relative`: on phones the search dropdown spans this bar instead of hanging off the search box. */}
-      <div className="relative flex h-10 shrink-0 items-center gap-2.5 border-b border-border/60 pl-3.5 pr-2 pointer-coarse:h-12 pointer-coarse:pr-1 max-sm:gap-1.5 max-sm:pl-2.5 max-sm:pr-1">
+      <div className="relative flex h-9 shrink-0 items-center gap-2 border-b border-border pl-2.5 pr-1.5 pointer-coarse:h-12 pointer-coarse:pr-1 max-sm:gap-1.5 max-sm:pl-2.5 max-sm:pr-1">
         <div className="flex min-w-0 items-center gap-2">
-          <span className="inline-flex size-6 shrink-0 items-center justify-center rounded-md bg-muted text-foreground">
-            <Icon name={PLUGIN_ICON} className="size-3.5" aria-hidden />
+          <span className="inline-flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground">
+            <Icon name={PLUGIN_ICON} className="size-4" aria-hidden />
           </span>
           {/* Phones give the name's room to search; the icon stays. */}
-          <span className="truncate text-[13px] font-semibold tracking-tight text-foreground max-sm:sr-only">{PLUGIN_NAME}</span>
+          <span className="truncate text-[12px] font-semibold text-foreground max-sm:sr-only">{PLUGIN_NAME}</span>
         </div>
         {board ? (
-          <span className="hidden items-center gap-2.5 text-xs tabular-nums text-muted-foreground lg:inline-flex">
-            <span aria-hidden className="h-3.5 w-px bg-border" />
+          <span className="hidden items-center text-[11px] tabular-nums text-muted-foreground lg:inline-flex">
             {board.tasks.length} thread{board.tasks.length === 1 ? "" : "s"}
           </span>
         ) : null}
         <CountBadge status="blocked" count={count("blocked")} />
-        <div className="ml-3 min-w-0 max-lg:ml-0 max-lg:flex-1">
+        <div className="ml-1 min-w-0 max-lg:ml-0 max-lg:flex-1">
           {/* Header (40px, 48px on touch) plus a little breathing room below the list. */}
           <ThreadSearch maxListHeight={panelHeight - 56} />
         </div>
-        <div className="ml-auto flex shrink-0 items-center gap-2">
+        <div className="ml-auto flex shrink-0 items-center gap-1.5">
           <SystemMonitor maxPanelHeight={panelHeight - 56} />
-          <IconButton icon="ChevronDown" label="Hide board" onClick={() => setOpen(false)} solid />
+          <IconButton icon="ChevronDown" label="Hide board" onClick={() => setOpen(false)} small className="size-7 rounded-md border border-border/70 pointer-coarse:size-9" />
         </div>
       </div>
 

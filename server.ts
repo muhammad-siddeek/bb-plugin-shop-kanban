@@ -26,6 +26,7 @@ import { createReviewQueue } from "./server/reviews";
 import { createWipLimit } from "./server/wip-limit";
 import { createWorkLists } from "./server/work";
 import { createSystemMonitor } from "./server/system";
+import { createAiUsage } from "./server/ai-usage";
 
 export { rpcContract } from "./server/schema";
 
@@ -86,6 +87,7 @@ export default async function plugin(bb: BbPluginApi) {
   const work = createWorkLists(bb);
   const wip = createWipLimit(bb, reader, publishBoardChanged);
   const system = createSystemMonitor(bb);
+  const aiUsage = createAiUsage(bb);
   const loggedAt = new Map<string, number>();
 
   function publishBoardChanged() {
@@ -455,6 +457,11 @@ export default async function plugin(bb: BbPluginApi) {
       publishBoardChanged();
       return { ok };
     },
+    board_mark_unread: async ({ threadId }) => {
+      const ok = (await safe(() => bb.sdk.threads.markUnread({ threadId }))) !== null;
+      publishBoardChanged();
+      return { ok };
+    },
     board_set_wip_limit: ({ limit }) => wip.setLimit(limit),
     board_search: ({ query }) => search.search(query),
     reviews_list: () => reviews.list(),
@@ -466,6 +473,7 @@ export default async function plugin(bb: BbPluginApi) {
     work_mark: ({ id, mark, on }) => work.mark(id, mark, on),
     system_stats: () => system.stats(),
     system_processes: () => system.processes(),
+    ai_usage: () => aiUsage.read(),
   });
 
   const boardApi = { listBoard, spawnTask, removeTask, parkTask };

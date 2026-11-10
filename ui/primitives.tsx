@@ -26,7 +26,7 @@ export function GroupHeader({ title, count, hint, refreshing, problems, children
   children?: ReactNode;
 }) {
   return (
-    <div className="flex h-5 items-center gap-1.5 px-0.5 pointer-coarse:h-7">
+    <div className="flex h-6 items-center gap-1.5 px-1 pointer-coarse:h-7">
       <h3 title={hint} className="flex min-w-0 items-center gap-1 text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">
         <span className="truncate">{title}</span>
         {count !== null ? (
@@ -51,7 +51,7 @@ export function GroupHeader({ title, count, hint, refreshing, problems, children
 /** A row's archive button: the thread cards' hover overlay, over the end of the title line. */
 export function ArchiveOverlay({ label, title, onClick }: { label: string; title: string; onClick: () => void }) {
   return (
-    <span className="absolute right-1.5 top-[5px] flex bg-card opacity-0 transition-opacity duration-150 before:pointer-events-none before:absolute before:inset-y-0 before:right-full before:w-3 before:bg-linear-to-l before:from-card before:to-transparent before:content-[''] group-hover:opacity-100 group-focus-within:opacity-100 has-[:focus-visible]:opacity-100 [@media(hover:none)]:opacity-100 pointer-coarse:right-1 pointer-coarse:top-px">
+    <span className="absolute right-1 top-[5px] flex bg-card opacity-0 transition-opacity duration-150 before:pointer-events-none before:absolute before:inset-y-0 before:right-full before:w-3 before:bg-linear-to-l before:from-card before:to-transparent before:content-[''] group-hover:opacity-100 group-focus-within:opacity-100 has-[:focus-visible]:opacity-100 [@media(hover:none)]:opacity-100 pointer-coarse:right-0.5 pointer-coarse:top-px">
       <button
         type="button"
         title={title}

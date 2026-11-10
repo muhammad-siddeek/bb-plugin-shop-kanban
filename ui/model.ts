@@ -1,6 +1,7 @@
 import { PLUGIN_SLUG } from "../brand";
 import type { z } from "zod";
 import type {
+  AiUsage,
   BoardSession,
   BoardTask,
   Column,
@@ -22,7 +23,7 @@ import type {
 // Shared board types, constants, and pure helpers.
 
 // Type-only re-exports of the server's schema types; keeps zod out of the browser bundle.
-export type { BoardSession, BoardTask, ReviewCard, ReviewScope, ReviewState, SearchResponse, SystemProcesses, SystemStats, WorkItem, WorkList, WorkMark, WorkSource, WorkState };
+export type { AiUsage, BoardSession, BoardTask, ReviewCard, ReviewScope, ReviewState, SearchResponse, SystemProcesses, SystemStats, WorkItem, WorkList, WorkMark, WorkSource, WorkState };
 export type BoardColumn = Column;
 export type BoardStatus = Status;
 export type BoardState = z.infer<(typeof rpcContract)["board_list"]["output"]>;
@@ -55,6 +56,17 @@ export const ACCENT_BADGE = {
   rose: "bg-rose-500/15 text-[light-dark(var(--color-rose-800),var(--color-rose-500))]",
   emerald: "bg-emerald-500/15 text-[light-dark(var(--color-emerald-800),var(--color-emerald-500))]",
 } as const;
+
+/**
+ * Every card's surface: a hairline drawn from the foreground (so it reads in both themes and in the selected
+ * card's inverted scope) plus a 1px drop, since the cards sit only 4px apart and need a crisp edge rather than
+ * spacing to separate them. `CARD_EDGE` is the resting/hover border; callers swap it for a tinted one.
+ */
+export const CARD_SURFACE =
+  "rounded-md border bg-card shadow-[0_1px_1px_0_rgb(0_0_0/0.05),0_1px_3px_-1px_rgb(0_0_0/0.08)] transition-[border-color,box-shadow,background-color,opacity] duration-150 hover:shadow-[0_1px_2px_0_rgb(0_0_0/0.08),0_2px_6px_-2px_rgb(0_0_0/0.12)]";
+// Dark cards sit darker than their column, so the hairline goes a step brighter there to keep a drawn edge.
+export const CARD_EDGE =
+  "border-[light-dark(color-mix(in_oklab,var(--foreground)_12%,transparent),color-mix(in_oklab,var(--foreground)_18%,transparent))] hover:border-[light-dark(color-mix(in_oklab,var(--foreground)_24%,transparent),color-mix(in_oklab,var(--foreground)_30%,transparent))]";
 
 /** Colors per card state; each column takes those of the state it is named after. Parked is grey. */
 export const STATUS_META: Record<BoardStatus, {

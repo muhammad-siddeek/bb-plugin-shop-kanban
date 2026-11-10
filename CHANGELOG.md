@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+- Done cards swap the pause button, which did nothing there, for a "Mark as unread"
+  button. It shows on read cards and puts them back at the top of Done as unread.
+- The resource monitor shows today's Shopify AI proxy spend next to the machine
+  gauges, read from the proxy's own per-user counter (every tool on the proxy,
+  not just bb threads) and refreshed once a minute. The chip turns amber from
+  $450. Its panel section lists the costliest models, token counts, this hour
+  and the last 7 days.
+- Each resource chip now opens its own popover (on hover, or click to pin it)
+  showing only that resource, instead of one long panel covering everything.
+  The chips sit directly in the title bar with no surrounding button border.
+- Card titles now follow what a thread opened with when that was an attached
+  file, such as a pasted brief: the labeler reads the opening of text
+  attachments and names attached images. Before, a thread started from a
+  pasted file got a title guessed from the other cards on the board. A title
+  written before the board could read the opening message is written afresh
+  once. When the user's messages are too short to name the thread ("keep
+  going"), the labeler also reads the agent's last finished reply.
+
 ## 0.15.1
 
 - The open board no longer covers the bottom of bb's left sidebar (settings and

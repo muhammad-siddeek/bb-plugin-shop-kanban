@@ -321,6 +321,28 @@ export const systemProcessesSchema = z.object({
 });
 export type SystemProcesses = z.infer<typeof systemProcessesSchema>;
 
+/**
+ * The signed-in user's Shopify AI proxy spend, from the proxy's per-user counter: every tool on the proxy, not just
+ * bb threads. Costs are USD; `today` is the bb machine's local calendar day. Figures are null until a read succeeds;
+ * after one has, a failed read keeps them and sets `error`.
+ */
+export const aiUsageSchema = z.object({
+  sampledAt: z.number(),
+  timezone: z.string(),
+  todayCost: z.number().nullable(),
+  hourCost: z.number().nullable(),
+  sevenDaysCost: z.number().nullable(),
+  todayTokens: z
+    .object({ input: z.number(), cachedInput: z.number(), output: z.number(), cacheWrite: z.number() })
+    .nullable(),
+  /** Today's costliest models, priciest first; `tokens` is input + output. */
+  topModels: z.array(z.object({ name: z.string(), cost: z.number(), tokens: z.number() })),
+  /** The proxy has no pricing loaded, so costs read $0: unknown, not free. */
+  pricingStale: z.boolean(),
+  error: z.string().nullable(),
+});
+export type AiUsage = z.infer<typeof aiUsageSchema>;
+
 const reviewRefSchema = z.object({ id: z.string().min(1).max(300) });
 const okSchema = z.object({ ok: z.boolean() });
 
@@ -341,6 +363,7 @@ export const rpcContract = {
   /** Start a Queue card now: send its waiting message with bb's Send now, past the working limit. */
   board_start_task: { input: threadRefSchema, output: boardTaskSchema },
   board_mark_read: { input: threadRefSchema, output: z.object({ ok: z.boolean() }) },
+  board_mark_unread: { input: threadRefSchema, output: z.object({ ok: z.boolean() }) },
   /** Set the working limit (null: none); messages that would start another card past it wait in their thread's queue. */
   board_set_wip_limit: { input: z.object({ limit: z.number().int().min(0).max(WIP_LIMIT_MAX).nullable() }), output: wipLimitSchema },
   board_search: { input: z.object({ query: z.string().trim().min(1).max(200) }), output: searchResponseSchema },
@@ -366,6 +389,8 @@ export const rpcContract = {
   system_stats: { input: z.null(), output: systemStatsSchema },
   /** The heaviest processes on the bb server machine, grouped by name. */
   system_processes: { input: z.null(), output: systemProcessesSchema },
+  /** Today's Shopify AI proxy spend for the signed-in user; cached a minute on the server. */
+  ai_usage: { input: z.null(), output: aiUsageSchema },
 };
 
 /**

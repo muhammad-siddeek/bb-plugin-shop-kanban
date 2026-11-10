@@ -1,19 +1,20 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
-import { ACCENT_TEXT, STATUS_META, THREAD_DRAG_TYPE, formatRelativeTime, taskActivityTime, taskCardTitle, type BoardStatus, type BoardTask } from "./model";
+import { ACCENT_TEXT, CARD_EDGE, CARD_SURFACE, STATUS_META, THREAD_DRAG_TYPE, formatRelativeTime, taskActivityTime, taskCardTitle, type BoardStatus, type BoardTask } from "./model";
 import { CardTooltip, ContextPie, ModelMark, SessionCost, type AgentProvider } from "./session";
 
 // All marks share one 16px frame so they line up with the 18px title line (mt-px centers them).
 const MARK_FRAME = "mt-px inline-flex size-4 shrink-0 items-center justify-center";
 const BLOCKED_STRIPE =
-  "before:absolute before:inset-y-2 before:left-0 before:w-[2px] before:rounded-r-full before:bg-rose-500/70 before:content-['']";
+  "before:absolute before:inset-y-1.5 before:-left-px before:w-[3px] before:rounded-r-full before:bg-rose-500/70 before:content-['']";
 
 /** Resting on a card this long opens its tooltip; quick passes across the board don't. */
 const TOOLTIP_DELAY_MS = 350;
 
-// Reveal margins: the column list's p-2 (covers the selected card's 4px outline) and the grid's p-3.
-const REVEAL_MARGIN_Y = 8;
-const REVEAL_MARGIN_X = 12;
+// Reveal margins: the column list's p-1.5 (covers the selected card's 3px outline); columns sit flush with the
+// board's edges, so horizontally a column only needs to be inside the scroller.
+const REVEAL_MARGIN_Y = 6;
+const REVEAL_MARGIN_X = 0;
 
 /**
  * Smallest scroll delta that fits [start, end] inside the band inset by `margin`: zero when it already
@@ -72,9 +73,6 @@ function boardCardLayoutKey(card: HTMLElement): string | null {
     .map((value) => Math.round(value))
     .join(":");
 }
-
-/** Theme class that re-scopes bb's color tokens for a subtree (`.light` / `.dark`). */
-export type ThemeScope = "light" | "dark";
 
 /** The Working mark's petals, from 12 o'clock clockwise; each fades a step further behind the leading one. */
 const PETALS = Array.from({ length: 8 }, (_, i) => ({ angle: i * 45, opacity: 1 - i * 0.11 }));
@@ -156,7 +154,7 @@ function FooterNote({ tone, text }: { tone: string; text: string }) {
   );
 }
 
-export function TaskCard({ task, now, unread, selected, dragging, starting, invertedTheme, provider, onArchive, onPark, onStart, onDragChange, onOpen }: {
+export function TaskCard({ task, now, unread, selected, dragging, starting, provider, onArchive, onPark, onMarkUnread, onStart, onDragChange, onOpen }: {
   task: BoardTask;
   now: number;
   /** Done and not yet read: the title goes from semibold to bold and the check fills. */
@@ -167,13 +165,13 @@ export function TaskCard({ task, now, unread, selected, dragging, starting, inve
   dragging: boolean;
   /** Its start is on its way to the server: the start button waits. */
   starting: boolean;
-  /** Opposite of bb's active theme; the selected card renders in it so it stands out. */
-  invertedTheme: ThemeScope;
   /** The harness the card's thread runs on; null when bb's roster doesn't list it. */
   provider: AgentProvider | null;
   onArchive: (threadId: string) => void;
   /** Park an idle card, or unpark a parked one. */
   onPark: (threadId: string, parked: boolean) => void;
+  /** Mark a read Done card's thread unread again. */
+  onMarkUnread: (threadId: string) => void;
   /** Start a startable Queue card now, past the working limit. */
   onStart: (threadId: string) => void;
   /** A drag of this card started (its thread id) or ended (null). */
@@ -290,17 +288,14 @@ export function TaskCard({ task, now, unread, selected, dragging, starting, inve
 
   // Selection wins over the column/unread border; the blocked stripe and the parked dashes stay either way.
   const borderClass = selected
-    ? "border-border"
+    ? "border-transparent"
     : unread
-      ? "border-emerald-500/30 hover:border-emerald-500/50"
-      : "border-border/60 hover:border-border";
+      ? "border-emerald-500/45 hover:border-emerald-500/70"
+      : CARD_EDGE;
   const stateClass =
     task.status === "blocked" ? `${borderClass} ${BLOCKED_STRIPE}` : parked ? `${borderClass} border-dashed` : borderClass;
-  // Selected: flip the card into the opposite theme (bg-card, text-*, bg-muted follow) and ring it
-  // in the column accent. Outline 2px + 2px offset stays inside the column's p-2 scroll padding.
-  const surfaceClass = selected
-    ? `${invertedTheme} shadow-md outline-2 outline-offset-2 ${meta.outline}`
-    : "shadow-xs hover:shadow-sm";
+  // Selected: a thick outline in the column accent; 3px stays inside the column list's p-1.5 scroll padding.
+  const surfaceClass = selected ? `shadow-md outline-3 outline-offset-0 ${meta.outline}` : "";
 
   return (
     <article
@@ -345,16 +340,16 @@ export function TaskCard({ task, now, unread, selected, dragging, starting, inve
       onKeyDown={(event) => {
         if (event.key === "Escape") hideTooltip();
       }}
-      className={`group relative rounded-lg border bg-card px-2.5 pb-1.5 pt-2 transition-[border-color,box-shadow,background-color,opacity] duration-150 has-[[data-card-open]:focus-visible]:ring-2 has-[[data-card-open]:focus-visible]:ring-ring/60 ${
+      className={`group relative ${CARD_SURFACE} px-2 pb-1 pt-1.5 has-[[data-card-open]:focus-visible]:ring-2 has-[[data-card-open]:focus-visible]:ring-ring/60 ${
         canOpen ? "cursor-pointer" : ""
       } ${dragging ? "opacity-40" : ""} ${stateClass} ${surfaceClass}`}
     >
       {/* Status, harness and context fill: one column down the card's left gutter, spread over its padded height
           (status on the title's first line, the ring on the footer's), so the marks never add height. */}
-      <div className="absolute bottom-1.5 left-2.5 top-2 flex w-4 flex-col items-center justify-between">
+      <div className="absolute bottom-1 left-2 top-1.5 flex w-4 flex-col items-center justify-between">
         <TaskStatusMark status={task.status} unread={unread} />
         <ModelMark provider={provider} />
-        <span className="flex h-5 items-center">
+        <span className="flex h-[18px] items-center">
           <ContextPie session={task.session} />
         </span>
       </div>
@@ -377,7 +372,7 @@ export function TaskCard({ task, now, unread, selected, dragging, starting, inve
 
       {/* Start or park, and archive: overlay the end of the title line (no reflow); a card-colored backdrop with a
           short leftward fade hides the truncated title underneath. Revealed on hover/focus, always on touch. */}
-      <span className="absolute right-1.5 top-[7px] flex gap-0.5 bg-card opacity-0 transition-opacity duration-150 before:pointer-events-none before:absolute before:inset-y-0 before:right-full before:w-3 before:bg-linear-to-l before:from-card before:to-transparent before:content-[''] group-hover:opacity-100 group-focus-within:opacity-100 has-[:focus-visible]:opacity-100 [@media(hover:none)]:opacity-100 pointer-coarse:right-1 pointer-coarse:top-[3px]">
+      <span className="absolute right-1 top-[5px] flex gap-0.5 bg-card opacity-0 transition-opacity duration-150 before:pointer-events-none before:absolute before:inset-y-0 before:right-full before:w-3 before:bg-linear-to-l before:from-card before:to-transparent before:content-[''] group-hover:opacity-100 group-focus-within:opacity-100 has-[:focus-visible]:opacity-100 [@media(hover:none)]:opacity-100 pointer-coarse:right-0.5 pointer-coarse:top-px">
         {/* A startable card's next step is to start, so Play takes park's place; it can still be dragged to Parked. */}
         {task.startable ? (
           <button
@@ -394,6 +389,20 @@ export function TaskCard({ task, now, unread, selected, dragging, starting, inve
               <Icon name="Play" className="size-3.5" aria-hidden />
             )}
           </button>
+        ) : task.status === "done" ? (
+          // A Done card is finished, not something to pause: its action is to bring it back as unread. An unread card
+          // already is, so it has none.
+          unread || !canOpen ? null : (
+            <button
+              type="button"
+              aria-label="Mark thread unread"
+              title="Mark as unread"
+              className="inline-flex size-5 items-center justify-center rounded-md text-muted-foreground/70 transition-[color,background-color] duration-150 hover:bg-accent hover:text-foreground focus-visible:bg-accent focus-visible:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 pointer-coarse:size-7"
+              onClick={() => onMarkUnread(task.threadId)}
+            >
+              <Icon name="CircleDot" className="size-3.5" aria-hidden />
+            </button>
+          )
         ) : parkToggle ? (
           <button
             type="button"
@@ -415,7 +424,7 @@ export function TaskCard({ task, now, unread, selected, dragging, starting, inve
       </span>
 
       {/* Hidden while the card is hovered: the summary takes the line, and the tooltip has these facts. */}
-      <div className="mt-1 flex h-5 items-center gap-2 pl-6 group-hover:pointer-events-none group-hover:opacity-0">
+      <div className="mt-0.5 flex h-[18px] items-center gap-2 pl-6 group-hover:pointer-events-none group-hover:opacity-0">
         <div className="flex min-w-0 flex-1 items-center gap-1.5">
           <SessionCost session={task.session} />
           {reason ? <FooterNote tone={`opacity-90 ${meta.title}`} text={reason} /> : null}
