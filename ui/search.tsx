@@ -4,6 +4,7 @@ import { experimental_Icon as Icon, useBbNavigate, useRpc } from "@get-bb/plugin
 import type { rpcContract } from "../server/schema";
 import { CLOCK_TICK_MS, errorMessage, formatRelativeTime, type SearchResponse } from "./model";
 import { useNow } from "./hooks";
+import { TYPE } from "./primitives";
 
 const SEARCH_DEBOUNCE_MS = 200;
 
@@ -124,7 +125,7 @@ export function ThreadSearch({ maxListHeight }: { maxListHeight: number }) {
           spellCheck={false}
           autoComplete="off"
           // 16px on touch: iOS zooms the page into any smaller input that takes focus.
-          className="h-full min-w-0 flex-1 bg-transparent text-[12px] text-foreground outline-none placeholder:text-muted-foreground/60 [&::-webkit-search-cancel-button]:hidden pointer-coarse:text-base"
+          className={`h-full min-w-0 flex-1 bg-transparent ${TYPE.body} text-foreground outline-none placeholder:text-muted-foreground/60 [&::-webkit-search-cancel-button]:hidden pointer-coarse:text-base`}
         />
         {pending ? (
           <span className="inline-flex size-3 shrink-0 animate-spin rounded-full border-[1.5px] border-muted-foreground/25 border-t-muted-foreground/80" aria-hidden />
@@ -164,19 +165,19 @@ export function ThreadSearch({ maxListHeight }: { maxListHeight: number }) {
                   className={`cursor-pointer rounded-lg px-2.5 py-2 transition-colors ${index === active ? "bg-accent text-accent-foreground" : ""}`}
                 >
                   <div className="flex min-w-0 items-center gap-2">
-                    <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium leading-[18px]">{result.title}</span>
+                    <span className={`min-w-0 flex-1 truncate ${TYPE.title} font-semibold leading-[18px]`}>{result.title}</span>
                     {result.archived ? (
-                      <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-muted px-1.5 text-[10px] font-medium leading-4 text-muted-foreground">
+                      <span className={`inline-flex shrink-0 items-center gap-1 rounded-full bg-muted px-1.5 ${TYPE.badge} leading-4 text-muted-foreground`}>
                         <Icon name="Archive" className="size-2.5" aria-hidden />
                         Archived
                       </span>
                     ) : null}
                     {result.updatedAt !== null ? (
-                      <span className="shrink-0 text-[10.5px] tabular-nums text-muted-foreground/80">{formatRelativeTime(result.updatedAt, now)}</span>
+                      <span className={`shrink-0 ${TYPE.meta} tabular-nums text-muted-foreground/80`}>{formatRelativeTime(result.updatedAt, now)}</span>
                     ) : null}
                   </div>
                   {result.snippet ? (
-                    <p className="mt-0.5 line-clamp-2 text-[11px] leading-snug text-muted-foreground">{result.snippet}</p>
+                    <p className={`mt-0.5 line-clamp-2 ${TYPE.meta} leading-snug text-muted-foreground`}>{result.snippet}</p>
                   ) : null}
                 </li>
               ))}
@@ -186,7 +187,7 @@ export function ThreadSearch({ maxListHeight }: { maxListHeight: number }) {
             <div
               role="status"
               aria-live="polite"
-              className={`flex shrink-0 items-start gap-1.5 px-3 py-2 text-[11px] leading-snug ${results.length > 0 ? "border-t border-border/60" : ""}`}
+              className={`flex shrink-0 items-start gap-1.5 px-3 py-2 ${TYPE.meta} leading-snug ${results.length > 0 ? "border-t border-border/60" : ""}`}
             >
               {error ? (
                 <>

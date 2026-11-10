@@ -4,7 +4,7 @@ import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
 import { PLUGIN_NAME } from "../brand";
 import { BOTTOM_BOARD_COLLAPSED_CLASS, BOTTOM_BOARD_HEIGHT_VAR, BOTTOM_BOARD_OPEN_CLASS, STATUS_META, type BoardStatus } from "./model";
 import { useBoard, useReviews, useWork } from "./hooks";
-import { IconButton } from "./primitives";
+import { IconButton, TYPE } from "./primitives";
 import { BoardView } from "./column";
 import { ThreadSearch } from "./search";
 import { SystemMonitor } from "./system";
@@ -69,7 +69,7 @@ function CountBadge({ status, count }: { status: "blocked" | "done"; count: numb
   if (count === 0) return null;
   return (
     // Phones keep only the count, so the crowded title bar never wraps or overlaps it.
-    <span title={`${count} ${status}`} className={`inline-flex h-5 shrink-0 items-center gap-1 whitespace-nowrap rounded px-1.5 text-[10px] font-semibold uppercase tracking-wide tabular-nums ${STATUS_META[status].badge}`}>
+    <span title={`${count} ${status}`} className={`inline-flex h-5 shrink-0 items-center gap-1 whitespace-nowrap rounded px-1.5 ${TYPE.label} tabular-nums ${STATUS_META[status].badge}`}>
       {count}
       <span className="max-sm:sr-only">{status}</span>
     </span>
@@ -155,7 +155,7 @@ export function BottomBoardOverlay() {
     return (
       <button
         type="button"
-        className="group fixed bottom-4 right-4 z-50 inline-flex h-9 cursor-pointer select-none items-center gap-2 rounded-full border border-border bg-card/90 pl-2 pr-2.5 text-[13px] font-medium text-foreground shadow-[0_8px_24px_-8px_rgba(0,0,0,0.35),0_2px_6px_-2px_rgba(0,0,0,0.15)] ring-1 ring-black/5 backdrop-blur-md transition-[transform,background-color,box-shadow] duration-150 ease-out hover:-translate-y-0.5 hover:bg-card hover:shadow-[0_12px_28px_-8px_rgba(0,0,0,0.4),0_2px_6px_-2px_rgba(0,0,0,0.15)] active:translate-y-0 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring max-sm:inset-x-0 max-sm:bottom-0 max-sm:h-[calc(2.75rem+env(safe-area-inset-bottom))] max-sm:rounded-none max-sm:border-x-0 max-sm:border-b-0 max-sm:pb-[env(safe-area-inset-bottom)] max-sm:pl-3.5 max-sm:pr-4 max-sm:shadow-[0_-8px_24px_-12px_rgba(0,0,0,0.35)] max-sm:hover:translate-y-0 max-sm:active:scale-100"
+        className={`group fixed bottom-4 right-4 z-50 inline-flex h-9 cursor-pointer select-none items-center gap-2 rounded-full border border-border bg-card/90 pl-2 pr-2.5 ${TYPE.title} font-medium text-foreground shadow-[0_8px_24px_-8px_rgba(0,0,0,0.35),0_2px_6px_-2px_rgba(0,0,0,0.15)] ring-1 ring-black/5 backdrop-blur-md transition-[transform,background-color,box-shadow] duration-150 ease-out hover:-translate-y-0.5 hover:bg-card hover:shadow-[0_12px_28px_-8px_rgba(0,0,0,0.4),0_2px_6px_-2px_rgba(0,0,0,0.15)] active:translate-y-0 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring max-sm:inset-x-0 max-sm:bottom-0 max-sm:h-[calc(2.75rem+env(safe-area-inset-bottom))] max-sm:rounded-none max-sm:border-x-0 max-sm:border-b-0 max-sm:pb-[env(safe-area-inset-bottom)] max-sm:pl-3.5 max-sm:pr-4 max-sm:shadow-[0_-8px_24px_-12px_rgba(0,0,0,0.35)] max-sm:hover:translate-y-0 max-sm:active:scale-100`}
         onClick={() => setOpen(true)}
         aria-label={`Open ${PLUGIN_NAME} board`}
         title={`Open ${PLUGIN_NAME} board`}
@@ -163,7 +163,7 @@ export function BottomBoardOverlay() {
         <span className="inline-flex size-6 shrink-0 items-center justify-center rounded-full bg-muted text-foreground">
           <Icon name={PLUGIN_ICON} className="size-3.5" aria-hidden />
         </span>
-        <span className="tracking-tight">{PLUGIN_NAME}</span>
+        <span>{PLUGIN_NAME}</span>
         <CountBadge status="blocked" count={count("blocked")} />
         <CountBadge status="done" count={count("done")} />
         <Icon name="ChevronUp" className="size-3.5 text-muted-foreground transition-transform duration-150 group-hover:-translate-y-px group-hover:text-foreground max-sm:ml-auto max-sm:size-5" aria-hidden />
@@ -200,10 +200,10 @@ export function BottomBoardOverlay() {
             <Icon name={PLUGIN_ICON} className="size-4" aria-hidden />
           </span>
           {/* Phones give the name's room to search; the icon stays. */}
-          <span className="truncate text-[12px] font-semibold text-foreground max-sm:sr-only">{PLUGIN_NAME}</span>
+          <span className={`truncate ${TYPE.body} font-semibold text-foreground max-sm:sr-only`}>{PLUGIN_NAME}</span>
         </div>
         {board ? (
-          <span className="hidden items-center text-[11px] tabular-nums text-muted-foreground lg:inline-flex">
+          <span className={`hidden items-center ${TYPE.meta} tabular-nums text-muted-foreground lg:inline-flex`}>
             {board.tasks.length} thread{board.tasks.length === 1 ? "" : "s"}
           </span>
         ) : null}

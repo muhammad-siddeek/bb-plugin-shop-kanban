@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
 import { ACCENT_TEXT, CARD_EDGE, CARD_SURFACE, STATUS_META, THREAD_DRAG_TYPE, formatRelativeTime, taskActivityTime, taskCardTitle, type BoardStatus, type BoardTask } from "./model";
-import { MARK_FRAME, RowActions, Spinner } from "./primitives";
+import { MARK_FRAME, RowActions, Spinner, TYPE } from "./primitives";
 import { CardTooltip, ContextPie, ModelMark, SessionCost, type AgentProvider } from "./session";
 
 const CARD_ACTION =
@@ -148,7 +148,7 @@ function TaskStatusMark({ status, unread }: { status: BoardStatus; unread: boole
 /** A "· text" fact after the footer's time. */
 function FooterNote({ tone, text }: { tone: string; text: string }) {
   return (
-    <span className={`min-w-0 truncate text-[10.5px] font-medium ${tone}`}>
+    <span className={`min-w-0 truncate ${TYPE.meta} font-medium ${tone}`}>
       <span className="text-muted-foreground/50" aria-hidden>· </span>
       {text}
     </span>
@@ -256,14 +256,14 @@ export function TaskCard({ task, now, unread, selected, dragging, starting, prov
   // too; the footer's session facts are in the card's tooltip.
   // The 18px lines come from the 12px strut; the 13px title is leading-none so it can't grow a line.
   const text = (
-    <span className="line-clamp-2 text-[12px] leading-[18px] group-hover:line-clamp-3">
+    <span className={`line-clamp-2 ${TYPE.body} leading-[18px] group-hover:line-clamp-3`}>
       {category ? (
-        <span className="mr-1.5 mt-px inline-flex h-4 max-w-[80%] items-center rounded-[4px] bg-muted px-1 align-top text-[9px] font-semibold uppercase leading-none tracking-[0.04em] text-muted-foreground">
+        <span className={`mr-1.5 mt-px inline-flex h-4 max-w-[80%] items-center rounded-[4px] bg-muted px-1 align-top ${TYPE.chip} leading-none text-muted-foreground`}>
           <span className="truncate">{category}</span>
         </span>
       ) : null}
       <span
-        className={`text-[13px] leading-none decoration-muted-foreground/40 underline-offset-2 group-hover/open:underline ${
+        className={`${TYPE.title} leading-none decoration-muted-foreground/40 underline-offset-2 group-hover/open:underline ${
           parked ? "text-foreground/70" : "text-foreground"
         } ${unread ? "font-bold" : "font-semibold"}`}
       >
@@ -420,7 +420,7 @@ export function TaskCard({ task, now, unread, selected, dragging, starting, prov
         {activity !== null ? (
           <time
             dateTime={new Date(activity).toISOString()}
-            className="shrink-0 whitespace-nowrap text-[10.5px] tabular-nums text-muted-foreground/80"
+            className={`shrink-0 whitespace-nowrap ${TYPE.meta} tabular-nums text-muted-foreground/80`}
           >
             {formatRelativeTime(activity, now)}
           </time>

@@ -8,6 +8,7 @@ import { TaskCard } from "./card";
 import { ReviewGroup, visibleReviews } from "./reviews";
 import { WipLimitControl } from "./wip-limit";
 import { WorkGroup, useWorkItems } from "./work";
+import { TYPE } from "./primitives";
 
 const SCROLL_TO_LATEST_SELECTOR = 'button[aria-label="Scroll to latest event"]';
 /** The new-thread form's text, written on every keystroke so a crash or reload doesn't lose it. */
@@ -131,7 +132,7 @@ function useCardDrop(onDrop: ((threadId: string) => void) | null, awaiting: bool
 function DropHint({ over, icon, label }: { over: boolean; icon: string; label: string }) {
   return (
     <div
-      className={`flex shrink-0 items-center justify-center gap-1.5 rounded-md border border-dashed px-3 py-3 text-[11px] font-medium transition-colors ${
+      className={`flex shrink-0 items-center justify-center gap-1.5 rounded-md border border-dashed px-3 py-3 ${TYPE.meta} font-medium transition-colors ${
         over ? "border-muted-foreground/70 bg-card text-foreground" : "border-muted-foreground/40 text-muted-foreground"
       }`}
     >
@@ -143,7 +144,7 @@ function DropHint({ over, icon, label }: { over: boolean; icon: string; label: s
 
 function EmptySlot({ children }: { children: ReactNode }) {
   return (
-    <div className="flex shrink-0 items-center justify-center rounded-md border border-dashed border-foreground/15 px-3 py-3 text-center text-[11px] text-muted-foreground/90">
+    <div className={`flex shrink-0 items-center justify-center rounded-md border border-dashed border-foreground/15 px-3 py-3 text-center ${TYPE.meta} text-muted-foreground/90`}>
       {children}
     </div>
   );
@@ -169,13 +170,13 @@ function QueueTabs({ tabs, active, onSelect }: {
             aria-selected={selected}
             title={`${tab.hint}${tab.fresh > 0 ? ` · ${tab.fresh} new` : ""}`}
             onClick={() => onSelect(tab.id)}
-            className={`relative flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-sm text-[11px] font-bold uppercase leading-none tracking-[0.1em] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/60 ${
+            className={`relative flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-sm ${TYPE.heading} leading-none transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/60 ${
               selected ? meta.title : "text-muted-foreground/70 hover:text-foreground"
             }`}
           >
             <span>{tab.label}</span>
             <span
-              className={`inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full px-1.5 text-[10px] font-semibold leading-none tracking-normal tabular-nums ${
+              className={`inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full px-1.5 ${TYPE.badge} leading-none tracking-normal ${
                 selected ? meta.badge : tab.fresh > 0 ? ACCENT_BADGE.sky : STATUS_META.parked.badge
               }`}
             >
@@ -299,26 +300,26 @@ function AddTaskForm({ focus, onAdd, onCancel, onError }: {
         placeholder="What should the new thread do?"
         disabled={pending}
         rows={3}
-        className="block min-h-16 w-full resize-none bg-transparent px-1 py-0.5 text-[13px] leading-snug text-foreground outline-none placeholder:text-muted-foreground/60 disabled:cursor-wait disabled:opacity-60 pointer-coarse:text-base"
+        className={`block min-h-16 w-full resize-none bg-transparent px-1 py-0.5 ${TYPE.title} leading-snug text-foreground outline-none placeholder:text-muted-foreground/60 disabled:cursor-wait disabled:opacity-60 pointer-coarse:text-base`}
       />
       <div className="mt-1.5 flex items-center gap-1.5 border-t border-border/50 pt-1.5">
-        <span className="flex min-w-0 items-center gap-1 truncate text-[10px] text-muted-foreground/80 pointer-coarse:hidden" title="Enter to start · Shift+Enter for a new line · Esc to cancel">
-          <kbd className="rounded border border-border/70 bg-muted/60 px-1 font-sans text-[9px] leading-[14px] text-muted-foreground">↵</kbd>
+        <span className={`flex min-w-0 items-center gap-1 truncate ${TYPE.meta} text-muted-foreground/80 pointer-coarse:hidden`} title="Enter to start · Shift+Enter for a new line · Esc to cancel">
+          <kbd className="rounded border border-border/70 bg-muted/60 px-1 font-sans text-[10px] leading-[14px] text-muted-foreground">↵</kbd>
           <span>start</span>
-          <kbd className="ml-1 rounded border border-border/70 bg-muted/60 px-1 font-sans text-[9px] leading-[14px] text-muted-foreground">esc</kbd>
+          <kbd className="ml-1 rounded border border-border/70 bg-muted/60 px-1 font-sans text-[10px] leading-[14px] text-muted-foreground">esc</kbd>
           <span>cancel</span>
         </span>
         <button
           type="button"
           onClick={cancel}
-          className="ml-auto h-6 shrink-0 whitespace-nowrap rounded-md px-2 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:h-9 pointer-coarse:px-3 pointer-coarse:text-sm"
+          className={`ml-auto h-6 shrink-0 whitespace-nowrap rounded-md px-2 ${TYPE.body} text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:h-9 pointer-coarse:px-3 pointer-coarse:text-sm`}
         >
           Cancel
         </button>
         <button
           type="submit"
           disabled={pending || !prompt.trim()}
-          className="inline-flex h-6 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md bg-primary px-2.5 text-xs font-medium text-primary-foreground shadow-xs transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-card disabled:cursor-not-allowed disabled:opacity-50 pointer-coarse:h-9 pointer-coarse:px-3.5 pointer-coarse:text-sm"
+          className={`inline-flex h-6 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md bg-primary px-2.5 ${TYPE.body} font-medium text-primary-foreground shadow-xs transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-card disabled:cursor-not-allowed disabled:opacity-50 pointer-coarse:h-9 pointer-coarse:px-3.5 pointer-coarse:text-sm`}
         >
           {pending ? (
             <>
@@ -347,8 +348,8 @@ function ParkedSection({ tasks, dragging, onDrop, renderCard }: {
   return (
     <div role="group" aria-label="Parked" className={`space-y-1 rounded-md pt-1 transition-colors ${dropOutline(dragging, over)}`} {...handlers}>
       <div className="flex h-6 items-center gap-2 px-1">
-        <h3 className={`text-[10px] font-bold uppercase leading-none tracking-[0.12em] ${meta.title}`}>Parked</h3>
-        <span className={`inline-flex h-4 min-w-4 items-center justify-center rounded-full px-1.5 text-[10px] font-semibold leading-none tabular-nums ${meta.badge}`}>{tasks.length}</span>
+        <h3 className={`${TYPE.label} leading-none ${meta.title}`}>Parked</h3>
+        <span className={`inline-flex h-4 min-w-4 items-center justify-center rounded-full px-1.5 ${TYPE.badge} leading-none ${meta.badge}`}>{tasks.length}</span>
         <span className="h-px flex-1 bg-border/60" aria-hidden />
       </div>
       {dragging ? <DropHint over={over} icon="Pause" label="Drop to park" /> : null}
@@ -394,8 +395,8 @@ function BoardColumnView({ column, title, tasks, renderCard, dragging, drop, onS
       <header className="flex h-8 shrink-0 items-center gap-2 border-b border-border/60 pl-2.5 pr-1.5 pt-[2px]">
         {tabs ?? (
           <>
-            <h2 className={`truncate text-[11px] font-bold uppercase leading-none tracking-[0.12em] ${meta.title}`}>{title.toUpperCase()}</h2>
-            <span className={`inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full px-1.5 text-[10px] font-semibold leading-none tabular-nums ${meta.badge}`}>{tasks.length}</span>
+            <h2 className={`truncate ${TYPE.heading} leading-none ${meta.title}`}>{title.toUpperCase()}</h2>
+            <span className={`inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full px-1.5 ${TYPE.badge} leading-none ${meta.badge}`}>{tasks.length}</span>
           </>
         )}
         {headerControl}
@@ -415,7 +416,7 @@ function BoardColumnView({ column, title, tasks, renderCard, dragging, drop, onS
               <button
                 type="button"
                 onClick={onStartAdding}
-                className="flex w-full shrink-0 items-center justify-center gap-1.5 rounded-md border border-dashed border-foreground/15 px-3 py-2.5 text-[11px] text-muted-foreground/90 transition-colors hover:border-sky-500/50 hover:bg-sky-500/5 hover:text-[light-dark(var(--color-sky-700),var(--color-sky-500))] focus-visible:border-sky-500/60 focus-visible:text-[light-dark(var(--color-sky-700),var(--color-sky-500))] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/20"
+                className={`flex w-full shrink-0 items-center justify-center gap-1.5 rounded-md border border-dashed border-foreground/15 px-3 py-2.5 ${TYPE.meta} text-muted-foreground/90 transition-colors hover:border-sky-500/50 hover:bg-sky-500/5 hover:text-[light-dark(var(--color-sky-700),var(--color-sky-500))] focus-visible:border-sky-500/60 focus-visible:text-[light-dark(var(--color-sky-700),var(--color-sky-500))] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/20`}
               >
                 <Icon name="Plus" className="size-3.5" aria-hidden />
                 New thread
@@ -614,7 +615,7 @@ export function BoardView({ api, reviews, work }: { api: BoardApi; reviews: Revi
   return (
     <div className="flex h-full min-h-0 flex-col">
       {error ? (
-        <div role="alert" className="flex shrink-0 items-center gap-2 border-b border-destructive/30 bg-destructive/10 px-3 py-1.5 text-xs leading-snug text-destructive">
+        <div role="alert" className={`flex shrink-0 items-center gap-2 border-b border-destructive/30 bg-destructive/10 px-3 py-1.5 ${TYPE.body} leading-snug text-destructive`}>
           <Icon name="AlertCircle" className="size-4 shrink-0" aria-hidden />
           <span className="min-w-0 flex-1 truncate" title={error}>{error}</span>
         </div>
@@ -628,7 +629,7 @@ export function BoardView({ api, reviews, work }: { api: BoardApi; reviews: Revi
         </div>
       ) : error ? null : (
         // Before the first board arrives; if reads fail, only the error above shows while they retry.
-        <div role="status" aria-live="polite" className="flex flex-1 items-center justify-center gap-2.5 text-xs font-medium text-muted-foreground">
+        <div role="status" aria-live="polite" className={`flex flex-1 items-center justify-center gap-2.5 ${TYPE.body} font-medium text-muted-foreground`}>
           <span className="inline-flex size-4 animate-spin rounded-full border-2 border-muted-foreground/20 border-t-muted-foreground/80" aria-hidden />
           Loading board…
         </div>

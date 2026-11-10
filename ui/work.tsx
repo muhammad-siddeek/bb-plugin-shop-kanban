@@ -2,7 +2,19 @@ import { useEffect, useState } from "react";
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
 import { ACCENT_BADGE, ACCENT_TEXT, CARD_EDGE, CARD_SURFACE, formatShortAge, type WorkItem, type WorkList, type WorkMark, type WorkState } from "./model";
 import type { WorkApi } from "./hooks";
-import { EMPTY_NOTE, ForgeLink, GroupHeader, MARK_FRAME, ROW_ACTION, RowActions, ShowMore, listProblems, useBbLinks, useRowError } from "./primitives";
+import {
+  EMPTY_NOTE,
+  ForgeLink,
+  GroupHeader,
+  listProblems,
+  MARK_FRAME,
+  ROW_ACTION,
+  RowActions,
+  ShowMore,
+  TYPE,
+  useBbLinks,
+  useRowError,
+} from "./primitives";
 
 // Work lists in the Queue column's tabs, drawn like the review cards: Open and Shipped in Out, Assigned in
 // In. The title opens a new-thread draft that takes the item further (land it, measure and demo it, or work
@@ -86,12 +98,12 @@ function WorkRow({ item, now, onMark }: {
             type="button"
             onClick={() => links.compose(draftPrompt(item))}
             title={`${item.title}\n\nOpen a draft thread: ${draftPrompt(item)}`}
-            className="flex h-[18px] w-full min-w-0 items-center rounded-sm text-left text-[13px] font-medium leading-[18px] text-foreground decoration-muted-foreground/40 underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+            className={`flex h-[18px] w-full min-w-0 items-center rounded-sm text-left ${TYPE.title} font-semibold leading-[18px] text-foreground decoration-muted-foreground/40 underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60`}
           >
             <span className="min-w-0 truncate">{item.title}</span>
           </button>
           <div className="mt-0.5 flex h-5 items-center gap-0.5 pointer-coarse:h-7">
-            <span className="mr-1 min-w-0 flex-1 truncate text-[10.5px] tabular-nums text-muted-foreground/80" title={metaHint}>
+            <span className={`mr-1 min-w-0 flex-1 truncate ${TYPE.meta} tabular-nums text-muted-foreground/80`} title={metaHint}>
               {Number.isFinite(at) ? `${item.list === "shipped" ? "merged " : ""}${formatShortAge(at, now)} · ` : ""}
               {item.repo.split("/").pop()}#{item.number}
               {item.draft ? " · draft" : ""}
@@ -106,7 +118,7 @@ function WorkRow({ item, now, onMark }: {
                       aria-pressed={on}
                       title={on ? `${followUp.hint}; click to undo` : `Mark: ${followUp.hint.toLowerCase()}`}
                       onClick={() => void attempt(() => onMark(item, followUp.mark, !on))}
-                      className={`${ROW_ACTION} gap-0.5 px-1 text-[10.5px] font-medium ${on ? ACCENT_BADGE.emerald : "hover:bg-accent hover:text-foreground"}`}
+                      className={`${ROW_ACTION} gap-0.5 px-1 ${TYPE.meta} font-medium ${on ? ACCENT_BADGE.emerald : "hover:bg-accent hover:text-foreground"}`}
                     >
                       {on ? <Icon name="Check" className="size-3" aria-hidden /> : null}
                       {followUp.label}

@@ -2,6 +2,30 @@ import { useState, type ReactNode } from "react";
 import { experimental_Icon as Icon, useBbContext, useBbNavigate } from "@get-bb/plugin-sdk/app";
 import { ACCENT_TEXT, errorMessage } from "./model";
 
+/**
+ * The board's type scale. Every text size, and the weight and tracking of headings, badges and chips, comes from here so
+ * cards, rows, popovers and the title bar read as one family. Weights for emphasis (a title's semibold, an action's
+ * medium) stay at the call site.
+ */
+export const TYPE = {
+  /** Card, row and search result titles; the composer's text; a popover's headline figure. */
+  title: "text-[13px]",
+  /** Card summaries, inputs, buttons, banners and panel copy. */
+  body: "text-[12px]",
+  /** Secondary text: row meta, times and costs, empty notes, hints, tooltips and popover lists. */
+  meta: "text-[11px]",
+  /** Column titles and the Queue column's tabs. */
+  heading: "text-[11px] font-bold uppercase tracking-[0.1em]",
+  /** Section headings inside a column or popover, and the title bar's status counts. */
+  label: "text-[10px] font-semibold uppercase tracking-[0.1em]",
+  /** Counts and small pills. */
+  badge: "text-[10px] font-semibold tabular-nums",
+  /** Small toggles and their notes, such as Me | Team. */
+  control: "text-[10px] font-medium",
+  /** Category and risk chips in front of a title. */
+  chip: "text-[9px] font-semibold uppercase tracking-[0.06em]",
+} as const;
+
 // Every card's marks share one 16px frame: they line up with the 18px title line (mt-px centers them), and pull
 // request, issue and thread cards line up in the column.
 export const MARK_FRAME = "mt-px inline-flex size-4 shrink-0 items-center justify-center";
@@ -11,7 +35,7 @@ export const ROW_ACTION =
 export const ROW_ICON_ACTION = `${ROW_ACTION} w-5 pointer-coarse:w-7`;
 export const FORGE_NAME = { delta: "Delta", github: "GitHub" } as const;
 /** A list that has nothing to show, or nothing yet. */
-export const EMPTY_NOTE = "rounded-md border border-dashed border-foreground/15 px-3 py-2 text-center text-[11px] text-muted-foreground/90";
+export const EMPTY_NOTE = `rounded-md border border-dashed border-foreground/15 px-3 py-2 text-center ${TYPE.meta} text-muted-foreground/90`;
 
 /** bb's composer and links: a new-thread draft in the open thread's project, and URLs (a new tab when bb can't). */
 export function useBbLinks() {
@@ -42,7 +66,7 @@ export function useRowError() {
     }
   };
   const view = error ? (
-    <p role="alert" className={`mb-0.5 line-clamp-2 text-[10.5px] leading-[14px] ${ACCENT_TEXT.rose}`} title={error}>
+    <p role="alert" className={`mb-0.5 line-clamp-2 ${TYPE.meta} leading-[14px] ${ACCENT_TEXT.rose}`} title={error}>
       {error}
     </p>
   ) : null;
@@ -65,7 +89,7 @@ export function ForgeLink({ forge, onClick }: { forge: keyof typeof FORGE_NAME; 
       type="button"
       onClick={onClick}
       title={`Open in ${FORGE_NAME[forge]}`}
-      className={`${ROW_ACTION} gap-0.5 px-1 text-[10.5px] font-medium hover:bg-accent hover:text-foreground`}
+      className={`${ROW_ACTION} gap-0.5 px-1 ${TYPE.meta} font-medium hover:bg-accent hover:text-foreground`}
     >
       {FORGE_NAME[forge]}
       <Icon name="ExternalLink" className="size-3" aria-hidden />
@@ -91,10 +115,10 @@ export function GroupHeader({ title, count, hint, refreshing, problems, children
 }) {
   return (
     <div className="flex h-6 items-center gap-1.5 px-1 pointer-coarse:h-7">
-      <h3 title={hint} className="flex min-w-0 items-center gap-1 text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">
+      <h3 title={hint} className={`flex min-w-0 items-center gap-1 ${TYPE.label} text-muted-foreground`}>
         <span className="truncate">{title}</span>
         {count !== null ? (
-          <span className="ml-0.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-muted px-1.5 text-[10px] font-semibold normal-case leading-none tracking-normal tabular-nums">
+          <span className={`ml-0.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-muted px-1.5 ${TYPE.badge} normal-case leading-none tracking-normal`}>
             {count}
           </span>
         ) : null}
@@ -140,7 +164,7 @@ export function ShowMore({ total, max, all, onToggle }: { total: number; max: nu
     <button
       type="button"
       onClick={onToggle}
-      className="w-full rounded-md py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 pointer-coarse:py-2.5"
+      className={`w-full rounded-md py-0.5 ${TYPE.meta} text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 pointer-coarse:py-2.5`}
     >
       {all ? "Show fewer" : `Show ${total - max} more`}
     </button>

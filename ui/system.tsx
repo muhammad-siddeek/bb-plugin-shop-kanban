@@ -4,6 +4,7 @@ import { useRpc } from "@get-bb/plugin-sdk/app";
 import type { rpcContract } from "../server/schema";
 import { usePoll } from "./hooks";
 import { ACCENT_TEXT, type AiUsage, type SystemProcesses, type SystemStats } from "./model";
+import { TYPE } from "./primitives";
 
 const STATS_POLL_MS = 2_000;
 const PROCESSES_POLL_MS = 3_000;
@@ -255,7 +256,7 @@ function StripChip({ glyph, label, level, dim = false }: { glyph: ReactNode; lab
   return (
     <span
       aria-hidden
-      className={`inline-flex h-5 shrink-0 items-center gap-1 rounded px-1 text-[11px] font-medium leading-none tabular-nums transition-colors duration-300 ${
+      className={`inline-flex h-5 shrink-0 items-center gap-1 rounded px-1 ${TYPE.meta} font-medium leading-none tabular-nums transition-colors duration-300 ${
         level === "ok"
           ? "text-muted-foreground group-hover:text-foreground group-aria-expanded:text-foreground"
           : `${TONE[level].text} ${level === "critical" ? "bg-rose-500/15" : "bg-amber-500/15"}`
@@ -384,7 +385,7 @@ export function SystemMonitor({ maxPanelHeight }: { maxPanelHeight: number }) {
             : null}
         </>
       ) : (
-        <span className="px-1 text-[11px] text-muted-foreground">{error ? "Resources unavailable" : "Reading…"}</span>
+        <span className={`px-1 ${TYPE.meta} text-muted-foreground`}>{error ? "Resources unavailable" : "Reading…"}</span>
       )}
       {/* Today's Shopify AI spend: neutral below AI_SPEND_WARN_USD, amber from it. */}
       {aiUsage?.todayCost != null
@@ -409,7 +410,7 @@ export function SystemMonitor({ maxPanelHeight }: { maxPanelHeight: number }) {
             ) : stats && assessment ? (
               <MetricPanel metric={open} stats={stats} assessment={assessment} error={error} />
             ) : (
-              <p className="px-3.5 py-3 text-[12px] text-muted-foreground">{error ?? "Reading this machine's resources…"}</p>
+              <p className={`px-3.5 py-3 ${TYPE.body} text-muted-foreground`}>{error ?? "Reading this machine's resources…"}</p>
             )}
           </div>
         </div>
@@ -430,12 +431,12 @@ function Section({ label, glyph: SectionGlyph, value, level, bar, children }: {
   return (
     <section className="px-3.5 py-2.5">
       <div className="mb-1.5 flex items-baseline justify-between gap-3">
-        <h4 className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">
+        <h4 className={`flex items-center gap-1.5 ${TYPE.label} text-muted-foreground`}>
           <SectionGlyph className="size-3 text-muted-foreground" />
           {label}
           {level !== "ok" ? <span aria-hidden className={`size-1.5 rounded-full ${VERDICT[level].dot}`} /> : null}
         </h4>
-        <span className={`text-[12.5px] font-semibold tabular-nums ${level === "ok" ? "text-foreground" : VERDICT[level].text}`}>{value}</span>
+        <span className={`${TYPE.title} font-semibold tabular-nums ${level === "ok" ? "text-foreground" : VERDICT[level].text}`}>{value}</span>
       </div>
       {bar !== null ? <Bar value={bar} tint={TONE[level].bg} /> : null}
       {children}
@@ -444,7 +445,7 @@ function Section({ label, glyph: SectionGlyph, value, level, bar, children }: {
 }
 
 function Detail({ children }: { children: ReactNode }) {
-  return <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground tabular-nums">{children}</p>;
+  return <p className={`mt-1.5 ${TYPE.meta} leading-snug text-muted-foreground tabular-nums`}>{children}</p>;
 }
 
 const PRESSURE_LABEL = { normal: "Normal", warn: "Elevated", critical: "Critical" } as const;
@@ -524,12 +525,12 @@ function MetricPanel({ metric, stats, assessment, error }: { metric: MetricKey; 
       {advice.length > 0 || error ? (
         <ul className="space-y-1 px-3.5 pb-2.5">
           {advice.map((item) => (
-            <li key={item.text} className="flex gap-2 text-[11.5px] leading-snug">
+            <li key={item.text} className={`flex gap-2 ${TYPE.meta} leading-snug`}>
               <span aria-hidden className={`mt-[5px] size-1.5 shrink-0 rounded-full ${VERDICT[item.level].dot}`} />
               <span className="text-foreground">{item.text}</span>
             </li>
           ))}
-          {error ? <li className="text-[11px] text-destructive">Last update failed: {error}</li> : null}
+          {error ? <li className={`${TYPE.meta} text-destructive`}>Last update failed: {error}</li> : null}
         </ul>
       ) : null}
 
@@ -556,7 +557,7 @@ function AiUsageSection({ usage }: { usage: AiUsage }) {
       {usage.topModels.length > 0 ? (
         <ul className="mt-2 space-y-0.5">
           {usage.topModels.map((model) => (
-            <li key={model.name} className="grid grid-cols-[minmax(0,1fr)_3.5rem_4.5rem] items-center gap-2 text-[11px]">
+            <li key={model.name} className={`grid grid-cols-[minmax(0,1fr)_3.5rem_4.5rem] items-center gap-2 ${TYPE.meta}`}>
               <span className="truncate" title={model.name}>{model.name}</span>
               <span className="text-right tabular-nums text-muted-foreground">{formatTokens(model.tokens)}</span>
               <span className="text-right tabular-nums">{formatUsd(model.cost)}</span>
@@ -598,17 +599,17 @@ function TopProcesses({ cores, sort }: { cores: number; sort: "cpu" | "memory" }
   return (
     <section className="px-3.5 py-2.5">
       <div className="mb-1.5 flex items-center justify-between gap-3">
-        <h4 className="text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">Heaviest apps</h4>
+        <h4 className={`${TYPE.label} text-muted-foreground`}>Heaviest apps</h4>
       </div>
       {rows.length > 0 ? (
         <ul className="space-y-1">
           {rows.map((row) => {
             const metric = sort === "cpu" ? row.cpu : row.memory;
             return (
-              <li key={row.name} className="grid grid-cols-[minmax(0,1fr)_4.5rem_3.75rem] items-center gap-2 text-[11.5px]">
+              <li key={row.name} className={`grid grid-cols-[minmax(0,1fr)_4.5rem_3.75rem] items-center gap-2 ${TYPE.meta}`}>
                 <span className="flex min-w-0 items-center gap-1">
                   <span className="truncate font-medium" title={row.name}>{row.name}</span>
-                  {row.count > 1 ? <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">×{row.count}</span> : null}
+                  {row.count > 1 ? <span className={`shrink-0 ${TYPE.meta} tabular-nums text-muted-foreground`}>×{row.count}</span> : null}
                 </span>
                 <Bar value={(metric / top) * 100} tint={sort === "cpu" ? "bg-blue-500/70" : "bg-red-500/70"} className="h-1" />
                 <span className="text-right tabular-nums text-muted-foreground">
@@ -619,7 +620,7 @@ function TopProcesses({ cores, sort }: { cores: number; sort: "cpu" | "memory" }
           })}
         </ul>
       ) : (
-        <p className="text-[11px] text-muted-foreground">{problem ?? "Reading processes…"}</p>
+        <p className={`${TYPE.meta} text-muted-foreground`}>{problem ?? "Reading processes…"}</p>
       )}
       <Detail>
         {sort === "cpu"

@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef, type RefObject } from "react";
 import { experimental_Icon as Icon, experimental_ProviderIcon as ProviderIcon, type PluginProvidersState } from "@get-bb/plugin-sdk/app";
 import { ACCENT_TEXT, type BoardSession } from "./model";
+import { TYPE } from "./primitives";
 
 /** An agent provider from bb's roster (`experimental_useProviders`), the same record the sidebar draws. */
 export type AgentProvider = PluginProvidersState["providers"][number];
@@ -74,7 +75,7 @@ export function SessionCost({ session }: { session: BoardSession | null }) {
   const { cost, spent } = sessionFacts(session);
   if (cost === null) return null;
   return (
-    <span aria-label={spent ?? undefined} className="inline-flex h-5 shrink-0 items-center whitespace-nowrap text-[10.5px] tabular-nums text-muted-foreground/80">
+    <span aria-label={spent ?? undefined} className={`inline-flex h-5 shrink-0 items-center whitespace-nowrap ${TYPE.meta} tabular-nums text-muted-foreground/80`}>
       {cost}
     </span>
   );
@@ -167,7 +168,7 @@ export function CardTooltip({ id, anchor, provider, session }: {
       role="tooltip"
       popover="manual"
       style={{ inset: "auto", margin: 0 }}
-      className="pointer-events-none w-max max-w-80 overflow-hidden rounded-md border border-border bg-popover px-2 pb-1.5 pt-1 text-[11px] leading-4 text-popover-foreground shadow-lg"
+      className={`pointer-events-none w-max max-w-80 overflow-hidden rounded-md border border-border bg-popover px-2 pb-1.5 pt-1 ${TYPE.meta} leading-4 text-popover-foreground shadow-lg`}
     >
       {provider || session?.model ? (
         <div className="flex min-w-0 items-center gap-1.5 whitespace-nowrap">
@@ -196,7 +197,7 @@ export function CardTooltip({ id, anchor, provider, session }: {
       {tokens ? <div className="tabular-nums">{tokens}</div> : null}
       {spent ? <div className="tabular-nums">{spent}</div> : null}
       {!tokens && !spent ? <div className="text-muted-foreground">No session details yet</div> : null}
-      {details ? <div className="truncate text-[10px] text-muted-foreground">{details}</div> : null}
+      {details ? <div className={`truncate ${TYPE.meta} text-muted-foreground`}>{details}</div> : null}
       {/* Context fill as a hairline along the bottom edge: no extra line of text. */}
       {fill !== null ? (
         <span className={`absolute bottom-0 left-0 h-[2px] ${tone?.bar ?? "bg-muted-foreground/50"}`} style={{ width: `${Math.min(fill, 1) * 100}%` }} aria-hidden />

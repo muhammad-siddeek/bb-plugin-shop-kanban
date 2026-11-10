@@ -7,13 +7,14 @@ import {
   EMPTY_NOTE,
   ForgeLink,
   GroupHeader,
+  listProblems,
   MARK_FRAME,
   ROW_ACTION,
   ROW_ICON_ACTION,
   RowActions,
   ShowMore,
   Spinner,
-  listProblems,
+  TYPE,
   useBbLinks,
   useRowError,
 } from "./primitives";
@@ -39,7 +40,7 @@ function RiskChip({ review }: { review: ReviewCard }) {
   if (review.risk) {
     const chip = RISK_CHIP[review.risk];
     return (
-      <span className={`inline-flex h-4 shrink-0 items-center rounded-[4px] px-1 text-[9px] font-semibold uppercase leading-none tracking-[0.06em] ${chip.tone}`}>
+      <span className={`inline-flex h-4 shrink-0 items-center rounded-[4px] px-1 ${TYPE.chip} leading-none ${chip.tone}`}>
         {chip.label}
       </span>
     );
@@ -115,15 +116,15 @@ function ReviewRow({ review, now, unread, actions }: { review: ReviewCard; now: 
             type="button"
             onClick={() => void attempt(() => actions.onDraft(review))}
             title={titleHint}
-            className={`flex h-[18px] w-full min-w-0 items-center gap-1.5 rounded-sm text-left text-[13px] leading-[18px] text-foreground decoration-muted-foreground/40 underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 ${
-              unread ? "font-semibold" : "font-medium"
+            className={`flex h-[18px] w-full min-w-0 items-center gap-1.5 rounded-sm text-left ${TYPE.title} leading-[18px] text-foreground decoration-muted-foreground/40 underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 ${
+              unread ? "font-bold" : "font-semibold"
             }`}
           >
             <RiskChip review={review} />
             <span className="min-w-0 truncate">{review.title}</span>
           </button>
           <div className="mt-0.5 flex h-5 items-center gap-0.5 pointer-coarse:h-7">
-            <span className="mr-1 min-w-0 flex-1 truncate text-[10.5px] tabular-nums text-muted-foreground/80" title={metaHint}>
+            <span className={`mr-1 min-w-0 flex-1 truncate ${TYPE.meta} tabular-nums text-muted-foreground/80`} title={metaHint}>
               {Number.isFinite(updated) ? `${formatShortAge(updated, now)} · ` : ""}
               {review.rereview ? <span className={`font-medium ${ACCENT_TEXT.sky}`}>re-review · </span> : null}
               {review.author} · {review.repo.split("/").pop()}#{review.number}
@@ -138,7 +139,7 @@ function ReviewRow({ review, now, unread, actions }: { review: ReviewCard; now: 
               onClick={() => (confirming ? void submit("approve", "") : setConfirming(true))}
               className={
                 confirming
-                  ? `${ROW_ACTION} bg-emerald-500 px-1.5 text-[10px] font-semibold text-white hover:bg-emerald-600`
+                  ? `${ROW_ACTION} bg-emerald-500 px-1.5 ${TYPE.meta} font-medium text-white hover:bg-emerald-600`
                   : `${ROW_ICON_ACTION} hover:bg-emerald-500/10 hover:text-[light-dark(var(--color-emerald-700),var(--color-emerald-500))]`
               }
             >
@@ -170,13 +171,13 @@ function ReviewRow({ review, now, unread, actions }: { review: ReviewCard; now: 
                 placeholder="What needs to change?"
                 aria-label="What needs to change"
                 disabled={pending !== null}
-                className="h-6 min-w-0 flex-1 rounded-md border border-border/70 bg-transparent px-1.5 text-xs text-foreground outline-none placeholder:text-muted-foreground/60 focus:border-rose-500/60 disabled:opacity-60 pointer-coarse:h-9 pointer-coarse:text-base"
+                className={`h-6 min-w-0 flex-1 rounded-md border border-border/70 bg-transparent px-1.5 ${TYPE.body} text-foreground outline-none placeholder:text-muted-foreground/60 focus:border-rose-500/60 disabled:opacity-60 pointer-coarse:h-9 pointer-coarse:text-base`}
               />
               <button
                 type="submit"
                 disabled={pending !== null || !reason.trim()}
                 title="Request changes with this reason"
-                className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md bg-rose-500 px-2 text-[11px] font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 pointer-coarse:h-9 pointer-coarse:px-3 pointer-coarse:text-sm"
+                className={`inline-flex h-6 shrink-0 items-center gap-1 rounded-md bg-rose-500 px-2 ${TYPE.body} font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 pointer-coarse:h-9 pointer-coarse:px-3 pointer-coarse:text-sm`}
               >
                 {pending === "request_changes" ? <Spinner /> : null}
                 Send
@@ -211,7 +212,7 @@ function ScopeToggle({ scopes, active, counts, unread, onSelect }: {
             aria-pressed={selected}
             title={`${SCOPE[scope].hint}${unread[scope] > 0 ? ` · ${unread[scope]} new` : ""}`}
             onClick={() => onSelect(scope)}
-            className={`relative inline-flex h-4 items-center gap-1 rounded-[5px] px-1.5 text-[10px] font-medium leading-none transition-[color,background-color,box-shadow] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 pointer-coarse:h-6 pointer-coarse:px-2.5 pointer-coarse:text-[11px] ${
+            className={`relative inline-flex h-4 items-center gap-1 rounded-[5px] px-1.5 ${TYPE.control} leading-none transition-[color,background-color,box-shadow] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 pointer-coarse:h-6 pointer-coarse:px-2.5 pointer-coarse:text-[11px] ${
               selected ? "bg-background text-foreground shadow-xs" : "text-muted-foreground hover:text-foreground"
             }`}
           >
@@ -316,7 +317,7 @@ export function ReviewGroup({ reviews, now }: { reviews: ReviewsApi; now: number
         problems={problems}
       >
         {state.scopes.length > 1 ? <ScopeToggle scopes={state.scopes} active={scope} counts={counts} unread={unread} onSelect={selectScope} /> : null}
-        {unread[scope] > 0 ? <span className={`text-[10px] font-medium ${ACCENT_TEXT.sky}`}>{unread[scope]} new</span> : null}
+        {unread[scope] > 0 ? <span className={`${TYPE.control} ${ACCENT_TEXT.sky}`}>{unread[scope]} new</span> : null}
       </GroupHeader>
       {scoped.length === 0 ? (
         <p className={EMPTY_NOTE}>{loading ? "Reading pull requests…" : SCOPE[scope].empty}</p>

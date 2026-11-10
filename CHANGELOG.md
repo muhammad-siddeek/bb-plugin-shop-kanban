@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- One type scale across the board, its popovers and the title bar: titles 13px,
+  body text 12px, secondary text 11px, section labels and badges 10px, chips
+  9px. Eleven sizes (9 to 13px in half-pixel steps, plus 12px written two ways)
+  become five. Review, pull request, issue and search result titles are
+  semibold like card titles (bold while unread), times and costs grow from
+  10.5px to 11px, and headings share one letter spacing.
+
 ## 0.16.0
 
 - Done cards swap the pause button, which did nothing there, for a "Mark as unread"
