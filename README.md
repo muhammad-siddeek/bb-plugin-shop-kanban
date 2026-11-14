@@ -101,8 +101,10 @@ the default is no limit, and the choice is kept across reloads.
   always on touch screens.
 - Clicking a thread opens it at its latest message. The New thread button at
   the top of the Queue tab, shown whether or not Queue has threads, starts a
-  new thread; its form takes the button's place and keeps what you typed
-  across reloads and crashes until you start the thread or cancel.
+  new thread with bb's own new-thread composer: provider, model and reasoning,
+  project, environment, branch and permission mode, mentions and attachments.
+  It takes the button's place and keeps its draft across closes, reloads and
+  crashes; the × in its corner or Esc closes it.
 
 ### On a phone
 

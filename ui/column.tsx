@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { DragEvent, FormEvent, KeyboardEvent, ReactElement, ReactNode } from "react";
-import { experimental_Icon as Icon, experimental_useProviders, useBbContext, useBbNavigate } from "@get-bb/plugin-sdk/app";
+import { experimental_Icon as Icon, experimental_NewThreadComposer as NewThreadComposer, experimental_useProviders, useBbContext, useBbNavigate, type NewThreadRequest } from "@get-bb/plugin-sdk/app";
 import { PLUGIN_SLUG } from "../brand";
 import { ACCENT_BADGE, CLOCK_TICK_MS, STATUS_META, THREAD_DRAG_TYPE, groupTasksByColumn, isUnread, shortNameFromPrompt, type BoardColumn, type BoardState, type BoardTask } from "./model";
 import { useNow, type BoardApi, type ReviewsApi, type WorkApi } from "./hooks";
@@ -11,7 +11,7 @@ import { WorkGroup, useWorkItems } from "./work";
 import { CARD_INSET, TYPE } from "./primitives";
 
 const SCROLL_TO_LATEST_SELECTOR = 'button[aria-label="Scroll to latest event"]';
-/** The new-thread form's text, written on every keystroke so a crash or reload doesn't lose it. */
+/** Where bb's new-thread composer keeps the board's draft, so closing the form, a reload or a crash doesn't lose it. */
 const DRAFT_KEY = `${PLUGIN_SLUG}:new-thread-draft`;
 /** The Queue column's open tab, kept across reloads. */
 const QUEUE_TAB_KEY = `${PLUGIN_SLUG}:queue-tab`;
@@ -190,10 +190,6 @@ function QueueTabs({ tabs, active, onSelect }: {
   );
 }
 
-function readDraft(): string {
-  return readStored(DRAFT_KEY) ?? "";
-}
-
 /**
  * After opening a thread, jump its timeline to the newest message. bb restores the last
  * scroll position per thread, so keep nudging for a moment while it mounts and restores,
@@ -230,106 +226,59 @@ function scrollThreadToLatest(threadId: string) {
 }
 
 /**
- * `focus` is false when the form reopens on its own with a saved draft (after a reload or crash), so it
- * doesn't take focus from bb's composer.
+ * bb's own new-thread composer (prompt, provider/model/reasoning picker, project, environment, branch and
+ * permission mode), so a board thread starts exactly like one from bb's New thread page.
  */
-function AddTaskForm({ focus, onAdd, onCancel, onError }: {
-  focus: boolean;
-  onAdd: (prompt: string) => Promise<void>;
-  onCancel: () => void;
+function AddTaskForm({ defaultProjectId, onAdd, onClose, onError }: {
+  defaultProjectId: string | undefined;
+  onAdd: (request: NewThreadRequest) => Promise<void>;
+  onClose: () => void;
   onError: (cause: unknown) => void;
 }) {
-  const [prompt, setPrompt] = useState(readDraft);
-  const [pending, setPending] = useState(false);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-
-  // Caret after a restored draft, ready to keep typing.
-  useLayoutEffect(() => {
-    const textarea = textareaRef.current;
-    if (!focus || !textarea) return;
-    textarea.focus();
-    textarea.setSelectionRange(textarea.value.length, textarea.value.length);
-  }, [focus]);
-
-  const edit = (text: string) => {
-    setPrompt(text);
-    writeStored(DRAFT_KEY, text);
-  };
-  // Cancel means discard; only an open form keeps a draft.
-  const cancel = () => {
-    writeStored(DRAFT_KEY, "");
-    onCancel();
-  };
-  const submit = async (event?: FormEvent<HTMLFormElement>) => {
-    event?.preventDefault();
-    const next = prompt.trim();
-    if (!next || pending) return;
-    setPending(true);
+  const [focusRequest] = useState(Date.now);
+  const submit = async (request: NewThreadRequest) => {
     try {
-      await onAdd(next);
-      cancel();
+      await onAdd(request);
     } catch (cause) {
       onError(cause);
-    } finally {
-      setPending(false);
+      // Rethrown so the composer keeps the draft.
+      throw cause;
     }
+    onClose();
   };
-
-  const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.nativeEvent.isComposing) return;
-    if (event.key === "Enter" && !event.shiftKey) {
-      event.preventDefault();
-      void submit();
-    } else if (event.key === "Escape") {
-      event.preventDefault();
-      cancel();
-    }
-  };
-
   return (
-    <form
-      onSubmit={submit}
-      aria-busy={pending}
-      className="shrink-0 rounded-md border border-sky-500/50 bg-card px-2 py-1.5 shadow-sm ring-1 ring-sky-500/10 transition-[box-shadow,border-color] focus-within:border-sky-500/60 focus-within:ring-2 focus-within:ring-sky-500/20"
+    <div
+      className="relative shrink-0 rounded-md border border-sky-500/50 bg-card shadow-sm ring-1 ring-sky-500/10"
+      // Capture phase: bb's composer editor handles Escape itself and the key never bubbles up here. A key from a
+      // portaled menu (outside this box), or while one of the composer's own menus is open, stays with that menu.
+      onKeyDownCapture={(event) => {
+        if (event.key !== "Escape" || event.nativeEvent.isComposing) return;
+        const box = event.currentTarget;
+        if (!(event.target instanceof Node) || !box.contains(event.target) || box.querySelector('[aria-expanded="true"]')) return;
+        event.preventDefault();
+        event.stopPropagation();
+        onClose();
+      }}
     >
-      <textarea
-        ref={textareaRef}
-        value={prompt}
-        onChange={(event) => edit(event.target.value)}
-        onKeyDown={handleKeyDown}
+      <NewThreadComposer
+        layout="document"
+        draftKey={DRAFT_KEY}
         placeholder="What should the new thread do?"
-        disabled={pending}
-        rows={3}
-        className={`block min-h-16 w-full resize-none bg-transparent py-0.5 ${TYPE.title} leading-snug text-foreground outline-none placeholder:text-muted-foreground/60 disabled:cursor-wait disabled:opacity-60 pointer-coarse:text-base`}
+        focusRequest={focusRequest}
+        {...(defaultProjectId ? { defaultProjectId } : {})}
+        onSubmit={submit}
       />
-      <div className="mt-1.5 flex items-center gap-1.5 border-t border-border/50 pt-1.5">
-        <span className={`flex min-w-0 items-center gap-1 truncate ${TYPE.meta} text-muted-foreground/80 pointer-coarse:hidden`} title="Enter to start · Shift+Enter for a new line · Esc to cancel">
-          <kbd className="rounded border border-border/70 bg-muted/60 px-1 font-sans text-[10px] leading-[14px] text-muted-foreground">↵</kbd>
-          <span>start</span>
-          <kbd className="ml-1 rounded border border-border/70 bg-muted/60 px-1 font-sans text-[10px] leading-[14px] text-muted-foreground">esc</kbd>
-          <span>cancel</span>
-        </span>
-        <button
-          type="button"
-          onClick={cancel}
-          className={`ml-auto h-6 shrink-0 whitespace-nowrap rounded-md px-2 ${TYPE.body} text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:h-9 pointer-coarse:px-3 pointer-coarse:text-sm`}
-        >
-          Cancel
-        </button>
-        <button
-          type="submit"
-          disabled={pending || !prompt.trim()}
-          className={`inline-flex h-6 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md bg-primary px-2.5 ${TYPE.body} font-medium text-primary-foreground shadow-xs transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-card disabled:cursor-not-allowed disabled:opacity-50 pointer-coarse:h-9 pointer-coarse:px-3.5 pointer-coarse:text-sm`}
-        >
-          {pending ? (
-            <>
-              <span className="inline-flex size-2.5 animate-spin rounded-full border-[1.5px] border-primary-foreground/30 border-t-primary-foreground" aria-hidden />
-              Starting…
-            </>
-          ) : "Start thread"}
-        </button>
-      </div>
-    </form>
+      {/* Floats inside the box's top-right corner, over the composer. */}
+      <button
+        type="button"
+        onClick={onClose}
+        aria-label="Close"
+        title="Close (Esc)"
+        className="absolute right-1 top-1 z-10 inline-flex size-5 items-center justify-center rounded-full border border-border bg-card text-muted-foreground shadow-sm transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:size-7"
+      >
+        <Icon name="X" className="size-3 pointer-coarse:size-4" aria-hidden />
+      </button>
+    </div>
   );
 }
 
@@ -454,8 +403,7 @@ export function BoardView({ api, reviews, work }: { api: BoardApi; reviews: Revi
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const draggingStartable = board?.tasks.some((task) => task.threadId === draggingId && task.startable) ?? false;
   const now = useNow(CLOCK_TICK_MS);
-  // A saved draft means the form was open with text when the app last closed: reopen it, without focus.
-  const [adding, setAdding] = useState<"closed" | "restored" | "opened">(() => (readDraft() ? "restored" : "closed"));
+  const [adding, setAdding] = useState(false);
 
   const archiveTask = (threadId: string) => {
     rpc.call("board_remove_task", { threadId }).then(refetch, report);
@@ -514,12 +462,13 @@ export function BoardView({ api, reviews, work }: { api: BoardApi; reviews: Revi
     });
   };
 
-  const addTask = async (prompt: string) => {
-    // With no thread open there is no project: leave the key out (the server picks one); an undefined value isn't JSON.
+  const addTask = async (request: NewThreadRequest) => {
+    const prompt = request.input.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n").trim();
     await rpc.call("board_spawn_task", {
-      shortName: shortNameFromPrompt(prompt),
-      prompt,
-      ...(context.projectId ? { projectId: context.projectId } : {}),
+      shortName: shortNameFromPrompt(prompt || "New thread"),
+      prompt: prompt || "New thread",
+      projectId: request.projectId,
+      composer: { ...request },
     });
     refetch();
   };
@@ -592,7 +541,7 @@ export function BoardView({ api, reviews, work }: { api: BoardApi; reviews: Revi
       renderCard={renderCard}
       dragging={draggingId !== null}
       drop={column.id === "wip" && draggingStartable ? { label: "Drop to start now", icon: "Play", onDrop: startTask } : null}
-      onStartAdding={column.id === "queue" ? () => setAdding("opened") : null}
+      onStartAdding={column.id === "queue" ? () => setAdding(true) : null}
       headerControl={
         column.id === "wip" && board ? (
           <WipLimitControl
@@ -607,8 +556,8 @@ export function BoardView({ api, reviews, work }: { api: BoardApi; reviews: Revi
       body={column.id === "queue" ? queueBody : null}
       parked={column.id === "queue" ? { tasks: grouped.get("parked") ?? [], onDrop: dropPark } : null}
       addForm={
-        column.id === "queue" && adding !== "closed" ? (
-          <AddTaskForm focus={adding === "opened"} onAdd={addTask} onCancel={() => setAdding("closed")} onError={report} />
+        column.id === "queue" && adding ? (
+          <AddTaskForm defaultProjectId={context.projectId ?? undefined} onAdd={addTask} onClose={() => setAdding(false)} onError={report} />
         ) : null
       }
     />

@@ -361,6 +361,11 @@ export const rpcContract = {
       prompt: z.string().trim().min(1).max(12_000),
       projectId: z.string().optional(),
       parentThreadId: z.string().optional(),
+      /**
+       * bb's new-thread composer selections (`NewThreadRequest`: provider, model, reasoning, permission mode,
+       * environment, rich input), forwarded to `threads.spawn` unchanged; bb validates them there.
+       */
+      composer: z.looseObject({ projectId: z.string(), input: z.array(z.unknown()).min(1) }).optional(),
     }),
     output: boardTaskSchema,
   },

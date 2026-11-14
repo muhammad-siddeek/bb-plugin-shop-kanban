@@ -28,6 +28,8 @@ import { createWorkLists } from "./server/work";
 import { createSystemMonitor } from "./server/system";
 import { createAiUsage } from "./server/ai-usage";
 
+type ThreadSpawnArgs = Parameters<BbPluginApi["sdk"]["threads"]["spawn"]>[0];
+
 export { rpcContract } from "./server/schema";
 
 const BOARD_CHANGED = "board-changed";
@@ -314,7 +316,7 @@ export default async function plugin(bb: BbPluginApi) {
     const shortName = categorizedTitle(input.shortName, input.prompt);
     const parent = await reader.titleChainForParent(input.parentThreadId);
     const titleChain = parent.titleChain ? `${parent.titleChain} > ${shortName}` : shortName;
-    const projectId = input.projectId ?? parent.projectId ?? (await defaultProjectId());
+    const projectId = input.composer ? String(input.composer.projectId) : input.projectId ?? parent.projectId ?? (await defaultProjectId());
     const now = nowIso();
     const common = {
       shortName,
@@ -323,13 +325,13 @@ export default async function plugin(bb: BbPluginApi) {
       updatedAt: now,
     } satisfies Partial<StoredTask>;
     const thread = await bb.sdk.threads.spawn({
-      projectId,
-      environment: { type: "project-default" },
-      prompt: input.prompt.trim(),
+      ...(input.composer
+        ? (input.composer as Omit<ThreadSpawnArgs, "title" | "parentThreadId" | "pluginMetadata">)
+        : { projectId, environment: { type: "project-default" as const }, prompt: input.prompt.trim() }),
       title: titleChain,
       ...(input.parentThreadId ? { parentThreadId: input.parentThreadId } : {}),
       pluginMetadata: { boardTask: true, ...common },
-    });
+    } as ThreadSpawnArgs);
     const task: StoredTask = {
       threadId: thread.id,
       ...common,

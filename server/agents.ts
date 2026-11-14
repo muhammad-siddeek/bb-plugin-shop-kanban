@@ -4,7 +4,14 @@ import { PLUGIN_SLUG, TOOL_PREFIX } from "../brand";
 import type { BoardTask } from "./schema";
 import { SHORT_NAME_MAX, errorMessage } from "./text";
 
-export type TaskSpawn = { shortName: string; prompt: string; projectId?: string; parentThreadId?: string };
+export type TaskSpawn = {
+  shortName: string;
+  prompt: string;
+  projectId?: string;
+  parentThreadId?: string;
+  /** bb's new-thread composer request, spread into `threads.spawn` in place of the plain prompt and default environment. */
+  composer?: Record<string, unknown>;
+};
 
 type BoardApi = {
   listBoard(): Promise<{ columns: unknown[]; tasks: BoardTask[] }>;

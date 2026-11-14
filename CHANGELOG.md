@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- The New thread form is bb's own new-thread composer: pick the provider,
+  model and reasoning, project, environment and branch, and permission mode,
+  with mentions and attachments, exactly as on bb's New thread page. A small ×
+  in its corner or Esc closes it and keeps the draft; the form no longer
+  reopens on its own after a reload.
+
 ## 0.17.0
 
 - Resource chips warn sooner: memory turns amber at 70% and red at 80% (was 80
