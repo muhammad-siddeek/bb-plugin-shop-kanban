@@ -113,32 +113,20 @@ function parseTime(value: string | number | null): number | null {
   return Number.isFinite(ms) ? ms : null;
 }
 
-/** Most recent activity on a card: board update, thread activity, or user input. */
+/**
+ * The time a card shows: a Done card's completion (so the age matches its place in the column), otherwise its most
+ * recent activity: board update, thread activity, or user input.
+ */
 export function taskActivityTime(task: BoardTask): number | null {
+  const completed = task.status === "done" ? parseTime(task.completedAt) : null;
+  if (completed !== null) return completed;
   const candidates = [task.updatedAt, task.thread?.updatedAt ?? null, task.lastUserInputAt, task.createdAt]
     .map(parseTime)
     .filter((value): value is number => value !== null);
   return candidates.length ? Math.max(...candidates) : null;
 }
 
-function plural(count: number, unit: string): string {
-  return `${count} ${unit}${count === 1 ? "" : "s"} ago`;
-}
-
-export function formatRelativeTime(ms: number, now: number): string {
-  const seconds = Math.max(0, Math.floor((now - ms) / 1000));
-  if (seconds < 45) return "just now";
-  const minutes = Math.max(1, Math.floor(seconds / 60));
-  if (minutes < 60) return plural(minutes, "min");
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return plural(hours, "hr");
-  const days = Math.floor(hours / 24);
-  if (days < 7) return plural(days, "day");
-  if (days < 30) return plural(Math.floor(days / 7), "week");
-  return new Date(ms).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
-}
-
-/** `formatRelativeTime` in a few characters ("now", "5m", "3h", "2d", "3w"), for one-line review cards. */
+/** An age in a few characters ("now", "5m", "3h", "2d", "3w", then "Oct 1"): every card, row and result uses it. */
 export function formatShortAge(ms: number, now: number): string {
   const minutes = Math.floor(Math.max(0, now - ms) / 60_000);
   if (minutes < 1) return "now";
@@ -151,19 +139,40 @@ export function formatShortAge(ms: number, now: number): string {
   return new Date(ms).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
-export function errorMessage(cause: unknown): string {
-  return cause instanceof Error ? cause.message : String(cause);
+/** Built once per currency and precision: every card formats its cost on each render. */
+const moneyFormats = new Map<string, Intl.NumberFormat>();
+
+/**
+ * Money, one rule everywhere. `exact` (tooltips, popovers, totals someone reads closely) always has cents.
+ * Otherwise (card footers, the title bar chip) cents show only under $10, where they change the reading:
+ * "$4.30", "$53", "$418". Anything under a cent reads "<$0.01".
+ */
+export function formatMoney(amount: number, currency = "USD", exact = false): string {
+  const tiny = amount > 0 && amount < 0.01;
+  const value = tiny ? 0.01 : amount;
+  const digits = exact || value < 10 ? 2 : 0;
+  const key = `${currency}:${digits}`;
+  let text: string;
+  try {
+    let formatter = moneyFormats.get(key);
+    if (!formatter) {
+      formatter = new Intl.NumberFormat(undefined, { style: "currency", currency, minimumFractionDigits: digits, maximumFractionDigits: digits });
+      moneyFormats.set(key, formatter);
+    }
+    text = formatter.format(value);
+  } catch {
+    text = `${value.toFixed(digits)} ${currency}`;
+  }
+  return tiny ? `<${text}` : text;
 }
 
-/** Unread unless bb says it was read, or the user just opened it from the board. */
-export function isUnread(task: BoardTask, readLocally: ReadonlySet<string>): boolean {
-  return task.unread && !readLocally.has(task.threadId);
+export function errorMessage(cause: unknown): string {
+  return cause instanceof Error ? cause.message : String(cause);
 }
 
 /** `parkedLocally`: cards just parked from the board, shown in Parked before the server's board catches up. */
 export function groupTasksByColumn(
   board: BoardState | null,
-  readLocally: ReadonlySet<string>,
   parkedLocally: ReadonlySet<string>,
 ): Map<BoardColumn, BoardTask[]> {
   const grouped = new Map<BoardColumn, BoardTask[]>(COLUMNS.map((column) => [column, []]));
@@ -171,14 +180,16 @@ export function groupTasksByColumn(
     const task = parkedLocally.has(served.threadId) ? { ...served, column: "parked" as const, status: "parked" as const } : served;
     grouped.get(task.column)?.push(task);
   }
-  // Each column keeps the server's timestamp order within these groups.
-  const firstWhere = (column: BoardColumn, test: (task: BoardTask) => boolean) => {
-    const tasks = grouped.get(column) ?? [];
-    grouped.set(column, [...tasks.filter(test), ...tasks.filter((task) => !test(task))]);
-  };
-  // Working: blocked cards, which wait on the user, above working ones.
-  firstWhere("wip", (task) => task.status === "blocked");
-  // Done: unread cards first, then read ones.
-  firstWhere("done", (task) => isUnread(task, readLocally));
+  // Working: blocked cards, which wait on the user, above working ones; each group keeps the server's order.
+  const wip = grouped.get("wip") ?? [];
+  grouped.set("wip", [...wip.filter((task) => task.status === "blocked"), ...wip.filter((task) => task.status !== "blocked")]);
+  // Done: unread cards first, then read ones, each newest completion first. Completion only moves when a thread
+  // finishes another turn, so reading, relabeling or renaming a card doesn't reshuffle the column.
+  const done = grouped.get("done") ?? [];
+  const byCompletion = (a: BoardTask, b: BoardTask) => (taskActivityTime(b) ?? 0) - (taskActivityTime(a) ?? 0);
+  grouped.set("done", [
+    ...done.filter((task) => task.unread).sort(byCompletion),
+    ...done.filter((task) => !task.unread).sort(byCompletion),
+  ]);
   return grouped;
 }

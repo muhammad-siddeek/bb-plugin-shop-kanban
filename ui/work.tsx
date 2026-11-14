@@ -3,11 +3,14 @@ import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
 import { ACCENT_BADGE, ACCENT_TEXT, CARD_EDGE, CARD_SURFACE, formatShortAge, type WorkItem, type WorkList, type WorkMark, type WorkState } from "./model";
 import type { WorkApi } from "./hooks";
 import {
+  CHIP,
   EMPTY_NOTE,
   ForgeLink,
   GroupHeader,
   listProblems,
   MARK_FRAME,
+  ONE_LINE_AGE,
+  ONE_LINE_PAD,
   ROW_ACTION,
   RowActions,
   ShowMore,
@@ -16,9 +19,9 @@ import {
   useRowError,
 } from "./primitives";
 
-// Work lists in the Queue column's tabs, drawn like the review cards: Open and Shipped in Out, Assigned in
-// In. The title opens a new-thread draft that takes the item further (land it, measure and demo it, or work
-// the issue); the second line opens it on its forge, and on shipped pull requests marks it measured or demoed.
+// Work lists in the Queue column's tabs: Open and Shipped in Out (one line each), Assigned in In (two lines).
+// The title opens a new-thread draft that takes the item further (land it, measure and demo it, or work the
+// issue); the forge link opens it on its forge, and on shipped pull requests the toggles mark it measured or demoed.
 
 const SHOWN_MAX = 8;
 const LIST_META: Record<WorkList, { title: string; hint: string; empty: string; mark: string; tone: string }> = {
@@ -82,50 +85,93 @@ function WorkRow({ item, now, onMark }: {
     .filter(Boolean)
     .join(" · ");
 
+  const followUps =
+    item.list === "shipped"
+      ? FOLLOW_UPS.map((followUp) => {
+          const on = item[followUp.mark];
+          return (
+            <button
+              key={followUp.mark}
+              type="button"
+              aria-pressed={on}
+              title={on ? `${followUp.hint}; click to undo` : `Mark: ${followUp.hint.toLowerCase()}`}
+              onClick={() => void attempt(() => onMark(item, followUp.mark, !on))}
+              className={`${ROW_ACTION} gap-0.5 px-1 ${TYPE.meta} font-medium ${on ? ACCENT_BADGE.emerald : "hover:bg-accent hover:text-foreground"}`}
+            >
+              {on ? <Icon name="Check" className="size-3" aria-hidden /> : null}
+              {followUp.label}
+            </button>
+          );
+        })
+      : null;
+  const mark = (
+    <span className={MARK_FRAME} aria-label={draftMark ? "Draft pull request" : meta.hint} title={draftMark ? "Draft" : undefined}>
+      <Icon
+        name={draftMark ? "GitPullRequestDraft" : meta.mark}
+        fallback={item.kind === "issue" ? "AlertCircle" : "GitPullRequest"}
+        className={`size-3.5 ${draftMark ? "text-muted-foreground/50" : meta.tone}`}
+        aria-hidden
+      />
+    </span>
+  );
+  const titleButton = (
+    <button
+      type="button"
+      onClick={() => links.compose(draftPrompt(item))}
+      title={`${item.title}\n${metaHint}\n\nOpen a draft thread: ${draftPrompt(item)}`}
+      className={`flex h-[18px] w-full min-w-0 items-center rounded-sm text-left ${TYPE.title} font-semibold leading-[18px] text-foreground decoration-muted-foreground/40 underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60`}
+    >
+      <span className="min-w-0 truncate">{item.title}</span>
+    </button>
+  );
+
+  // Out (open and shipped pull requests): one line. The forge link and the follow-up toggles join archive on hover;
+  // a follow-up already set stays as a badge so the row says what is left.
+  if (item.list !== "assigned") {
+    const done = item.list === "shipped" ? FOLLOW_UPS.filter((followUp) => item[followUp.mark]) : [];
+    return (
+      <article className={`group relative ${CARD_SURFACE} ${CARD_EDGE} ${ONE_LINE_PAD}`}>
+        <div className="flex h-5 items-center gap-2">
+          <span className="-mt-px flex">{mark}</span>
+          <div className="min-w-0 flex-1">{titleButton}</div>
+          {done.map((followUp) => (
+            <span key={followUp.mark} className={`${CHIP} gap-0.5 ${ACCENT_BADGE.emerald}`}>
+              <Icon name="Check" className="size-2.5" aria-hidden />
+              {followUp.label}
+            </span>
+          ))}
+          {draftMark ? <span className={`shrink-0 ${TYPE.meta} text-muted-foreground/80`}>draft</span> : null}
+          {Number.isFinite(at) ? (
+            <span className={ONE_LINE_AGE} title={metaHint}>
+              {formatShortAge(at, now)}
+            </span>
+          ) : null}
+        </div>
+        {error}
+        <RowActions
+          centered
+          label={`Archive ${noun}`}
+          title={`Archive: hide this ${noun} from the list`}
+          onArchive={() => void attempt(() => onMark(item, "archived", true))}
+        >
+          {followUps}
+          <ForgeLink forge={item.forge} onClick={() => links.openUrl(item.url)} />
+        </RowActions>
+      </article>
+    );
+  }
+
   return (
     <article className={`group relative ${CARD_SURFACE} ${CARD_EDGE} px-2 pb-1 pt-1.5`}>
       <div className="flex items-start gap-2">
-        <span className={MARK_FRAME} aria-label={draftMark ? "Draft pull request" : meta.hint} title={draftMark ? "Draft" : undefined}>
-          <Icon
-            name={draftMark ? "GitPullRequestDraft" : meta.mark}
-            fallback={item.kind === "issue" ? "AlertCircle" : "GitPullRequest"}
-            className={`size-3.5 ${draftMark ? "text-muted-foreground/50" : meta.tone}`}
-            aria-hidden
-          />
-        </span>
+        {mark}
         <div className="min-w-0 flex-1">
-          <button
-            type="button"
-            onClick={() => links.compose(draftPrompt(item))}
-            title={`${item.title}\n\nOpen a draft thread: ${draftPrompt(item)}`}
-            className={`flex h-[18px] w-full min-w-0 items-center rounded-sm text-left ${TYPE.title} font-semibold leading-[18px] text-foreground decoration-muted-foreground/40 underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60`}
-          >
-            <span className="min-w-0 truncate">{item.title}</span>
-          </button>
+          {titleButton}
           <div className="-mr-[3px] mt-0.5 flex h-5 items-center gap-0.5 pointer-coarse:h-7">
             <span className={`mr-1 min-w-0 flex-1 truncate ${TYPE.meta} tabular-nums text-muted-foreground/80`} title={metaHint}>
-              {Number.isFinite(at) ? `${item.list === "shipped" ? "merged " : ""}${formatShortAge(at, now)} · ` : ""}
+              {Number.isFinite(at) ? `${formatShortAge(at, now)} · ` : ""}
               {item.repo.split("/").pop()}#{item.number}
-              {item.draft ? " · draft" : ""}
             </span>
-            {item.list === "shipped"
-              ? FOLLOW_UPS.map((followUp) => {
-                  const on = item[followUp.mark];
-                  return (
-                    <button
-                      key={followUp.mark}
-                      type="button"
-                      aria-pressed={on}
-                      title={on ? `${followUp.hint}; click to undo` : `Mark: ${followUp.hint.toLowerCase()}`}
-                      onClick={() => void attempt(() => onMark(item, followUp.mark, !on))}
-                      className={`${ROW_ACTION} gap-0.5 px-1 ${TYPE.meta} font-medium ${on ? ACCENT_BADGE.emerald : "hover:bg-accent hover:text-foreground"}`}
-                    >
-                      {on ? <Icon name="Check" className="size-3" aria-hidden /> : null}
-                      {followUp.label}
-                    </button>
-                  );
-                })
-              : null}
             <ForgeLink forge={item.forge} onClick={() => links.openUrl(item.url)} />
           </div>
           {error}

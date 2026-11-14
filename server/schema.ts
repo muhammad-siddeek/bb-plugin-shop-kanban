@@ -94,6 +94,8 @@ const boardTaskSchema = z.object({
   createdAt: z.string(),
   updatedAt: z.string(),
   lastUserInputAt: z.string().nullable(),
+  /** When the thread last finished a turn (bb's latest attention time); null before its first. Done sorts by it. */
+  completedAt: z.string().nullable(),
   missingThread: z.boolean(),
   thread: threadSummarySchema.nullable(),
   session: boardSessionSchema.nullable(),

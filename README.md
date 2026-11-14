@@ -15,15 +15,20 @@ thread (see Parked) and starting a waiting one (see Working limit).
   tabs, kept across reloads: **Queue** (these threads), **In** (pull requests
   to review and issues assigned to you; see Review queue and Work lists) and
   **Out** (your open and recently merged pull requests). Each tab shows its
-  count, blue when it has new cards. A tab whose settings are all empty goes
-  away.
+  count (none at zero), blue when it has new cards; In's is red, since it is
+  work waiting on you. A tab whose settings are all empty goes away.
 - **Working**: the thread or one of its descendants has a turn in progress,
   background work included. Blocked threads sit at the top of Working as red cards: the
   thread is idle and needs you (a pending interaction, an error, or a last
-  reply that asks a question). The title bar counts them.
-- **Done**: the thread is idle and its last reply reports completion. Unread
-  Done threads come first with a solid check; opening a thread marks it read.
-- **Parked** (grey): a section under the Queue tab, below the queued threads. Idle threads you parked to come back to later, such as a
+  reply that asks a question). The title bar, and the pill when the board is
+  hidden, show one dot per thread here: red for blocked, amber for working.
+- **Done**: the thread is idle and its last reply reports completion. Cards
+  are one line (status, tag, title, age). Unread ones come first with a solid
+  check, then a **Read** section, each newest finish first; the age is when
+  the thread finished, and reading or renaming a card doesn't move it. Read
+  state and finish time are bb's own (the sidebar's unread dot), and the
+  column's count is its unread cards.
+- **Parked** (grey): a section under the Queue tab, below the queued threads, one line per card. Idle threads you parked to come back to later, such as a
   finished thread whose suggested next steps can wait. Drag an idle card onto
   Parked (it outlines and shows "Drop to park" while you drag), or hover the
   card and press the pause button; a card waiting to start has a play button
@@ -34,9 +39,10 @@ thread (see Parked) and starting a waiting one (see Working limit).
 ## Working limit
 
 The picker at the top of Working caps how many threads work at once, to keep
-a steady spend rate: Max 0 to Max 5 working, or No limit. It reads
-`3/5 working` (amber when full) and, while messages wait, `· 2 in queue`;
-the default is no limit, and the choice is kept across reloads.
+a steady spend rate: Max 0 to Max 5 working, or No limit. It shows one amber
+dot per slot, filled as threads take them (`●●○ 2/3`), with threads over the
+limit as ringed dots past the end, and `+2 waiting` while messages wait; the
+default is no limit, and the choice is kept across reloads.
 
 - A thread holds a slot while it or a descendant has a turn in progress and
   it doesn't wait on you, so Blocked threads don't count.
@@ -64,19 +70,20 @@ the default is no limit, and the choice is kept across reloads.
 - A `[category] intent` title, e.g. `[docs site] search page`. The title is
   written back to the bb sidebar thread title unless you rename the thread
   yourself.
-- A summary of the latest exchange: two lines, three while you hover the
-  card.
+- On Queue and Working cards, a two-line summary of the latest exchange.
 - Down the card's left edge, one column: the status mark beside the title
   (an amber petal spinner while working), the icon of the harness the thread
   runs on in grey (omp, Pi, Codex, …; the same icon as the bb sidebar), and a
   pie with how full its context window is (dim grey, amber at 70%, red at
   90%). The footer has what the thread's whole tree has spent and its status
-  on the left, and the updated time on the right. Working threads refresh
-  these every 5 seconds, idle threads every minute.
+  on the left, and how long ago it was updated on the right (`5m`, `3h`,
+  `2d`). Costs show cents under $10 (`$4.30`, `$53`); the tooltip is exact.
+  Working threads refresh these every 5 seconds, idle threads every minute.
 - Resting the pointer anywhere on a card, or tabbing to it, opens a tooltip
   beside the card (never over it) with the harness session: harness, model
   and thinking level, token counts and cost, access mode, service tier and
-  model id. Threads with no session yet have none. A tap on a touch screen
+  model id; on one-line cards it starts with the summary and how the thread
+  was left. Threads with no session yet have none. A tap on a touch screen
   opens the thread.
 - The cost adds up the thread, every descendant thread (hidden and archived
   ones included) and their harness subagents; the tooltip says how many
@@ -304,12 +311,13 @@ risk chip and drafts carry no first read.
 Pull requests and issues of yours sit in the Queue column's tabs, drawn like
 review cards, newest update first:
 
-- **Open** (Out): your open pull requests, drafts marked with the draft
-  icon. The title drafts a thread that reads the review comments, CI checks
-  and merge readiness and says what is left before it can merge.
-- **Shipped** (Out): your pull requests merged within `shippedDays`.
-  Merging is as close to deployed as the forges tell, so each stays until you
-  press both **Measured** and **Demoed** on its second line, or archive it.
+- **Open** (Out): your open pull requests, one line each, drafts marked with
+  the draft icon. The title drafts a thread that reads the review comments, CI
+  checks and merge readiness and says what is left before it can merge.
+- **Shipped** (Out): your pull requests merged within `shippedDays`, one line
+  each. Merging is as close to deployed as the forges tell, so each stays
+  until you press both **Measured** and **Demoed** (on hover; one already set
+  stays as a badge), or archive it.
   The title drafts a thread that finds the metrics, dashboards or experiments
   it should move, compares them before and after it shipped, and outlines a
   short demo.
@@ -317,8 +325,9 @@ review cards, newest update first:
   title drafts a thread that summarizes the issue and proposes how to
   resolve it.
 
-The second line has the age and number, and a **Delta** or **GitHub** link
-that opens it in your browser. **Archive** (on hover, top right) hides one
+Out rows show the age at the end and, on hover, a **Delta** or **GitHub**
+link that opens it in your browser; Assigned has them on its second line with
+the number. **Archive** (on hover, top right) hides one
 for good. Marks and archives are kept in plugin storage (500 per kind). The
 searches run like review searches: through `dt` and `gh` on the connected
 persistent host, 10 seconds after the plugin loads, when a setting changes,

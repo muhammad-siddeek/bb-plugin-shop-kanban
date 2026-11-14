@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { KeyboardEvent, PointerEvent } from "react";
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
 import { PLUGIN_NAME } from "../brand";
-import { BOTTOM_BOARD_COLLAPSED_CLASS, BOTTOM_BOARD_HEIGHT_VAR, BOTTOM_BOARD_OPEN_CLASS, STATUS_META, type BoardStatus } from "./model";
+import { BOTTOM_BOARD_COLLAPSED_CLASS, BOTTOM_BOARD_HEIGHT_VAR, BOTTOM_BOARD_OPEN_CLASS, STATUS_META, type BoardTask } from "./model";
 import { useBoard, useReviews, useWork } from "./hooks";
 import { IconButton, TYPE } from "./primitives";
 import { BoardView } from "./column";
@@ -65,13 +65,23 @@ function useSidebarInset(): number {
   return inset;
 }
 
-function CountBadge({ status, count }: { status: "blocked" | "done"; count: number }) {
-  if (count === 0) return null;
+/** Past this many dots a "+N" stands for the rest, so the title bar never wraps. */
+const MAX_DOTS = 12;
+
+/** One filled dot per blocked (rose, first) or working (amber) thread; nothing while none are. */
+function StatusDots({ tasks }: { tasks: readonly BoardTask[] }) {
+  const blocked = tasks.filter((task) => task.status === "blocked").length;
+  const working = tasks.filter((task) => task.status === "wip").length;
+  const total = blocked + working;
+  if (total === 0) return null;
+  const dots: ("blocked" | "wip")[] = [...Array<"blocked">(blocked).fill("blocked"), ...Array<"wip">(working).fill("wip")].slice(0, MAX_DOTS);
+  const label = [blocked ? `${blocked} blocked` : null, working ? `${working} working` : null].filter(Boolean).join(", ");
   return (
-    // Phones keep only the count, so the crowded title bar never wraps or overlaps it.
-    <span title={`${count} ${status}`} className={`inline-flex h-5 shrink-0 items-center gap-1 whitespace-nowrap rounded px-1.5 ${TYPE.label} tabular-nums ${STATUS_META[status].badge}`}>
-      {count}
-      <span className="max-sm:sr-only">{status}</span>
+    <span role="img" aria-label={label} title={label} className="inline-flex shrink-0 items-center gap-[3px]">
+      {dots.map((status, index) => (
+        <span key={index} className={`size-2 rounded-full ${STATUS_META[status].accent}`} aria-hidden />
+      ))}
+      {total > MAX_DOTS ? <span className={`ml-0.5 ${TYPE.meta} tabular-nums text-muted-foreground`}>+{total - MAX_DOTS}</span> : null}
     </span>
   );
 }
@@ -87,7 +97,7 @@ export function BottomBoardOverlay() {
   const reviews = useReviews();
   const work = useWork();
   const { board } = api;
-  const count = (status: BoardStatus) => board?.tasks.filter((task) => task.status === status).length ?? 0;
+  const tasks = board?.tasks ?? [];
 
   const startResize = (event: PointerEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -164,8 +174,7 @@ export function BottomBoardOverlay() {
           <Icon name={PLUGIN_ICON} className="size-3.5" aria-hidden />
         </span>
         <span>{PLUGIN_NAME}</span>
-        <CountBadge status="blocked" count={count("blocked")} />
-        <CountBadge status="done" count={count("done")} />
+        <StatusDots tasks={tasks} />
         <Icon name="ChevronUp" className="size-3.5 text-muted-foreground transition-transform duration-150 group-hover:-translate-y-px group-hover:text-foreground max-sm:ml-auto max-sm:size-5" aria-hidden />
       </button>
     );
@@ -202,12 +211,7 @@ export function BottomBoardOverlay() {
           {/* Phones give the name's room to search; the icon stays. */}
           <span className={`truncate ${TYPE.body} font-semibold text-foreground max-sm:sr-only`}>{PLUGIN_NAME}</span>
         </div>
-        {board ? (
-          <span className={`hidden items-center ${TYPE.meta} tabular-nums text-muted-foreground lg:inline-flex`}>
-            {board.tasks.length} thread{board.tasks.length === 1 ? "" : "s"}
-          </span>
-        ) : null}
-        <CountBadge status="blocked" count={count("blocked")} />
+        <StatusDots tasks={tasks} />
         <div className="ml-1 min-w-0 max-lg:ml-0 max-lg:flex-1">
           {/* Header (40px, 48px on touch) plus a little breathing room below the list. */}
           <ThreadSearch maxListHeight={panelHeight - 56} />

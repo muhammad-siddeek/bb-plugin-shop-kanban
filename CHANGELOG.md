@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased
+
+- Done and Parked cards are one line: status, tag, title and age. Their
+  summary and how the thread was left lead the card's tooltip.
+- Done sorts unread cards first, then a **Read** section, each newest finish
+  first, and stops reshuffling when a card is read or renamed. Read state and
+  finish time come from bb's own live thread view (the sidebar's unread
+  dot), and the column's count is its unread cards.
+- Out's pull requests are one line; the forge link and the Measured/Demoed
+  toggles show on hover, and a follow-up already set stays as a badge.
+- The title bar and the hidden board's pill show one dot per working (amber)
+  or blocked (red) thread instead of the thread, blocked and done counts.
+- The working limit is amber slot dots with the count (`●●○ 2/3`); Working's
+  own count is gone. In's count is red while it isn't zero; counts hide at
+  zero everywhere.
+- Queue and Working cards no longer grow a third summary line on hover.
+  One-line rows center their actions; on touch screens their age gives way
+  to the actions.
+- One age format everywhere (`5m`, `3h`, `2d`, `1w`, `Oct 1`). Costs show
+  cents only under $10 on cards and the title bar (`$4.30`, `$53`); tooltips
+  and the spend popover stay exact. Token counts round to three figures.
+- Section headers (Parked, Read, Open, Shipped, Reviews, Assigned), counts,
+  chips and dashed placeholders share one size and spacing.
+
 ## 0.18.0
 
 - The New thread form is bb's own new-thread composer: pick the provider,

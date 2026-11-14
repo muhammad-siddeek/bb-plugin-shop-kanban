@@ -4,6 +4,7 @@ import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
 import { ACCENT_BADGE, ACCENT_TEXT, CARD_EDGE, CARD_SURFACE, formatShortAge, type ReviewCard, type ReviewScope } from "./model";
 import type { ReviewVerdict, ReviewsApi } from "./hooks";
 import {
+  CHIP,
   EMPTY_NOTE,
   ForgeLink,
   GroupHeader,
@@ -40,7 +41,7 @@ function RiskChip({ review }: { review: ReviewCard }) {
   if (review.risk) {
     const chip = RISK_CHIP[review.risk];
     return (
-      <span className={`inline-flex h-4 shrink-0 items-center rounded-[4px] px-1 ${TYPE.chip} leading-none ${chip.tone}`}>
+      <span className={`${CHIP} ${chip.tone}`}>
         {chip.label}
       </span>
     );

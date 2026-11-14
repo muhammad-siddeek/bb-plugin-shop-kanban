@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, type RefObject } from "react";
 import { experimental_Icon as Icon, experimental_ProviderIcon as ProviderIcon, type PluginProvidersState } from "@get-bb/plugin-sdk/app";
-import { ACCENT_TEXT, type BoardSession } from "./model";
+import { ACCENT_TEXT, formatMoney, type BoardSession } from "./model";
 import { TYPE } from "./primitives";
 
 /** An agent provider from bb's roster (`experimental_useProviders`), the same record the sidebar draws. */
@@ -24,36 +24,21 @@ const WEDGE_CIRCUMFERENCE = Math.PI * PIE_RADIUS;
  */
 const PROVIDER_ICON = "size-3.5 shrink-0 [&>svg]:size-3.5";
 
-/** Built once per currency: every card formats its cost on each render. */
-const currencyFormats = new Map<string, Intl.NumberFormat>();
-
-function formatCost({ amount, currency }: { amount: number; currency: string }): string {
-  const tiny = amount > 0 && amount < 0.01;
-  const value = tiny ? 0.01 : amount;
-  let text: string;
-  try {
-    let formatter = currencyFormats.get(currency);
-    if (!formatter) {
-      formatter = new Intl.NumberFormat(undefined, { style: "currency", currency, minimumFractionDigits: 2, maximumFractionDigits: 2 });
-      currencyFormats.set(currency, formatter);
-    }
-    text = formatter.format(value);
-  } catch {
-    text = `${value.toFixed(2)} ${currency}`;
-  }
-  return tiny ? `<${text}` : text;
-}
-
-const TOKENS = new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 });
+/** Three significant figures: "37.8K", "194K", "1M". */
+const TOKENS = new Intl.NumberFormat(undefined, { notation: "compact", maximumSignificantDigits: 3 });
 
 /** What the footer and the card tooltip say about a session. */
 function sessionFacts(session: BoardSession | null) {
+  const currency = session?.cost?.currency;
   // Part of the spend is priced from other replies' rates when a harness saved replies without a price.
-  const estimate = session?.cost && session.costEstimated > 0 ? formatCost({ amount: session.costEstimated, currency: session.cost.currency }) : null;
-  const cost = session?.cost ? `${estimate ? "~" : ""}${formatCost(session.cost)}` : null;
+  const estimated = session?.cost && session.costEstimated > 0;
+  // The footer's figure is compact; the tooltip's sentence is exact.
+  const cost = session?.cost ? `${estimated ? "~" : ""}${formatMoney(session.cost.amount, currency)}` : null;
   // The cost covers the thread's descendant threads too; say so when more than one spent.
   const spent = session?.cost
-    ? `${cost} spent${session.costThreads > 1 ? ` across ${session.costThreads} threads` : ""}${estimate ? ` (${estimate} estimated)` : ""}`
+    ? `${estimated ? "~" : ""}${formatMoney(session.cost.amount, currency, true)} spent${session.costThreads > 1 ? ` across ${session.costThreads} threads` : ""}${
+        estimated ? ` (${formatMoney(session.costEstimated, currency, true)} estimated)` : ""
+      }`
     : null;
   const used = session?.usedTokens ?? null;
   const capacity = session?.contextWindow ?? null;
@@ -125,11 +110,13 @@ export function ContextPie({ session }: { session: BoardSession | null }) {
  * tier and model id. It lives in the top layer, so the column's overflow can't clip it, and sits beside the
  * card (right, else left, else above or below), never over it. Rendered only while open.
  */
-export function CardTooltip({ id, anchor, provider, session }: {
+export function CardTooltip({ id, anchor, provider, session, summary }: {
   id: string;
   anchor: RefObject<HTMLElement | null>;
   provider: AgentProvider | null;
   session: BoardSession | null;
+  /** A one-line card's hidden text (how it was left, and its summary), led into the tooltip. */
+  summary?: string;
 }) {
   const popoverRef = useRef<HTMLDivElement>(null);
   const { fill, tone, tokens, spent, details } = sessionFacts(session);
@@ -170,6 +157,7 @@ export function CardTooltip({ id, anchor, provider, session }: {
       style={{ inset: "auto", margin: 0 }}
       className={`pointer-events-none w-max max-w-80 overflow-hidden rounded-md border border-border bg-popover px-2 pb-1.5 pt-1 ${TYPE.meta} leading-4 text-popover-foreground shadow-lg`}
     >
+      {summary ? <div className={`mb-1 max-w-80 whitespace-normal border-b border-border/60 pb-1 ${TYPE.body} leading-snug`}>{summary}</div> : null}
       {provider || session?.model ? (
         <div className="flex min-w-0 items-center gap-1.5 whitespace-nowrap">
           {provider ? (

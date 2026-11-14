@@ -188,6 +188,7 @@ export default async function plugin(bb: BbPluginApi) {
       createdAt: stored?.createdAt ?? iso(thread.createdAt),
       updatedAt: iso(Math.max(thread.updatedAt ?? 0, stored ? Date.parse(stored.updatedAt) || 0 : 0) || null),
       lastUserInputAt: details.lastUserInputAt === null ? null : iso(details.lastUserInputAt),
+      completedAt: thread.latestAttentionAt === null ? null : iso(thread.latestAttentionAt),
       missingThread: false,
       thread: {
         id: thread.id,

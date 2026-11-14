@@ -27,7 +27,9 @@ export const TYPE = {
 } as const;
 
 /** A heading inside a column lines up with the cards' content: their 1px border plus `px-2`. */
-export const CARD_INSET = "px-[9px]";
+const CARD_INSET = "px-[9px]";
+/** Every small chip (a card's category, review risk, Archived, a follow-up already set): 16px, square-ish corners. */
+export const CHIP = `inline-flex h-4 shrink-0 items-center rounded-[4px] px-1 ${TYPE.chip} leading-none`;
 // Every card's marks share one 16px frame: they line up with the 18px title line (mt-px centers them), and pull
 // request, issue and thread cards line up in the column.
 export const MARK_FRAME = "mt-px inline-flex size-4 shrink-0 items-center justify-center";
@@ -36,8 +38,17 @@ export const ROW_ACTION =
   "inline-flex h-5 shrink-0 items-center justify-center rounded-md text-muted-foreground/70 transition-[color,background-color] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:pointer-events-none disabled:opacity-50 pointer-coarse:h-7";
 export const ROW_ICON_ACTION = `${ROW_ACTION} w-5 pointer-coarse:w-7`;
 export const FORGE_NAME = { delta: "Delta", github: "GitHub" } as const;
+/** Every dashed placeholder (empty lists, drop targets, the New thread button): one 32px-minimum slot. */
+export const DASHED_SLOT = `flex min-h-8 shrink-0 items-center justify-center gap-1.5 rounded-md border border-dashed px-3 py-1.5 text-center ${TYPE.meta}`;
 /** A list that has nothing to show, or nothing yet. */
-export const EMPTY_NOTE = `rounded-md border border-dashed border-foreground/15 px-3 py-2 text-center ${TYPE.meta} text-muted-foreground/90`;
+export const EMPTY_NOTE = `${DASHED_SLOT} border-foreground/15 text-muted-foreground/90`;
+/** One-line cards and rows (Done, Parked, Out): 28px tall, the 20px line inside a 3px pad and the border. */
+export const ONE_LINE_PAD = "px-2 py-[3px]";
+/**
+ * A one-line row's age at its end. Touch screens always show the row's actions over the end of the line, so the age
+ * gives way there instead of showing half under them.
+ */
+export const ONE_LINE_AGE = `shrink-0 whitespace-nowrap ${TYPE.meta} tabular-nums text-muted-foreground/80 [@media(hover:none)]:hidden`;
 
 /** bb's composer and links: a new-thread draft in the open thread's project, and URLs (a new tab when bb can't). */
 export function useBbLinks() {
@@ -104,36 +115,45 @@ export function Spinner() {
 }
 
 /**
- * A list's header row in the Queue column's tabs: an uppercase title and its count, then `children` (toggles, a
- * "new" count), and at the end a spinner while it refreshes and an amber mark listing its problems.
+ * Every count on the board (column and tab titles, section headers): a 16px pill, or nothing at zero so empty
+ * lists don't add a row of noise. `tone` is the status or accent badge class; muted by default.
  */
-export function GroupHeader({ title, count, hint, refreshing, problems, children }: {
+export function CountBadge({ count, tone = "bg-muted text-muted-foreground" }: { count: number; tone?: string }) {
+  if (count === 0) return null;
+  return (
+    <span className={`inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full px-1.5 ${TYPE.badge} normal-case leading-none tracking-normal ${tone}`}>
+      {count}
+    </span>
+  );
+}
+
+/**
+ * A section's header row inside a column (Parked, Read, and the Queue column's tabs' lists): an uppercase title and
+ * its count, then `children` (toggles), a hairline to the end, and there a spinner while it refreshes and an amber
+ * mark listing its problems.
+ */
+export function GroupHeader({ title, count, hint, refreshing = false, problems = [], children }: {
   title: string;
   count: number | null;
   hint?: string;
-  refreshing: boolean;
-  problems: string[];
+  refreshing?: boolean;
+  problems?: string[];
   children?: ReactNode;
 }) {
   return (
     <div className={`flex h-6 items-center gap-1.5 ${CARD_INSET} pointer-coarse:h-7`}>
-      <h3 title={hint} className={`flex min-w-0 items-center gap-1.5 ${TYPE.label} text-muted-foreground`}>
+      <h3 title={hint} className={`flex min-w-0 items-center gap-1.5 ${TYPE.label} leading-none text-muted-foreground`}>
         <span className="truncate">{title}</span>
-        {count !== null ? (
-          <span className={`inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-muted px-1.5 ${TYPE.badge} normal-case leading-none tracking-normal`}>
-            {count}
-          </span>
-        ) : null}
+        {count !== null ? <CountBadge count={count} /> : null}
       </h3>
       {children}
-      <span className="ml-auto flex items-center gap-1">
-        {refreshing ? <Spinner /> : null}
-        {problems.length > 0 ? (
-          <span role="img" aria-label={`${title} problems: ${problems.join("; ")}`} title={problems.join("\n")} className={`inline-flex ${ACCENT_TEXT.amber}`}>
-            <Icon name="AlertCircle" className="size-3.5" aria-hidden />
-          </span>
-        ) : null}
-      </span>
+      <span className="h-px min-w-2 flex-1 bg-border/60" aria-hidden />
+      {refreshing ? <Spinner /> : null}
+      {problems.length > 0 ? (
+        <span role="img" aria-label={`${title} problems: ${problems.join("; ")}`} title={problems.join("\n")} className={`inline-flex ${ACCENT_TEXT.amber}`}>
+          <Icon name="AlertCircle" className="size-3.5" aria-hidden />
+        </span>
+      ) : null}
     </div>
   );
 }
@@ -142,9 +162,16 @@ export function GroupHeader({ title, count, hint, refreshing, problems, children
  * A card's actions, archive last: they overlay the end of the title line (no reflow); a card-colored backdrop with a
  * short leftward fade hides the truncated title underneath. Revealed on hover/focus, always on touch.
  */
-export function RowActions({ label, title, onArchive, children }: { label: string; title?: string; onArchive: () => void; children?: ReactNode }) {
+export function RowActions({ label, title, onArchive, centered = false, children }: {
+  label: string;
+  title?: string;
+  onArchive: () => void;
+  /** One-line rows: centered on the row's height instead of on the first line. */
+  centered?: boolean;
+  children?: ReactNode;
+}) {
   return (
-    <span className="absolute right-1 top-[5px] flex gap-0.5 bg-card opacity-0 transition-opacity duration-150 before:pointer-events-none before:absolute before:inset-y-0 before:right-full before:w-3 before:bg-linear-to-l before:from-card before:to-transparent before:content-[''] group-hover:opacity-100 group-focus-within:opacity-100 has-[:focus-visible]:opacity-100 [@media(hover:none)]:opacity-100 pointer-coarse:right-0.5 pointer-coarse:top-px">
+    <span className={`absolute right-1 ${centered ? "top-1/2 -translate-y-1/2" : "top-[5px] pointer-coarse:top-px"} flex gap-0.5 bg-card opacity-0 transition-opacity duration-150 before:pointer-events-none before:absolute before:inset-y-0 before:right-full before:w-3 before:bg-linear-to-l before:from-card before:to-transparent before:content-[''] group-hover:opacity-100 group-focus-within:opacity-100 has-[:focus-visible]:opacity-100 [@media(hover:none)]:opacity-100 pointer-coarse:right-0.5`}>
       {children}
       <button
         type="button"

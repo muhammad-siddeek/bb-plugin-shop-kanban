@@ -2,9 +2,9 @@ import { useEffect, useId, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import { experimental_Icon as Icon, useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
 import type { rpcContract } from "../server/schema";
-import { CLOCK_TICK_MS, errorMessage, formatRelativeTime, type SearchResponse } from "./model";
+import { CLOCK_TICK_MS, errorMessage, formatShortAge, type SearchResponse } from "./model";
 import { useNow } from "./hooks";
-import { TYPE } from "./primitives";
+import { CHIP, TYPE } from "./primitives";
 
 const SEARCH_DEBOUNCE_MS = 200;
 
@@ -162,18 +162,18 @@ export function ThreadSearch({ maxListHeight }: { maxListHeight: number }) {
                   onPointerDown={(event) => event.preventDefault()}
                   onPointerEnter={() => setActive(index)}
                   onClick={() => select(result.threadId)}
-                  className={`cursor-pointer rounded-lg px-2.5 py-2 transition-colors ${index === active ? "bg-accent text-accent-foreground" : ""}`}
+                  className={`cursor-pointer rounded-md px-2 py-1.5 transition-colors ${index === active ? "bg-accent text-accent-foreground" : ""}`}
                 >
                   <div className="flex min-w-0 items-center gap-2">
                     <span className={`min-w-0 flex-1 truncate ${TYPE.title} font-semibold leading-[18px]`}>{result.title}</span>
                     {result.archived ? (
-                      <span className={`inline-flex shrink-0 items-center gap-1 rounded-full bg-muted px-1.5 ${TYPE.badge} leading-4 text-muted-foreground`}>
+                      <span className={`${CHIP} gap-1 bg-muted text-muted-foreground`}>
                         <Icon name="Archive" className="size-2.5" aria-hidden />
                         Archived
                       </span>
                     ) : null}
                     {result.updatedAt !== null ? (
-                      <span className={`shrink-0 ${TYPE.meta} tabular-nums text-muted-foreground/80`}>{formatRelativeTime(result.updatedAt, now)}</span>
+                      <span className={`shrink-0 ${TYPE.meta} tabular-nums text-muted-foreground/80`}>{formatShortAge(result.updatedAt, now)}</span>
                     ) : null}
                   </div>
                   {result.snippet ? (

@@ -3,7 +3,7 @@ import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
 import type { rpcContract } from "../server/schema";
 import { usePoll } from "./hooks";
-import { ACCENT_TEXT, type AiUsage, type SystemProcesses, type SystemStats } from "./model";
+import { ACCENT_TEXT, formatMoney, type AiUsage, type SystemProcesses, type SystemStats } from "./model";
 import { TYPE } from "./primitives";
 
 const STATS_POLL_MS = 2_000;
@@ -142,10 +142,6 @@ function SparkleGlyph(props: GlyphProps) {
 
 function spendLevel(cost: number | null | undefined): Level {
   return cost == null ? "ok" : cost >= AI_SPEND.critical ? "critical" : cost >= AI_SPEND.warn ? "warn" : "ok";
-}
-
-function formatUsd(value: number, cents = true): string {
-  return `$${value.toLocaleString("en-US", { minimumFractionDigits: cents ? 2 : 0, maximumFractionDigits: cents ? 2 : 0 })}`;
 }
 
 const GLYPH: Record<MetricKey, (props: GlyphProps & { charging?: boolean }) => ReactNode> = {
@@ -392,8 +388,8 @@ export function SystemMonitor({ maxPanelHeight }: { maxPanelHeight: number }) {
       {aiUsage?.todayCost != null
         ? chip(
             "ai",
-            <StripChip glyph={<SparkleGlyph className="size-3 shrink-0" />} label={formatUsd(aiUsage.todayCost, false)} level={spendLevel(aiUsage.todayCost)} dim={Boolean(aiUsage.error)} />,
-            `Shopify AI spend today ${formatUsd(aiUsage.todayCost)}`,
+            <StripChip glyph={<SparkleGlyph className="size-3 shrink-0" />} label={formatMoney(aiUsage.todayCost)} level={spendLevel(aiUsage.todayCost)} dim={Boolean(aiUsage.error)} />,
+            `Shopify AI spend today ${formatMoney(aiUsage.todayCost, "USD", true)}`,
           )
         : null}
 
@@ -567,7 +563,7 @@ function SpendChart({ days }: { days: AiUsage["days"] }) {
             const at = Date.parse(`${day.date}T12:00:00Z`);
             const isToday = index === days.length - 1;
             const level = spendLevel(day.cost);
-            const label = `${LONG_DATE.format(at)}: ${formatUsd(day.cost)}${isToday ? " so far" : ""}`;
+            const label = `${LONG_DATE.format(at)}: ${formatMoney(day.cost, "USD", true)}${isToday ? " so far" : ""}`;
             return (
               <li key={day.date} title={label} className="flex h-full items-end justify-center">
                 <span className="sr-only">{label}</span>
@@ -620,8 +616,8 @@ function AiUsageSection({ usage }: { usage: AiUsage }) {
         Shopify AI spend
       </h4>
       <div className="grid grid-cols-2 gap-3">
-        <SpendStat label="Today" value={usage.todayCost !== null ? formatUsd(usage.todayCost) : "—"} level={level} />
-        <SpendStat label={week?.label ?? "Last 7 days"} value={week ? formatUsd(week.cost) : "—"} level={spendLevel(average)} align="right" />
+        <SpendStat label="Today" value={usage.todayCost !== null ? formatMoney(usage.todayCost, "USD", true) : "—"} level={level} />
+        <SpendStat label={week?.label ?? "Last 7 days"} value={week ? formatMoney(week.cost, "USD", true) : "—"} level={spendLevel(average)} align="right" />
       </div>
       {usage.days.length > 0 ? (
         <SpendChart days={usage.days} />
@@ -633,7 +629,10 @@ function AiUsageSection({ usage }: { usage: AiUsage }) {
       <Detail>
         {average !== null || usage.hourCost !== null ? (
           <span className="block">
-            {[average !== null ? `${formatUsd(average)} a day on average` : null, usage.hourCost !== null ? `${formatUsd(usage.hourCost)} last hour` : null]
+            {[
+              average !== null ? `${formatMoney(average, "USD", true)} a day on average` : null,
+              usage.hourCost !== null ? `${formatMoney(usage.hourCost, "USD", true)} last hour` : null,
+            ]
               .filter(Boolean)
               .join(" · ")}
           </span>
@@ -642,7 +641,7 @@ function AiUsageSection({ usage }: { usage: AiUsage }) {
           <span className="block">The proxy has no pricing loaded; costs read $0.</span>
         ) : (
           <span className="block text-muted-foreground/70">
-            Daily budget {formatUsd(AI_SPEND.warn, false)}, red past {formatUsd(AI_SPEND.critical, false)} (the dashed lines).
+            Daily budget {formatMoney(AI_SPEND.warn)}, red past {formatMoney(AI_SPEND.critical)} (the dashed lines).
           </span>
         )}
         {usage.error ? <span className="block text-destructive">Last update failed: {usage.error}</span> : null}

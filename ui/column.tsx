@@ -1,14 +1,14 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { DragEvent, FormEvent, KeyboardEvent, ReactElement, ReactNode } from "react";
-import { experimental_Icon as Icon, experimental_NewThreadComposer as NewThreadComposer, experimental_useProviders, useBbContext, useBbNavigate, type NewThreadRequest } from "@get-bb/plugin-sdk/app";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { DragEvent, ReactElement, ReactNode } from "react";
+import { experimental_Icon as Icon, experimental_NewThreadComposer as NewThreadComposer, experimental_useProviders, experimental_useSidebarThreads, useBbContext, useBbNavigate, type NewThreadRequest } from "@get-bb/plugin-sdk/app";
 import { PLUGIN_SLUG } from "../brand";
-import { ACCENT_BADGE, CLOCK_TICK_MS, STATUS_META, THREAD_DRAG_TYPE, groupTasksByColumn, isUnread, shortNameFromPrompt, type BoardColumn, type BoardState, type BoardTask } from "./model";
+import { ACCENT_BADGE, CLOCK_TICK_MS, STATUS_META, THREAD_DRAG_TYPE, groupTasksByColumn, shortNameFromPrompt, type BoardColumn, type BoardState, type BoardTask } from "./model";
 import { useNow, type BoardApi, type ReviewsApi, type WorkApi } from "./hooks";
 import { TaskCard } from "./card";
 import { ReviewGroup, visibleReviews } from "./reviews";
 import { WipLimitControl } from "./wip-limit";
 import { WorkGroup, useWorkItems } from "./work";
-import { CARD_INSET, TYPE } from "./primitives";
+import { CountBadge, DASHED_SLOT, EMPTY_NOTE, GroupHeader, TYPE } from "./primitives";
 
 const SCROLL_TO_LATEST_SELECTOR = 'button[aria-label="Scroll to latest event"]';
 /** Where bb's new-thread composer keeps the board's draft, so closing the form, a reload or a crash doesn't lose it. */
@@ -33,11 +33,10 @@ function readStored(key: string): string | null {
   }
 }
 
-/** Store `value` (empty removes it); with storage off it lives only as long as the page. */
+/** Store `value`; with storage off it lives only as long as the page. */
 function writeStored(key: string, value: string) {
   try {
-    if (value) window.localStorage.setItem(key, value);
-    else window.localStorage.removeItem(key);
+    window.localStorage.setItem(key, value);
   } catch {
     // Storage off.
   }
@@ -132,7 +131,7 @@ function useCardDrop(onDrop: ((threadId: string) => void) | null, awaiting: bool
 function DropHint({ over, icon, label }: { over: boolean; icon: string; label: string }) {
   return (
     <div
-      className={`flex shrink-0 items-center justify-center gap-1.5 rounded-md border border-dashed px-3 py-3 ${TYPE.meta} font-medium transition-colors ${
+      className={`${DASHED_SLOT} font-medium transition-colors ${
         over ? "border-muted-foreground/70 bg-card text-foreground" : "border-muted-foreground/40 text-muted-foreground"
       }`}
     >
@@ -143,11 +142,7 @@ function DropHint({ over, icon, label }: { over: boolean; icon: string; label: s
 }
 
 function EmptySlot({ children }: { children: ReactNode }) {
-  return (
-    <div className={`flex shrink-0 items-center justify-center rounded-md border border-dashed border-foreground/15 px-3 py-3 text-center ${TYPE.meta} text-muted-foreground/90`}>
-      {children}
-    </div>
-  );
+  return <div className={EMPTY_NOTE}>{children}</div>;
 }
 
 /** The Queue column's header: one uppercase tab per list with its count, underlined in the column's accent when open. */
@@ -175,13 +170,11 @@ function QueueTabs({ tabs, active, onSelect }: {
             }`}
           >
             <span>{tab.label}</span>
-            <span
-              className={`inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full px-1.5 ${TYPE.badge} leading-none tracking-normal ${
-                selected ? meta.badge : tab.fresh > 0 ? ACCENT_BADGE.sky : STATUS_META.parked.badge
-              }`}
-            >
-              {tab.count}
-            </span>
+            {/* In is work waiting on you: any of it shows red, selected or not. */}
+            <CountBadge
+              count={tab.count}
+              tone={tab.id === "incoming" ? ACCENT_BADGE.rose : selected ? meta.badge : tab.fresh > 0 ? ACCENT_BADGE.sky : STATUS_META.parked.badge}
+            />
             {selected ? <span aria-hidden className={`pointer-events-none absolute inset-x-0 bottom-0 h-[2px] rounded-full ${meta.accent}`} /> : null}
           </button>
         );
@@ -292,15 +285,10 @@ function ParkedSection({ tasks, dragging, onDrop, renderCard }: {
   onDrop: (threadId: string) => void;
   renderCard: (task: BoardTask) => ReactElement;
 }) {
-  const meta = STATUS_META.parked;
   const { over, handlers } = useCardDrop(onDrop, dragging, true);
   return (
     <div role="group" aria-label="Parked" className={`space-y-1 rounded-md pt-1 transition-colors ${dropOutline(dragging, over)}`} {...handlers}>
-      <div className={`flex h-6 items-center gap-1.5 ${CARD_INSET}`}>
-        <h3 className={`${TYPE.label} leading-none ${meta.title}`}>Parked</h3>
-        <span className={`inline-flex h-4 min-w-4 items-center justify-center rounded-full px-1.5 ${TYPE.badge} leading-none ${meta.badge}`}>{tasks.length}</span>
-        <span className="h-px flex-1 bg-border/60" aria-hidden />
-      </div>
+      <GroupHeader title="Parked" count={tasks.length} />
       {dragging ? <DropHint over={over} icon="Pause" label="Drop to park" /> : null}
       {tasks.length === 0 && !dragging ? <EmptySlot>Drag a finished thread here to come back to it later</EmptySlot> : null}
       {tasks.map(renderCard)}
@@ -308,10 +296,14 @@ function ParkedSection({ tasks, dragging, onDrop, renderCard }: {
   );
 }
 
-function BoardColumnView({ column, title, tasks, renderCard, dragging, drop, onStartAdding, headerControl, tabs, body, addForm, parked }: {
+function BoardColumnView({ column, title, tasks, count, unreadFirst, renderCard, dragging, drop, onStartAdding, headerControl, tabs, body, addForm, parked }: {
   column: BoardColumn;
   title: string;
   tasks: BoardTask[];
+  /** The header's count; null draws none (Working, whose limit control counts instead). */
+  count: number | null;
+  /** Done: how many leading cards are unread; a rule separates them from the read ones after. */
+  unreadFirst: number;
   renderCard: (task: BoardTask) => ReactElement;
   /** A card is being dragged. */
   dragging: boolean;
@@ -347,7 +339,7 @@ function BoardColumnView({ column, title, tasks, renderCard, dragging, drop, onS
         {tabs ?? (
           <>
             <h2 className={`truncate ${TYPE.heading} leading-none ${meta.title}`}>{title.toUpperCase()}</h2>
-            <span className={`inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full px-1.5 ${TYPE.badge} leading-none ${meta.badge}`}>{tasks.length}</span>
+            {count !== null ? <CountBadge count={count} tone={meta.badge} /> : null}
           </>
         )}
         {headerControl}
@@ -367,7 +359,7 @@ function BoardColumnView({ column, title, tasks, renderCard, dragging, drop, onS
               <button
                 type="button"
                 onClick={onStartAdding}
-                className={`flex w-full shrink-0 items-center justify-center gap-1.5 rounded-md border border-dashed border-foreground/15 px-3 py-2.5 ${TYPE.meta} text-muted-foreground/90 transition-colors hover:border-sky-500/50 hover:bg-sky-500/5 hover:text-[light-dark(var(--color-sky-700),var(--color-sky-500))] focus-visible:border-sky-500/60 focus-visible:text-[light-dark(var(--color-sky-700),var(--color-sky-500))] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/20`}
+                className={`${EMPTY_NOTE} w-full transition-colors hover:border-sky-500/50 hover:bg-sky-500/5 hover:text-[light-dark(var(--color-sky-700),var(--color-sky-500))] focus-visible:border-sky-500/60 focus-visible:text-[light-dark(var(--color-sky-700),var(--color-sky-500))] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/20`}
               >
                 <Icon name="Plus" className="size-3.5" aria-hidden />
                 New thread
@@ -375,7 +367,13 @@ function BoardColumnView({ column, title, tasks, renderCard, dragging, drop, onS
             ) : tasks.length === 0 && !adding && !awaitingDrop ? (
               <EmptySlot>No threads</EmptySlot>
             ) : null}
-            {tasks.map(renderCard)}
+            {tasks.slice(0, unreadFirst).map(renderCard)}
+            {unreadFirst > 0 && unreadFirst < tasks.length ? (
+              <div className="pt-1">
+                <GroupHeader title="Read" count={tasks.length - unreadFirst} />
+              </div>
+            ) : null}
+            {tasks.slice(unreadFirst).map(renderCard)}
             {parked ? <ParkedSection tasks={parked.tasks} dragging={dragging} onDrop={parked.onDrop} renderCard={renderCard} /> : null}
           </>
         )}
@@ -392,14 +390,25 @@ export function BoardView({ api, reviews, work }: { api: BoardApi; reviews: Revi
   const providersById = useMemo(() => new Map(providers.map((provider) => [provider.id, provider])), [providers]);
   const navigate = useBbNavigate();
   const { rpc, board, error, report, refetch } = api;
-  // Cards opened from the board count as read right away, before bb's read state round-trips; dropped once the
-  // server agrees, so later activity can mark the card unread again.
-  const [readLocally, setReadLocally] = useLocalIds(board, (task) => task.unread);
+  // Read state and completion time come from bb's own live thread view, the one its sidebar draws, so a card goes
+  // read or unread exactly when bb's unread dot does. The server's copies stand in for threads it doesn't list yet.
+  const { threads: liveThreads } = experimental_useSidebarThreads();
+  const liveBoard = useMemo(() => {
+    if (!board) return null;
+    const live = new Map(liveThreads.map((thread) => [thread.id, thread]));
+    return {
+      ...board,
+      tasks: board.tasks.map((task) => {
+        const thread = live.get(task.threadId);
+        return thread ? { ...task, unread: thread.isUnread, completedAt: new Date(thread.latestAttentionAt).toISOString() } : task;
+      }),
+    };
+  }, [board, liveThreads]);
   // Cards parked from the board move to Parked right away, before the server's board round-trips.
   const [parkedLocally, setParkedLocally] = useLocalIds(board, (task) => task.status !== "parked");
   // Cards started from the board: their start button waits until the server's board no longer offers to start them.
   const [startingIds, setStartingIds] = useLocalIds(board, (task) => task.startable);
-  const grouped = useMemo(() => groupTasksByColumn(board, readLocally, parkedLocally), [board, readLocally, parkedLocally]);
+  const grouped = useMemo(() => groupTasksByColumn(liveBoard, parkedLocally), [liveBoard, parkedLocally]);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const draggingStartable = board?.tasks.some((task) => task.threadId === draggingId && task.startable) ?? false;
   const now = useNow(CLOCK_TICK_MS);
@@ -443,8 +452,7 @@ export function BoardView({ api, reviews, work }: { api: BoardApi; reviews: Revi
   };
 
   const openTask = (threadId: string) => {
-    setReadLocally((current) => withId(current, threadId));
-    rpc.call("board_mark_read", { threadId }).then(refetch, refetch);
+    rpc.call("board_mark_read", { threadId }).catch(report);
     try {
       navigate.toThread(threadId);
       scrollThreadToLatest(threadId);
@@ -454,12 +462,7 @@ export function BoardView({ api, reviews, work }: { api: BoardApi; reviews: Revi
   };
 
   const markUnreadTask = (threadId: string) => {
-    // Drop the local "read" override so the card goes unread as soon as the server's board says so.
-    setReadLocally((current) => withoutId(current, threadId));
-    rpc.call("board_mark_unread", { threadId }).then(refetch, (cause) => {
-      refetch();
-      report(cause);
-    });
+    rpc.call("board_mark_unread", { threadId }).catch(report);
   };
 
   const addTask = async (request: NewThreadRequest) => {
@@ -518,7 +521,7 @@ export function BoardView({ api, reviews, work }: { api: BoardApi; reviews: Revi
       key={task.threadId}
       task={task}
       now={now}
-      unread={task.status === "done" && isUnread(task, readLocally)}
+      unread={task.status === "done" && task.unread}
       selected={task.threadId === selectedThreadId}
       dragging={task.threadId === draggingId}
       starting={startingIds.has(task.threadId)}
@@ -532,12 +535,17 @@ export function BoardView({ api, reviews, work }: { api: BoardApi; reviews: Revi
     />
   );
 
+  // groupTasksByColumn puts these first in Done.
+  const unreadDone = (grouped.get("done") ?? []).filter((task) => task.unread).length;
+
   const renderColumn = (column: { id: BoardColumn; title: string }) => (
     <BoardColumnView
       key={column.id}
       column={column.id}
       title={column.title}
       tasks={grouped.get(column.id) ?? []}
+      count={column.id === "wip" ? null : column.id === "done" ? unreadDone : (grouped.get(column.id) ?? []).length}
+      unreadFirst={column.id === "done" ? unreadDone : 0}
       renderCard={renderCard}
       dragging={draggingId !== null}
       drop={column.id === "wip" && draggingStartable ? { label: "Drop to start now", icon: "Play", onDrop: startTask } : null}

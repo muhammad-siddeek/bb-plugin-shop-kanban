@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
-import { ACCENT_TEXT, CARD_EDGE, CARD_SURFACE, STATUS_META, THREAD_DRAG_TYPE, formatRelativeTime, taskActivityTime, taskCardTitle, type BoardStatus, type BoardTask } from "./model";
-import { MARK_FRAME, RowActions, Spinner, TYPE } from "./primitives";
+import { ACCENT_TEXT, CARD_EDGE, CARD_SURFACE, STATUS_META, THREAD_DRAG_TYPE, formatShortAge, taskActivityTime, taskCardTitle, type BoardStatus, type BoardTask } from "./model";
+import { CHIP, MARK_FRAME, ONE_LINE_AGE, ONE_LINE_PAD, RowActions, Spinner, TYPE } from "./primitives";
 import { CardTooltip, ContextPie, ModelMark, SessionCost, type AgentProvider } from "./session";
 
 const CARD_ACTION =
@@ -227,7 +227,7 @@ export function TaskCard({ task, now, unread, selected, dragging, starting, prov
   // The tooltip is the harness session's details; a card with none (a thread not started yet) has no tooltip.
   const hasSession = provider !== null || task.session !== null;
   const showTooltip = () => {
-    if (hasSession) setTooltipOpen(true);
+    if (hasSession || (compact && compactHint)) setTooltipOpen(true);
   };
   const hideTooltip = () => {
     window.clearTimeout(tooltipTimer.current);
@@ -252,13 +252,14 @@ export function TaskCard({ task, now, unread, selected, dragging, starting, prov
   }, [tooltipOpen]);
   const { category, intent } = taskCardTitle(task);
   const parked = task.status === "parked";
-  // Lines 1-2: "[tag] title — summary" as one run of text. Hovering the card hands it the footer's line
-  // too; the footer's session facts are in the card's tooltip.
+  // Done and Parked cards are finished or set aside: one line (mark, tag, title, age), the rest in the tooltip.
+  const compact = parked || task.status === "done";
+  // Lines 1-2: "[tag] title — summary" as one run of text; the footer's session facts are in the card's tooltip.
   // The 18px lines come from the 12px strut; the 13px title is leading-none so it can't grow a line.
   const text = (
-    <span className={`line-clamp-2 ${TYPE.body} leading-[18px] group-hover:line-clamp-3`}>
+    <span className={`line-clamp-2 ${TYPE.body} leading-[18px]`}>
       {category ? (
-        <span className={`mr-1.5 mt-px inline-flex h-4 max-w-[80%] items-center rounded-[4px] bg-muted px-1 align-top ${TYPE.chip} leading-none text-muted-foreground`}>
+        <span className={`${CHIP} mr-1.5 mt-px max-w-[80%] bg-muted align-top text-muted-foreground`}>
           <span className="truncate">{category}</span>
         </span>
       ) : null}
@@ -277,11 +278,29 @@ export function TaskCard({ task, now, unread, selected, dragging, starting, prov
       ) : null}
     </span>
   );
+  // One line: tag and title only; how a parked card was left and its summary lead its tooltip instead.
+  const compactText = (
+    <span className={`flex min-w-0 items-center gap-1.5 ${TYPE.body} leading-5`}>
+      {category ? (
+        <span className={`${CHIP} bg-muted text-muted-foreground`}>
+          {category}
+        </span>
+      ) : null}
+      <span
+        className={`min-w-0 truncate ${TYPE.title} decoration-muted-foreground/40 underline-offset-2 group-hover/open:underline ${
+          parked ? "text-foreground/70" : unread ? "text-foreground" : "text-foreground/85"
+        } ${unread ? "font-bold" : "font-semibold"}`}
+      >
+        {intent}
+      </span>
+    </span>
+  );
   const meta = STATUS_META[task.status];
   const activity = taskActivityTime(task);
   const canOpen = !task.missingThread;
   // Done cards don't repeat "Completed"; parked ones say how they were left, so they do.
   const reason = task.statusReason && task.status !== "done" && task.statusReason !== "Working" ? task.statusReason : null;
+  const compactHint = [reason, task.note].filter(Boolean).join(" — ");
   // Idle cards can be parked, and parked ones unparked; working ones can't be either.
   const parkToggle = canOpen && task.status !== "wip";
   // Idle cards outside Parked can also be dragged there; a startable Queue card can also be dropped on Working to start it.
@@ -341,37 +360,68 @@ export function TaskCard({ task, now, unread, selected, dragging, starting, prov
       onKeyDown={(event) => {
         if (event.key === "Escape") hideTooltip();
       }}
-      className={`group relative ${CARD_SURFACE} px-2 pb-1 pt-1.5 has-[[data-card-open]:focus-visible]:ring-2 has-[[data-card-open]:focus-visible]:ring-ring/60 ${
+      className={`group relative ${CARD_SURFACE} ${compact ? ONE_LINE_PAD : "px-2 pb-1 pt-1.5"} has-[[data-card-open]:focus-visible]:ring-2 has-[[data-card-open]:focus-visible]:ring-ring/60 ${
         canOpen ? "cursor-pointer" : ""
       } ${dragging ? "opacity-40" : ""} ${stateClass} ${surfaceClass}`}
     >
-      {/* Status, harness and context fill: one column down the card's left gutter, spread over its padded height
-          (status on the title's first line, the ring on the footer's), so the marks never add height. */}
-      <div className="absolute bottom-1 left-2 top-1.5 flex w-4 flex-col items-center justify-between">
-        <TaskStatusMark status={task.status} unread={unread} />
-        <ModelMark provider={provider} />
-        <span className="flex h-[18px] items-center">
-          <ContextPie session={task.session} />
-        </span>
-      </div>
-      <div className="flex items-start gap-2 pl-6">
-        {/* Always two lines tall, so the hover's third line overlays the footer instead of resizing the card. */}
-        {canOpen ? (
-          <button
-            type="button"
-            data-card-open=""
-            onClick={open}
-            aria-describedby={tooltipOpen ? tooltipId : undefined}
-            className="group/open block h-9 min-w-0 flex-1 rounded-sm text-left focus-visible:outline-none"
-          >
-            {text}
-          </button>
-        ) : (
-          <div className="h-9 min-w-0 flex-1">{text}</div>
-        )}
-      </div>
+      {compact ? (
+        <div className="flex h-5 items-center gap-2">
+          <span className="-mt-px flex w-4 shrink-0 justify-center">
+            <TaskStatusMark status={task.status} unread={unread} />
+          </span>
+          {canOpen ? (
+            <button
+              type="button"
+              data-card-open=""
+              onClick={open}
+              aria-describedby={tooltipOpen ? tooltipId : undefined}
+              className="group/open block min-w-0 flex-1 truncate rounded-sm text-left focus-visible:outline-none"
+            >
+              {compactText}
+            </button>
+          ) : (
+            <div className="min-w-0 flex-1 truncate">{compactText}</div>
+          )}
+          {activity !== null ? (
+            <time
+              dateTime={new Date(activity).toISOString()}
+              className={ONE_LINE_AGE}
+            >
+              {formatShortAge(activity, now)}
+            </time>
+          ) : null}
+        </div>
+      ) : (
+        <>
+          {/* Status, harness and context fill: one column down the card's left gutter, spread over its padded height
+              (status on the title's first line, the ring on the footer's), so the marks never add height. */}
+          <div className="absolute bottom-1 left-2 top-1.5 flex w-4 flex-col items-center justify-between">
+            <TaskStatusMark status={task.status} unread={unread} />
+            <ModelMark provider={provider} />
+            <span className="flex h-[18px] items-center">
+              <ContextPie session={task.session} />
+            </span>
+          </div>
+          <div className="flex items-start gap-2 pl-6">
+            {/* Always two lines tall, so a one-line title keeps the card the same height as its neighbours. */}
+            {canOpen ? (
+              <button
+                type="button"
+                data-card-open=""
+                onClick={open}
+                aria-describedby={tooltipOpen ? tooltipId : undefined}
+                className="group/open block h-9 min-w-0 flex-1 rounded-sm text-left focus-visible:outline-none"
+              >
+                {text}
+              </button>
+            ) : (
+              <div className="h-9 min-w-0 flex-1">{text}</div>
+            )}
+          </div>
+        </>
+      )}
 
-      <RowActions label="Archive thread" onArchive={() => onArchive(task.threadId)}>
+      <RowActions label="Archive thread" centered={compact} onArchive={() => onArchive(task.threadId)}>
         {/* A startable card's next step is to start, so Play takes park's place; it can still be dragged to Parked. */}
         {task.startable ? (
           <button
@@ -410,23 +460,26 @@ export function TaskCard({ task, now, unread, selected, dragging, starting, prov
         ) : null}
       </RowActions>
 
-      {/* Hidden while the card is hovered: the summary takes the line, and the tooltip has these facts. */}
-      <div className="mt-0.5 flex h-[18px] items-center gap-2 pl-6 group-hover:pointer-events-none group-hover:opacity-0">
-        <div className="flex min-w-0 flex-1 items-center gap-1.5">
-          <SessionCost session={task.session} />
-          {reason ? <FooterNote tone={`opacity-90 ${meta.title}`} text={reason} /> : null}
-          {task.missingThread ? <FooterNote tone={ACCENT_TEXT.rose} text="no thread" /> : null}
+      {compact ? null : (
+        <div className="mt-0.5 flex h-[18px] items-center gap-2 pl-6">
+          <div className="flex min-w-0 flex-1 items-center gap-1.5">
+            <SessionCost session={task.session} />
+            {reason ? <FooterNote tone={`opacity-90 ${meta.title}`} text={reason} /> : null}
+            {task.missingThread ? <FooterNote tone={ACCENT_TEXT.rose} text="no thread" /> : null}
+          </div>
+          {activity !== null ? (
+            <time
+              dateTime={new Date(activity).toISOString()}
+              className={`shrink-0 whitespace-nowrap ${TYPE.meta} tabular-nums text-muted-foreground/80`}
+            >
+              {formatShortAge(activity, now)}
+            </time>
+          ) : null}
         </div>
-        {activity !== null ? (
-          <time
-            dateTime={new Date(activity).toISOString()}
-            className={`shrink-0 whitespace-nowrap ${TYPE.meta} tabular-nums text-muted-foreground/80`}
-          >
-            {formatRelativeTime(activity, now)}
-          </time>
-        ) : null}
-      </div>
-      {tooltipOpen ? <CardTooltip id={tooltipId} anchor={ref} provider={provider} session={task.session} /> : null}
+      )}
+      {tooltipOpen ? (
+        <CardTooltip id={tooltipId} anchor={ref} provider={provider} session={task.session} summary={compact ? compactHint : undefined} />
+      ) : null}
     </article>
   );
 }
