@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.18.0
 
 - The New thread form is bb's own new-thread composer: pick the provider,
   model and reasoning, project, environment and branch, and permission mode,
