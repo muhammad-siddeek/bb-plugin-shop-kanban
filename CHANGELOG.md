@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.19.0
 
 - Done and Parked cards are one line: status, tag, title and age. Their
   summary and how the thread was left lead the card's tooltip.
