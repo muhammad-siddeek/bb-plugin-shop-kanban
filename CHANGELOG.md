@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+- One-line (Done and Parked) cards show the thread's cost where they showed
+  its age; cards without a cost yet keep the age.
+- Threads working past the limit are amber dots with an exclamation mark cut
+  through them, instead of ringed dots that looked like the filled ones.
+- The title bar and the hidden board's pill show the Working limit's meter
+  (blocked threads' red dots, then slots, over-limit marks, `5/2`,
+  `+N waiting`, in one row) instead of one dot per working thread.
+- No more browser tooltips anywhere on the board; the thread cards' hover
+  cards stay. What only a tooltip showed is gone: review summaries and sizes,
+  Out and Assigned row details, the Working limit's explanation, failed and
+  skipped search details, and the full text of clipped errors.
+
 ## 0.19.1
 
 - Only one-line (Done and Parked) cards open a hover tooltip; full cards

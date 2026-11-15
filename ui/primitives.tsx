@@ -79,20 +79,18 @@ export function useRowError() {
     }
   };
   const view = error ? (
-    <p role="alert" className={`mb-0.5 line-clamp-2 ${TYPE.meta} leading-[14px] ${ACCENT_TEXT.rose}`} title={error}>
+    <p role="alert" className={`mb-0.5 line-clamp-2 ${TYPE.meta} leading-[14px] ${ACCENT_TEXT.rose}`}>
       {error}
     </p>
   ) : null;
   return { attempt, view };
 }
 
-/** A list's problems worth a warning, and the searches skipped as expected (no host, a forge CLI missing or signed out). */
+/** A list's problems worth a warning; searches skipped as expected (no host, a forge CLI missing or signed out) aren't. */
 export function listProblems(errors: (string | null)[], sources: { search: string; error: string | null; missing: boolean }[]) {
-  const problems = [
+  return [
     ...new Set([...errors, ...sources.map((source) => (source.error && !source.missing ? `${source.search}: ${source.error}` : null))]),
   ].filter((problem): problem is string => Boolean(problem));
-  const skipped = [...new Set(sources.flatMap((source) => (source.error && source.missing ? [source.error] : [])))];
-  return { problems, skipped };
 }
 
 /** A row's "open on its forge" link. */
@@ -101,7 +99,6 @@ export function ForgeLink({ forge, onClick }: { forge: keyof typeof FORGE_NAME; 
     <button
       type="button"
       onClick={onClick}
-      title={`Open in ${FORGE_NAME[forge]}`}
       className={`${ROW_ACTION} gap-0.5 px-1 ${TYPE.meta} font-medium hover:bg-accent hover:text-foreground`}
     >
       {FORGE_NAME[forge]}
@@ -130,19 +127,18 @@ export function CountBadge({ count, tone = "bg-muted text-muted-foreground" }: {
 /**
  * A section's header row inside a column (Parked, Read, and the Queue column's tabs' lists): an uppercase title and
  * its count, then `children` (toggles), a hairline to the end, and there a spinner while it refreshes and an amber
- * mark listing its problems.
+ * mark while it has problems.
  */
-export function GroupHeader({ title, count, hint, refreshing = false, problems = [], children }: {
+export function GroupHeader({ title, count, refreshing = false, problems = [], children }: {
   title: string;
   count: number | null;
-  hint?: string;
   refreshing?: boolean;
   problems?: string[];
   children?: ReactNode;
 }) {
   return (
     <div className={`flex h-6 items-center gap-1.5 ${CARD_INSET} pointer-coarse:h-7`}>
-      <h3 title={hint} className={`flex min-w-0 items-center gap-1.5 ${TYPE.label} leading-none text-muted-foreground`}>
+      <h3 className={`flex min-w-0 items-center gap-1.5 ${TYPE.label} leading-none text-muted-foreground`}>
         <span className="truncate">{title}</span>
         {count !== null ? <CountBadge count={count} /> : null}
       </h3>
@@ -150,7 +146,7 @@ export function GroupHeader({ title, count, hint, refreshing = false, problems =
       <span className="h-px min-w-2 flex-1 bg-border/60" aria-hidden />
       {refreshing ? <Spinner /> : null}
       {problems.length > 0 ? (
-        <span role="img" aria-label={`${title} problems: ${problems.join("; ")}`} title={problems.join("\n")} className={`inline-flex ${ACCENT_TEXT.amber}`}>
+        <span role="img" aria-label={`${title} problems: ${problems.join("; ")}`} className={`inline-flex ${ACCENT_TEXT.amber}`}>
           <Icon name="AlertCircle" className="size-3.5" aria-hidden />
         </span>
       ) : null}
@@ -162,9 +158,8 @@ export function GroupHeader({ title, count, hint, refreshing = false, problems =
  * A card's actions, archive last: they overlay the end of the title line (no reflow); a card-colored backdrop with a
  * short leftward fade hides the truncated title underneath. Revealed on hover/focus, always on touch.
  */
-export function RowActions({ label, title, onArchive, centered = false, children }: {
+export function RowActions({ label, onArchive, centered = false, children }: {
   label: string;
-  title?: string;
   onArchive: () => void;
   /** One-line rows: centered on the row's height instead of on the first line. */
   centered?: boolean;
@@ -175,7 +170,6 @@ export function RowActions({ label, title, onArchive, centered = false, children
       {children}
       <button
         type="button"
-        title={title}
         aria-label={label}
         className="inline-flex size-5 items-center justify-center rounded-md text-muted-foreground/70 transition-[color,background-color] duration-150 hover:bg-destructive/10 hover:text-destructive focus-visible:bg-destructive/10 focus-visible:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 pointer-coarse:size-7"
         onClick={onArchive}
@@ -216,7 +210,6 @@ export function IconButton({ icon, label, onClick, small = false, solid = false,
     <button
       type="button"
       aria-label={label}
-      title={label}
       onClick={onClick}
       className={`inline-flex ${look} shrink-0 cursor-pointer select-none items-center justify-center transition-[background-color,color,transform] duration-150 ease-out active:scale-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-50 ${className}`}
     >

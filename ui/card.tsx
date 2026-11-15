@@ -253,7 +253,8 @@ export function TaskCard({ task, now, unread, selected, dragging, starting, prov
   }, [tooltipOpen]);
   const { category, intent } = taskCardTitle(task);
   const parked = task.status === "parked";
-  // Done and Parked cards are finished or set aside: one line (mark, tag, title, age), the rest in the tooltip.
+  // Done and Parked cards are finished or set aside: one line (mark, tag, title, and cost, else age), the rest in the
+  // tooltip.
   const compact = parked || task.status === "done";
   // Lines 1-2: "[tag] title — summary" as one run of text; full cards have no tooltip.
   // The 18px lines come from the 12px strut; the 13px title is leading-none so it can't grow a line.
@@ -383,7 +384,9 @@ export function TaskCard({ task, now, unread, selected, dragging, starting, prov
           ) : (
             <div className="min-w-0 flex-1 truncate">{compactText}</div>
           )}
-          {activity !== null ? (
+          {task.session?.cost ? (
+            <SessionCost session={task.session} className={ONE_LINE_AGE} />
+          ) : activity !== null ? (
             <time
               dateTime={new Date(activity).toISOString()}
               className={ONE_LINE_AGE}
@@ -428,7 +431,6 @@ export function TaskCard({ task, now, unread, selected, dragging, starting, prov
           <button
             type="button"
             aria-label="Start thread now"
-            title="Start now, past the working limit"
             disabled={starting}
             className={CARD_ACTION}
             onClick={() => onStart(task.threadId)}
@@ -442,7 +444,6 @@ export function TaskCard({ task, now, unread, selected, dragging, starting, prov
             <button
               type="button"
               aria-label="Mark thread unread"
-              title="Mark as unread"
               className={CARD_ACTION}
               onClick={() => onMarkUnread(task.threadId)}
             >

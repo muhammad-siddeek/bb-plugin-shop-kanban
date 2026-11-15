@@ -47,9 +47,9 @@ const LIST_META: Record<WorkList, { title: string; hint: string; empty: string; 
     tone: ACCENT_TEXT.amber,
   },
 };
-const FOLLOW_UPS: { mark: "measured" | "demoed"; label: string; hint: string }[] = [
-  { mark: "measured", label: "Measured", hint: "Its impact is measured" },
-  { mark: "demoed", label: "Demoed", hint: "The change is demoed" },
+const FOLLOW_UPS: { mark: "measured" | "demoed"; label: string }[] = [
+  { mark: "measured", label: "Measured" },
+  { mark: "demoed", label: "Demoed" },
 ];
 
 /** The seed of a new thread that takes the item further. */
@@ -76,15 +76,6 @@ function WorkRow({ item, now, onMark }: {
   const at = Date.parse((item.list === "shipped" ? item.mergedAt : null) ?? item.updatedAt);
   const draftMark = item.kind === "pr" && item.draft;
   const noun = item.kind === "issue" ? "issue" : "pull request";
-  const metaHint = [
-    `${item.repo}#${item.number} by ${item.author}`,
-    item.draft ? "draft" : null,
-    item.labels.length > 0 ? item.labels.join(", ") : null,
-    Number.isFinite(at) ? `${item.list === "shipped" ? "merged" : "updated"} ${new Date(at).toLocaleString()}` : null,
-  ]
-    .filter(Boolean)
-    .join(" · ");
-
   const followUps =
     item.list === "shipped"
       ? FOLLOW_UPS.map((followUp) => {
@@ -94,7 +85,6 @@ function WorkRow({ item, now, onMark }: {
               key={followUp.mark}
               type="button"
               aria-pressed={on}
-              title={on ? `${followUp.hint}; click to undo` : `Mark: ${followUp.hint.toLowerCase()}`}
               onClick={() => void attempt(() => onMark(item, followUp.mark, !on))}
               className={`${ROW_ACTION} gap-0.5 px-1 ${TYPE.meta} font-medium ${on ? ACCENT_BADGE.emerald : "hover:bg-accent hover:text-foreground"}`}
             >
@@ -105,7 +95,7 @@ function WorkRow({ item, now, onMark }: {
         })
       : null;
   const mark = (
-    <span className={MARK_FRAME} aria-label={draftMark ? "Draft pull request" : meta.hint} title={draftMark ? "Draft" : undefined}>
+    <span className={MARK_FRAME} aria-label={draftMark ? "Draft pull request" : meta.hint}>
       <Icon
         name={draftMark ? "GitPullRequestDraft" : meta.mark}
         fallback={item.kind === "issue" ? "AlertCircle" : "GitPullRequest"}
@@ -118,7 +108,6 @@ function WorkRow({ item, now, onMark }: {
     <button
       type="button"
       onClick={() => links.compose(draftPrompt(item))}
-      title={`${item.title}\n${metaHint}\n\nOpen a draft thread: ${draftPrompt(item)}`}
       className={`flex h-[18px] w-full min-w-0 items-center rounded-sm text-left ${TYPE.title} font-semibold leading-[18px] text-foreground decoration-muted-foreground/40 underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60`}
     >
       <span className="min-w-0 truncate">{item.title}</span>
@@ -142,7 +131,7 @@ function WorkRow({ item, now, onMark }: {
           ))}
           {draftMark ? <span className={`shrink-0 ${TYPE.meta} text-muted-foreground/80`}>draft</span> : null}
           {Number.isFinite(at) ? (
-            <span className={ONE_LINE_AGE} title={metaHint}>
+            <span className={ONE_LINE_AGE}>
               {formatShortAge(at, now)}
             </span>
           ) : null}
@@ -151,7 +140,6 @@ function WorkRow({ item, now, onMark }: {
         <RowActions
           centered
           label={`Archive ${noun}`}
-          title={`Archive: hide this ${noun} from the list`}
           onArchive={() => void attempt(() => onMark(item, "archived", true))}
         >
           {followUps}
@@ -168,7 +156,7 @@ function WorkRow({ item, now, onMark }: {
         <div className="min-w-0 flex-1">
           {titleButton}
           <div className="-mr-[3px] mt-0.5 flex h-5 items-center gap-0.5 pointer-coarse:h-7">
-            <span className={`mr-1 min-w-0 flex-1 truncate ${TYPE.meta} tabular-nums text-muted-foreground/80`} title={metaHint}>
+            <span className={`mr-1 min-w-0 flex-1 truncate ${TYPE.meta} tabular-nums text-muted-foreground/80`}>
               {Number.isFinite(at) ? `${formatShortAge(at, now)} · ` : ""}
               {item.repo.split("/").pop()}#{item.number}
             </span>
@@ -179,7 +167,6 @@ function WorkRow({ item, now, onMark }: {
       </div>
       <RowActions
         label={`Archive ${noun}`}
-        title={`Archive: hide this ${noun} from the list`}
         onArchive={() => void attempt(() => onMark(item, "archived", true))}
       />
     </article>
@@ -253,7 +240,7 @@ export function WorkGroup({ list, work, now }: { list: WorkList; work: WorkItems
   const meta = LIST_META[list];
   const items = work.byList[list];
   const shown = showAll ? items : items.slice(0, SHOWN_MAX);
-  const { problems, skipped } = listProblems(
+  const problems = listProblems(
     [work.error, state.error],
     state.sources.filter((source) => source.list === list),
   );
@@ -263,7 +250,6 @@ export function WorkGroup({ list, work, now }: { list: WorkList; work: WorkItems
       <GroupHeader
         title={meta.title}
         count={items.length}
-        hint={skipped.length > 0 ? [meta.hint, "Not read:", ...skipped].join("\n") : meta.hint}
         refreshing={state.refreshing}
         problems={problems}
       />

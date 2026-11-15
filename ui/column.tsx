@@ -18,10 +18,10 @@ const QUEUE_TAB_KEY = `${PLUGIN_SLUG}:queue-tab`;
 
 /** The Queue column's tabs: threads waiting to start, work coming to the user, and work going out from them. */
 type QueueTab = "queue" | "incoming" | "outgoing";
-const QUEUE_TABS: { id: QueueTab; label: string; hint: string }[] = [
-  { id: "queue", label: "Queue", hint: "Threads waiting to be started" },
-  { id: "incoming", label: "In", hint: "Pull requests waiting on your review, and issues assigned to you" },
-  { id: "outgoing", label: "Out", hint: "Your open pull requests, and merged ones still to measure or demo" },
+const QUEUE_TABS: { id: QueueTab; label: string }[] = [
+  { id: "queue", label: "Queue" },
+  { id: "incoming", label: "In" },
+  { id: "outgoing", label: "Out" },
 ];
 
 /** A localStorage value; null when storage is off. */
@@ -147,7 +147,7 @@ function EmptySlot({ children }: { children: ReactNode }) {
 
 /** The Queue column's header: one uppercase tab per list with its count, underlined in the column's accent when open. */
 function QueueTabs({ tabs, active, onSelect }: {
-  tabs: { id: QueueTab; label: string; hint: string; count: number; fresh: number }[];
+  tabs: { id: QueueTab; label: string; count: number; fresh: number }[];
   active: QueueTab;
   onSelect: (tab: QueueTab) => void;
 }) {
@@ -163,7 +163,6 @@ function QueueTabs({ tabs, active, onSelect }: {
             type="button"
             role="tab"
             aria-selected={selected}
-            title={`${tab.hint}${tab.fresh > 0 ? ` · ${tab.fresh} new` : ""}`}
             onClick={() => onSelect(tab.id)}
             className={`relative flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-sm ${TYPE.heading} leading-none transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/60 ${
               selected ? meta.title : "text-muted-foreground/70 hover:text-foreground"
@@ -266,7 +265,6 @@ function AddTaskForm({ defaultProjectId, onAdd, onClose, onError }: {
         type="button"
         onClick={onClose}
         aria-label="Close"
-        title="Close (Esc)"
         className="absolute right-1 top-1 z-10 inline-flex size-5 items-center justify-center rounded-full border border-border bg-card text-muted-foreground shadow-sm transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:size-7"
       >
         <Icon name="X" className="size-3 pointer-coarse:size-4" aria-hidden />
@@ -576,7 +574,7 @@ export function BoardView({ api, reviews, work }: { api: BoardApi; reviews: Revi
       {error ? (
         <div role="alert" className={`flex shrink-0 items-center gap-2 border-b border-destructive/30 bg-destructive/10 px-3 py-1.5 ${TYPE.body} leading-snug text-destructive`}>
           <Icon name="AlertCircle" className="size-4 shrink-0" aria-hidden />
-          <span className="min-w-0 flex-1 truncate" title={error}>{error}</span>
+          <span className="min-w-0 flex-1 truncate">{error}</span>
         </div>
       ) : null}
       {board ? (

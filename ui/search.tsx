@@ -134,7 +134,6 @@ export function ThreadSearch({ maxListHeight }: { maxListHeight: number }) {
           <button
             type="button"
             aria-label="Clear search"
-            title="Clear search"
             onClick={() => {
               changeQuery("");
               inputRef.current?.focus();

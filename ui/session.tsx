@@ -55,12 +55,15 @@ function sessionFacts(session: BoardSession | null) {
   return { cost, spent, fill, percent, tone, tokens, details };
 }
 
-/** The session's cost for a card's footer; the card's tooltip has the details. */
-export function SessionCost({ session }: { session: BoardSession | null }) {
+/** The session's cost for a card's footer or one-line row; the card's tooltip has the details. */
+export function SessionCost({ session, className = `inline-flex h-5 shrink-0 items-center whitespace-nowrap ${TYPE.meta} tabular-nums text-muted-foreground/80` }: {
+  session: BoardSession | null;
+  className?: string;
+}) {
   const { cost, spent } = sessionFacts(session);
   if (cost === null) return null;
   return (
-    <span aria-label={spent ?? undefined} className={`inline-flex h-5 shrink-0 items-center whitespace-nowrap ${TYPE.meta} tabular-nums text-muted-foreground/80`}>
+    <span aria-label={spent ?? undefined} className={className}>
       {cost}
     </span>
   );
@@ -70,7 +73,7 @@ export function SessionCost({ session }: { session: BoardSession | null }) {
 export function ModelMark({ provider }: { provider: AgentProvider | null }) {
   if (!provider) return null;
   return (
-    <span role="img" aria-label={provider.displayName} title={provider.displayName} className="inline-flex">
+    <span role="img" aria-label={provider.displayName} className="inline-flex">
       <ProviderIcon providerKind="agent" provider={provider} className="size-3 shrink-0 opacity-60 grayscale [&>svg]:size-3" aria-hidden />
     </span>
   );
@@ -90,7 +93,6 @@ export function ContextPie({ session }: { session: BoardSession | null }) {
       viewBox="0 0 12 12"
       className={`size-3 -rotate-90 ${tone?.ring ?? "text-muted-foreground/45"}`}
     >
-      <title>{`${percent} of context used`}</title>
       <circle cx="6" cy="6" r={PIE_RADIUS} fill="currentColor" fillOpacity={0.2} />
       <circle
         cx="6"

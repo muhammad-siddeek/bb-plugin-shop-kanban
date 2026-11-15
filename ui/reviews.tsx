@@ -28,8 +28,8 @@ import {
 const SHOWN_MAX = 8;
 const CONFIRM_MS = 3_000;
 const SCOPE = {
-  me: { label: "Me", hint: "Requested of you by name", empty: "Nothing requested of you." },
-  team: { label: "Team", hint: "Requested of your teams", empty: "Nothing requested of your teams." },
+  me: { label: "Me", empty: "Nothing requested of you." },
+  team: { label: "Team", empty: "Nothing requested of your teams." },
 } as const;
 const RISK_CHIP = {
   low: { label: "Low", tone: ACCENT_BADGE.emerald },
@@ -84,39 +84,18 @@ function ReviewRow({ review, now, unread, actions }: { review: ReviewCard; now: 
   };
 
   const updated = Date.parse(review.updatedAt);
-  const size =
-    review.additions !== null && review.deletions !== null
-      ? `+${review.additions} −${review.deletions}${review.changedFiles !== null ? ` in ${review.changedFiles} files` : ""}`
-      : null;
-  const titleHint = [
-    review.summary ? `${review.risk ? `[${review.risk}] ` : ""}${review.summary}` : null,
-    "Open a draft thread that explains this pull request.",
-  ]
-    .filter(Boolean)
-    .join("\n\n");
-  const metaHint = [
-    `${review.repo}#${review.number} by ${review.author}${review.bot ? " (bot)" : ""}`,
-    size,
-    review.draft ? "draft" : null,
-    review.rereview ? "new commits since your review" : null,
-    Number.isFinite(updated) ? `updated ${new Date(updated).toLocaleString()}` : null,
-  ]
-    .filter(Boolean)
-    .join(" · ");
-
   return (
     <article
       className={`group relative ${CARD_SURFACE} px-2 pb-1 pt-1.5 ${unread ? "border-sky-500/45 hover:border-sky-500/70" : CARD_EDGE}`}
     >
       <div className="flex items-start gap-2">
-        <span className={MARK_FRAME} aria-label={unread ? "Pull request, new" : "Pull request"} title={unread ? "New since you last opened it" : "Pull request"}>
+        <span className={MARK_FRAME} aria-label={unread ? "Pull request, new" : "Pull request"}>
           <Icon name="GitPullRequest" className={`size-3.5 ${unread ? ACCENT_TEXT.sky : "text-muted-foreground/50"}`} aria-hidden />
         </span>
         <div className="min-w-0 flex-1">
           <button
             type="button"
             onClick={() => void attempt(() => actions.onDraft(review))}
-            title={titleHint}
             className={`flex h-[18px] w-full min-w-0 items-center gap-1.5 rounded-sm text-left ${TYPE.title} leading-[18px] text-foreground decoration-muted-foreground/40 underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 ${
               unread ? "font-bold" : "font-semibold"
             }`}
@@ -125,7 +104,7 @@ function ReviewRow({ review, now, unread, actions }: { review: ReviewCard; now: 
             <span className="min-w-0 truncate">{review.title}</span>
           </button>
           <div className="-mr-[3px] mt-0.5 flex h-5 items-center gap-0.5 pointer-coarse:h-7">
-            <span className={`mr-1 min-w-0 flex-1 truncate ${TYPE.meta} tabular-nums text-muted-foreground/80`} title={metaHint}>
+            <span className={`mr-1 min-w-0 flex-1 truncate ${TYPE.meta} tabular-nums text-muted-foreground/80`}>
               {Number.isFinite(updated) ? `${formatShortAge(updated, now)} · ` : ""}
               {review.rereview ? <span className={`font-medium ${ACCENT_TEXT.sky}`}>re-review · </span> : null}
               {review.author} · {review.repo.split("/").pop()}#{review.number}
@@ -135,7 +114,6 @@ function ReviewRow({ review, now, unread, actions }: { review: ReviewCard; now: 
             <button
               type="button"
               aria-label={confirming ? "Confirm approval" : "Approve"}
-              title={confirming ? "Click again to approve" : "Approve"}
               disabled={pending !== null}
               onClick={() => (confirming ? void submit("approve", "") : setConfirming(true))}
               className={
@@ -150,7 +128,6 @@ function ReviewRow({ review, now, unread, actions }: { review: ReviewCard; now: 
               type="button"
               aria-label="Request changes"
               aria-expanded={declining}
-              title="Request changes"
               disabled={pending !== null}
               onClick={() => setDeclining((open) => !open)}
               className={`${ROW_ICON_ACTION} hover:bg-rose-500/10 hover:text-[light-dark(var(--color-rose-700),var(--color-rose-500))] ${declining ? `bg-rose-500/10 ${ACCENT_TEXT.rose}` : ""}`}
@@ -177,7 +154,6 @@ function ReviewRow({ review, now, unread, actions }: { review: ReviewCard; now: 
               <button
                 type="submit"
                 disabled={pending !== null || !reason.trim()}
-                title="Request changes with this reason"
                 className={`inline-flex h-6 shrink-0 items-center gap-1 rounded-md bg-rose-500 px-2 ${TYPE.body} font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 pointer-coarse:h-9 pointer-coarse:px-3 pointer-coarse:text-sm`}
               >
                 {pending === "request_changes" ? <Spinner /> : null}
@@ -189,7 +165,7 @@ function ReviewRow({ review, now, unread, actions }: { review: ReviewCard; now: 
         </div>
       </div>
 
-      <RowActions label="Archive pull request" title="Archive: hide this pull request from the queue" onArchive={() => void attempt(() => actions.onArchive(review))} />
+      <RowActions label="Archive pull request" onArchive={() => void attempt(() => actions.onArchive(review))} />
     </article>
   );
 }
@@ -211,7 +187,6 @@ function ScopeToggle({ scopes, active, counts, unread, onSelect }: {
             key={scope}
             type="button"
             aria-pressed={selected}
-            title={`${SCOPE[scope].hint}${unread[scope] > 0 ? ` · ${unread[scope]} new` : ""}`}
             onClick={() => onSelect(scope)}
             className={`relative inline-flex h-4 items-center gap-1 rounded-[5px] px-1.5 ${TYPE.control} leading-none transition-[color,background-color,box-shadow] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 pointer-coarse:h-6 pointer-coarse:px-2.5 pointer-coarse:text-[11px] ${
               selected ? "bg-background text-foreground shadow-xs" : "text-muted-foreground hover:text-foreground"
@@ -262,8 +237,7 @@ export function ReviewGroup({ reviews, now }: { reviews: ReviewsApi; now: number
   if (!state || state.scopes.length === 0) return null;
   const listed = state.reviews.filter((review) => local.get(review.id) !== "hidden");
 
-  // Skipped searches are expected on many machines, so a hover hint, not a warning.
-  const { problems, skipped } = listProblems([reviews.error, state.error], state.sources);
+  const problems = listProblems([reviews.error, state.error], state.sources);
   const loading = state.refreshedAt === null;
 
   // A scope whose searches were all removed falls back to the one left.
@@ -313,7 +287,6 @@ export function ReviewGroup({ reviews, now }: { reviews: ReviewsApi; now: number
       <GroupHeader
         title="Reviews"
         count={state.scopes.length === 1 ? scoped.length : null}
-        hint={skipped.length > 0 ? ["Not read:", ...skipped].join("\n") : "Open pull requests waiting on your review"}
         refreshing={state.refreshing}
         problems={problems}
       >

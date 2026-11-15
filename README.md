@@ -21,9 +21,11 @@ thread (see Parked) and starting a waiting one (see Working limit).
   background work included. Blocked threads sit at the top of Working as red cards: the
   thread is idle and needs you (a pending interaction, an error, or a last
   reply that asks a question). The title bar, and the pill when the board is
-  hidden, show one dot per thread here: red for blocked, amber for working.
+  hidden, show the Working limit's meter (below) with one red dot per blocked
+  thread ahead of it.
 - **Done**: the thread is idle and its last reply reports completion. Cards
-  are one line (status, tag, title, age). Unread ones come first with a solid
+  are one line (status, tag, title, and what the thread's tree has spent, or
+  its age while it has no cost). Unread ones come first with a solid
   check, then a **Read** section, each newest finish first; the age is when
   the thread finished, and reading or renaming a card doesn't move it. Read
   state and finish time are bb's own (the sidebar's unread dot), and the
@@ -41,8 +43,9 @@ thread (see Parked) and starting a waiting one (see Working limit).
 The picker at the top of Working caps how many threads work at once, to keep
 a steady spend rate: Max 0 to Max 5 working, or No limit. It shows one amber
 dot per slot, filled as threads take them (`●●○ 2/3`), with threads over the
-limit as ringed dots past the end, and `+2 waiting` while messages wait; the
-default is no limit, and the choice is kept across reloads.
+limit as amber dots with an exclamation mark cut through, and `+2 waiting`
+while messages wait; the default is no limit, and the choice is kept across
+reloads.
 
 - A thread holds a slot while it or a descendant has a turn in progress and
   it doesn't wait on you, so Blocked threads don't count.
@@ -246,7 +249,7 @@ Each pull request is a two-line card:
 - **Line 1**: a risk chip (`LOW`, `MED`, `HIGH`) and the title. Clicking the
   title opens bb's new-thread screen with a drafted, unsent prompt that asks
   the agent to explain the pull request: what changed, why, and how risky it
-  is. Hover it for the model's first read.
+  is, starting from the model's first read.
 - **Line 2**: age, author and number, then three actions:
   - **Delta** or **GitHub** opens the pull request in your browser.
   - **✓** approves. A first click turns it into `Approve?`; a second click
@@ -261,10 +264,9 @@ requesting changes removes the card at once. A pull request you reviewed,
 from the board or anywhere else, stays hidden until commits land after your
 review; it then comes back marked `re-review`, and its draft asks what changed
 since the commit you reviewed. Errors show on the card, and failed searches
-behind an amber icon in the list header. A search that can't run here,
-because no persistent host is connected or `dt` or `gh` is missing or signed
-out, is skipped quietly: hover the Reviews header to see why. The list shows
-8 cards with a "Show more" button.
+as an amber icon in the list header. A search that can't run here, because
+no persistent host is connected or `dt` or `gh` is missing or signed out, is
+skipped quietly. The list shows 8 cards with a "Show more" button.
 
 The searches run through the forge CLIs you already signed in to, `dt` for
 Delta and `gh` for GitHub, on the same connected persistent host as thread

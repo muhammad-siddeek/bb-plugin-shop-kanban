@@ -565,7 +565,7 @@ function SpendChart({ days }: { days: AiUsage["days"] }) {
             const level = spendLevel(day.cost);
             const label = `${LONG_DATE.format(at)}: ${formatMoney(day.cost, "USD", true)}${isToday ? " so far" : ""}`;
             return (
-              <li key={day.date} title={label} className="flex h-full items-end justify-center">
+              <li key={day.date} className="flex h-full items-end justify-center">
                 <span className="sr-only">{label}</span>
                 <span
                   aria-hidden
@@ -673,7 +673,7 @@ function TopProcesses({ cores, sort }: { cores: number; sort: "cpu" | "memory" }
             return (
               <li key={row.name} className={`grid grid-cols-[minmax(0,1fr)_4.5rem_3.75rem] items-center gap-2 ${TYPE.meta}`}>
                 <span className="flex min-w-0 items-center gap-1">
-                  <span className="truncate font-medium" title={row.name}>{row.name}</span>
+                  <span className="truncate font-medium">{row.name}</span>
                   {row.count > 1 ? <span className={`shrink-0 ${TYPE.meta} tabular-nums text-muted-foreground`}>×{row.count}</span> : null}
                 </span>
                 <Bar value={(metric / top) * 100} tint={sort === "cpu" ? "bg-blue-500/70" : "bg-red-500/70"} className="h-1" />
