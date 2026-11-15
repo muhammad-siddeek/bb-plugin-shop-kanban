@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- The title bar's Shopify AI spend figure is grey like the other chips; under
+  the amber mark the chip gets a light green wash instead of green text.
+
 ## 0.22.1
 
 - The plugin overview fits the marketplace's 4,000-character limit again.

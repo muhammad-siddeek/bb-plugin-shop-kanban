@@ -244,16 +244,16 @@ function Bar({ value, tint, className = "" }: { value: number; tint: string; cla
 
 /**
  * One chip's content in the title-bar strip: glyph and figure, tinted amber or rose as its resource nears running out.
- * `okTone` replaces the neutral grey while it doesn't.
+ * `okBackground` tints the chip while it doesn't; the figure stays the neutral grey.
  */
-function StripChip({ glyph, label, level, okTone, dim = false }: { glyph: ReactNode; label: string; level: Level; okTone?: string; dim?: boolean }) {
+function StripChip({ glyph, label, level, okBackground = "", dim = false }: { glyph: ReactNode; label: string; level: Level; okBackground?: string; dim?: boolean }) {
   return (
     <span
       aria-hidden
       className={`inline-flex h-5 shrink-0 items-center gap-1 rounded px-1 ${TYPE.meta} font-medium leading-none tabular-nums transition-colors duration-300 ${
         level !== "ok"
           ? `${TONE[level].text} ${level === "critical" ? "bg-rose-500/15" : "bg-amber-500/15"}`
-          : okTone ?? "text-muted-foreground group-hover:text-foreground group-aria-expanded:text-foreground"
+          : `text-muted-foreground group-hover:text-foreground group-aria-expanded:text-foreground ${okBackground}`
       } ${dim ? "opacity-60" : ""}`}
     >
       {glyph}
@@ -387,11 +387,11 @@ export function SystemMonitor({ maxPanelHeight }: { maxPanelHeight: number }) {
       ) : (
         <span className={`px-1 ${TYPE.meta} text-muted-foreground`}>{error ? "Resources unavailable" : "Reading…"}</span>
       )}
-      {/* Today's Shopify AI spend: Done's green below AI_SPEND.warn, amber from it, red from AI_SPEND.critical. */}
+      {/* Today's Shopify AI spend: a green wash below AI_SPEND.warn, amber from it, red from AI_SPEND.critical. */}
       {aiUsage?.todayCost != null
         ? chip(
             "ai",
-            <StripChip glyph={<WalletGlyph className="size-3 shrink-0" />} label={formatMoney(aiUsage.todayCost)} level={spendLevel(aiUsage.todayCost)} okTone={ACCENT_TEXT.emerald} dim={Boolean(aiUsage.error)} />,
+            <StripChip glyph={<WalletGlyph className="size-3 shrink-0" />} label={formatMoney(aiUsage.todayCost)} level={spendLevel(aiUsage.todayCost)} okBackground="bg-emerald-500/15" dim={Boolean(aiUsage.error)} />,
             `Shopify AI spend today ${formatMoney(aiUsage.todayCost, "USD", true)}`,
           )
         : null}
