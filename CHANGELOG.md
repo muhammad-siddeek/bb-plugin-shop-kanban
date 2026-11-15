@@ -1,13 +1,12 @@
 # Changelog
 
-## Unreleased
-
-- Assigned has a red count badge when it contains issues.
+## 0.23.0
 
 - Reviews and Assigned sit at the bottom of Queue, below Parked,
   without an In heading or combined badge. The header keeps Queue and Out;
   a saved In tab selection opens Queue.
 - Reviews show only requests of you by name, without the Me / Team toggle.
+- Assigned has a red count badge when it contains issues.
 
 ## 0.22.2
 
