@@ -1,9 +1,12 @@
 # Changelog
 
-## Unreleased
+## 0.22.2
 
 - The title bar's Shopify AI spend figure is grey like the other chips; under
   the amber mark the chip gets a light green wash instead of green text.
+- The AI spend chip finds gcloud wherever your login shell does, instead of
+  in a fixed list of install paths: a bb server started without your shell's
+  PATH still reads it when a toolchain manager installed gcloud.
 
 ## 0.22.1
 
