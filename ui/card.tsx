@@ -224,10 +224,11 @@ export function TaskCard({ task, now, unread, selected, dragging, starting, prov
   const tooltipId = useId();
   const [tooltipOpen, setTooltipOpen] = useState(false);
   const tooltipTimer = useRef(0);
-  // The tooltip is the harness session's details; a card with none (a thread not started yet) has no tooltip.
+  // Only compact (Done/Parked, one-line) cards have a tooltip: it carries the session details and the hint their
+  // single line hides. Full cards already show their text and footer, so hovering them opens nothing.
   const hasSession = provider !== null || task.session !== null;
   const showTooltip = () => {
-    if (hasSession || (compact && compactHint)) setTooltipOpen(true);
+    if (compact && (hasSession || compactHint)) setTooltipOpen(true);
   };
   const hideTooltip = () => {
     window.clearTimeout(tooltipTimer.current);
@@ -254,7 +255,7 @@ export function TaskCard({ task, now, unread, selected, dragging, starting, prov
   const parked = task.status === "parked";
   // Done and Parked cards are finished or set aside: one line (mark, tag, title, age), the rest in the tooltip.
   const compact = parked || task.status === "done";
-  // Lines 1-2: "[tag] title — summary" as one run of text; the footer's session facts are in the card's tooltip.
+  // Lines 1-2: "[tag] title — summary" as one run of text; full cards have no tooltip.
   // The 18px lines come from the 12px strut; the 13px title is leading-none so it can't grow a line.
   const text = (
     <span className={`line-clamp-2 ${TYPE.body} leading-[18px]`}>

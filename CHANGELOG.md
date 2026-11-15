@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Only one-line (Done and Parked) cards open a hover tooltip; full cards
+  already show their text and footer, so hovering them opens nothing.
+
 ## 0.19.0
 
 - Done and Parked cards are one line: status, tag, title and age. Their
