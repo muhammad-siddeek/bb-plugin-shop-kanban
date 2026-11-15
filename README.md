@@ -11,12 +11,12 @@ thread (see Parked) and starting a waiting one (see Working limit).
 
 - **Queue**: the thread has not started yet (pending, queued, or no output).
   A thread that errored and then got a follow-up stays here while the
-  follow-up waits to send, not Blocked in Working. Queue's header has three
-  tabs, kept across reloads: **Queue** (these threads), **In** (pull requests
-  to review and issues assigned to you; see Review queue and Work lists) and
-  **Out** (your open and recently merged pull requests). Each tab shows its
-  count (none at zero), blue when it has new cards; In's is red, since it is
-  work waiting on you. A tab whose settings are all empty goes away.
+  follow-up waits to send, not Blocked in Working. Queue's header has two
+  tabs, kept across reloads: **Queue** (these threads) and **Out** (your open
+  and recently merged pull requests). Out disappears when its settings are
+  empty. Incoming work sits at the bottom of Queue, below Parked, with
+  pull requests requested of you by name and issues assigned to you. Reviews
+  and Assigned appear directly, without an In heading or combined badge.
 - **Working**: the thread or one of its descendants has a turn in progress,
   background work included. Blocked threads sit at the top of Working as red cards: the
   thread is idle and needs you (a pending interaction, an error, or a last
@@ -243,15 +243,10 @@ qmd --index shop-kanban search "redis timeout"   # same index from a terminal
 ## Review queue
 
 Open pull requests waiting on your review are the **Reviews** list, first in
-the Queue column's In tab, newest update first. A **Me | Team** toggle in its
-header switches between requests
-of you by name and requests of your teams. It opens on Me every time the
-board loads. Each side shows its count, in blue when it has new cards. Which
-pull requests land where is up to you: the `reviewSearchesMe` and
-`reviewSearchesTeam` settings each list one search per line, so each user
-gets their own and their teams' requests. A pull request that a Me search
-also finds is listed under Me only. Empty one setting and its side of the
-toggle goes away; empty both and the list does.
+the Queue tab's **In** section, newest update first. Only requests of you by
+name (Me) are shown; there is no Team toggle. `reviewSearchesMe` lists one
+search per line. Empty it to hide Reviews. Team search configuration is
+retained but team requests are not displayed on the board.
 
 Each pull request is a two-line card:
 

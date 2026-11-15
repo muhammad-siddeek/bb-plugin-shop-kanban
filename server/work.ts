@@ -108,7 +108,7 @@ export function createWorkLists(bb: BbPluginApi) {
     assignedSearches: {
       type: "string",
       label: "In: issues assigned to you",
-      description: `Listed under Assigned in the Queue column's In tab. ${LINE_SYNTAX} \`is:issue is:open\` is implied; Delta has no issues. Leave empty to hide Assigned.`,
+      description: `Listed under Assigned in the Queue tab's In section. ${LINE_SYNTAX} \`is:issue is:open\` is implied; Delta has no issues. Leave empty to hide Assigned.`,
       default: "github: assignee:@me",
       experimental_multiline: true,
     },

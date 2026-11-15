@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
-import { ACCENT_BADGE, ACCENT_TEXT, CARD_EDGE, CARD_SURFACE, formatShortAge, type ReviewCard, type ReviewScope } from "./model";
+import { ACCENT_BADGE, ACCENT_TEXT, CARD_EDGE, CARD_SURFACE, formatShortAge, type ReviewCard } from "./model";
 import type { ReviewVerdict, ReviewsApi } from "./hooks";
 import {
   CHIP,
@@ -15,22 +15,20 @@ import {
   RowActions,
   ShowMore,
   Spinner,
+  TWO_LINE_META,
+  TWO_LINE_META_ROW,
+  TWO_LINE_PAD,
   TYPE,
   useBbLinks,
   useRowError,
 } from "./primitives";
 
-// Reviews, the first list in the Queue column's In tab: a two-line card per pull request waiting on the user,
-// toggled between requests of the user by name (Me, where the board always opens) and of their teams (Team). The
-// title opens a new-thread draft asking for what changed, why, and how risky it is; the second line opens the pull
+// Reviews, at the bottom of the Queue tab above Assigned: pull requests asking for the user's review by name only.
+// The title opens a new-thread draft asking for what changed, why, and how risky it is; the second line opens the pull
 // request (marking it read), approves after a confirming second click, or requests changes with a reason.
 
 const SHOWN_MAX = 8;
 const CONFIRM_MS = 3_000;
-const SCOPE = {
-  me: { label: "Me", empty: "Nothing requested of you." },
-  team: { label: "Team", empty: "Nothing requested of your teams." },
-} as const;
 const RISK_CHIP = {
   low: { label: "Low", tone: ACCENT_BADGE.emerald },
   medium: { label: "Med", tone: ACCENT_BADGE.amber },
@@ -86,7 +84,7 @@ function ReviewRow({ review, now, unread, actions }: { review: ReviewCard; now: 
   const updated = Date.parse(review.updatedAt);
   return (
     <article
-      className={`group relative ${CARD_SURFACE} px-2 pb-1 pt-1.5 ${unread ? "border-sky-500/45 hover:border-sky-500/70" : CARD_EDGE}`}
+      className={`group relative ${CARD_SURFACE} ${TWO_LINE_PAD} ${unread ? "border-sky-500/45 hover:border-sky-500/70" : CARD_EDGE}`}
     >
       <div className="flex items-start gap-2">
         <span className={MARK_FRAME} aria-label={unread ? "Pull request, new" : "Pull request"}>
@@ -103,8 +101,8 @@ function ReviewRow({ review, now, unread, actions }: { review: ReviewCard; now: 
             <RiskChip review={review} />
             <span className="min-w-0 truncate">{review.title}</span>
           </button>
-          <div className="-mr-[3px] mt-0.5 flex h-5 items-center gap-0.5 pointer-coarse:h-7">
-            <span className={`mr-1 min-w-0 flex-1 truncate ${TYPE.meta} tabular-nums text-muted-foreground/80`}>
+          <div className={TWO_LINE_META_ROW}>
+            <span className={TWO_LINE_META}>
               {Number.isFinite(updated) ? `${formatShortAge(updated, now)} · ` : ""}
               {review.rereview ? <span className={`font-medium ${ACCENT_TEXT.sky}`}>re-review · </span> : null}
               {review.author} · {review.repo.split("/").pop()}#{review.number}
@@ -170,49 +168,10 @@ function ReviewRow({ review, now, unread, actions }: { review: ReviewCard; now: 
   );
 }
 
-function ScopeToggle({ scopes, active, counts, unread, onSelect }: {
-  scopes: readonly ReviewScope[];
-  active: ReviewScope;
-  counts: Record<ReviewScope, number>;
-  unread: Record<ReviewScope, number>;
-  onSelect: (scope: ReviewScope) => void;
-}) {
-  return (
-    <div role="group" aria-label="Whose review requests" className="inline-flex h-[18px] shrink-0 items-center rounded-md bg-muted/70 p-px pointer-coarse:h-7">
-      {scopes.map((scope) => {
-        const selected = scope === active;
-        const fresh = !selected && unread[scope] > 0;
-        return (
-          <button
-            key={scope}
-            type="button"
-            aria-pressed={selected}
-            onClick={() => onSelect(scope)}
-            className={`relative inline-flex h-4 items-center gap-1 rounded-[5px] px-1.5 ${TYPE.control} leading-none transition-[color,background-color,box-shadow] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 pointer-coarse:h-6 pointer-coarse:px-2.5 pointer-coarse:text-[11px] ${
-              selected ? "bg-background text-foreground shadow-xs" : "text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            {SCOPE[scope].label}
-            <span className={`tabular-nums ${selected ? "text-muted-foreground" : fresh ? ACCENT_TEXT.sky : "opacity-70"}`}>{counts[scope]}</span>
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
-/** Reviews requested of the user by name (not their teams), and how many are new: the In tab's count. */
-export function visibleReviews(reviews: ReviewsApi): { count: number; fresh: number } {
-  const listed = (reviews.state?.reviews ?? []).filter((review) => review.scope === "me");
-  return { count: listed.length, fresh: listed.filter((review) => review.unread).length };
-}
-
 export function ReviewGroup({ reviews, now }: { reviews: ReviewsApi; now: number }) {
   const links = useBbLinks();
   const { state } = reviews;
   const [showAll, setShowAll] = useState(false);
-  // Not stored: the board opens on Me every time it is shown.
-  const [chosenScope, setChosenScope] = useState<ReviewScope>("me");
   // Opened ("read"), archived or reviewed ("hidden") here: applied at once, before the server's next list round-trips.
   const [local, setLocal] = useState<ReadonlyMap<string, "read" | "hidden">>(() => new Map());
   const mark = (id: string, value: "read" | "hidden" | null) =>
@@ -234,22 +193,14 @@ export function ReviewGroup({ reviews, now }: { reviews: ReviewsApi; now: number
     });
   }, [state]);
 
-  if (!state || state.scopes.length === 0) return null;
-  const listed = state.reviews.filter((review) => local.get(review.id) !== "hidden");
+  if (!state || !state.scopes.includes("me")) return null;
+  const scoped = state.reviews.filter((review) => review.scope === "me" && local.get(review.id) !== "hidden");
 
   const problems = listProblems([reviews.error, state.error], state.sources);
   const loading = state.refreshedAt === null;
 
-  // A scope whose searches were all removed falls back to the one left.
-  const scope = state.scopes.includes(chosenScope) ? chosenScope : state.scopes[0];
   const isNew = (review: ReviewCard) => review.unread && !local.has(review.id);
-  const counts: Record<ReviewScope, number> = { me: 0, team: 0 };
-  const unread: Record<ReviewScope, number> = { me: 0, team: 0 };
-  for (const review of listed) {
-    counts[review.scope] += 1;
-    if (isNew(review)) unread[review.scope] += 1;
-  }
-  const scoped = listed.filter((review) => review.scope === scope);
+  const unread = scoped.filter(isNew).length;
   const shown = showAll ? scoped : scoped.slice(0, SHOWN_MAX);
 
   const actions: ReviewActions = {
@@ -277,24 +228,18 @@ export function ReviewGroup({ reviews, now }: { reviews: ReviewsApi; now: number
     },
   };
 
-  const selectScope = (next: ReviewScope) => {
-    setChosenScope(next);
-    setShowAll(false);
-  };
-
   return (
     <div className="space-y-1">
       <GroupHeader
         title="Reviews"
-        count={state.scopes.length === 1 ? scoped.length : null}
+        count={scoped.length}
         refreshing={state.refreshing}
         problems={problems}
       >
-        {state.scopes.length > 1 ? <ScopeToggle scopes={state.scopes} active={scope} counts={counts} unread={unread} onSelect={selectScope} /> : null}
-        {unread[scope] > 0 ? <span className={`${TYPE.control} ${ACCENT_TEXT.sky}`}>{unread[scope]} new</span> : null}
+        {unread > 0 ? <span className={`${TYPE.control} ${ACCENT_TEXT.sky}`}>{unread} new</span> : null}
       </GroupHeader>
       {scoped.length === 0 ? (
-        <p className={EMPTY_NOTE}>{loading ? "Reading pull requests…" : SCOPE[scope].empty}</p>
+        <p className={EMPTY_NOTE}>{loading ? "Reading pull requests…" : "Nothing requested of you."}</p>
       ) : null}
       {shown.map((review) => (
         <ReviewRow key={review.id} review={review} now={now} unread={isNew(review)} actions={actions} />

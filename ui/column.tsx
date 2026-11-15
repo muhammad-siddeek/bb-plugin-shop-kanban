@@ -2,11 +2,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { DragEvent, ReactElement, ReactNode } from "react";
 import { experimental_Icon as Icon, experimental_NewThreadComposer as NewThreadComposer, experimental_useProviders, experimental_useSidebarThreads, useBbContext, useBbNavigate, type NewThreadRequest } from "@get-bb/plugin-sdk/app";
 import { PLUGIN_SLUG } from "../brand";
-import { ACCENT_BADGE, CLOCK_TICK_MS, STATUS_META, THREAD_DRAG_TYPE, groupTasksByColumn, shortNameFromPrompt, type BoardColumn, type BoardState, type BoardTask } from "./model";
+import { CLOCK_TICK_MS, STATUS_META, THREAD_DRAG_TYPE, groupTasksByColumn, shortNameFromPrompt, type BoardColumn, type BoardState, type BoardTask } from "./model";
 import { useNow, type BoardApi, type RemoteApi, type ReviewsApi, type WorkApi } from "./hooks";
 import { TaskCard } from "./card";
 import { RemoteSection } from "./remote";
-import { ReviewGroup, visibleReviews } from "./reviews";
+import { ReviewGroup } from "./reviews";
 import { WipLimitControl } from "./wip-limit";
 import { WorkGroup, useWorkItems } from "./work";
 import { CountBadge, DASHED_SLOT, EMPTY_NOTE, GroupHeader, TYPE } from "./primitives";
@@ -17,11 +17,10 @@ const DRAFT_KEY = `${PLUGIN_SLUG}:new-thread-draft`;
 /** The Queue column's open tab, kept across reloads. */
 const QUEUE_TAB_KEY = `${PLUGIN_SLUG}:queue-tab`;
 
-/** The Queue column's tabs: threads waiting to start, work coming to the user, and work going out from them. */
-type QueueTab = "queue" | "incoming" | "outgoing";
+/** The Queue column's tabs: queued threads (with Parked and incoming work below them), and work going out from the user. */
+type QueueTab = "queue" | "outgoing";
 const QUEUE_TABS: { id: QueueTab; label: string }[] = [
   { id: "queue", label: "Queue" },
-  { id: "incoming", label: "In" },
   { id: "outgoing", label: "Out" },
 ];
 
@@ -148,13 +147,13 @@ function EmptySlot({ children }: { children: ReactNode }) {
 
 /** The Queue column's header: one uppercase tab per list with its count, underlined in the column's accent when open. */
 function QueueTabs({ tabs, active, onSelect }: {
-  tabs: { id: QueueTab; label: string; count: number; fresh: number }[];
+  tabs: { id: QueueTab; label: string; count: number }[];
   active: QueueTab;
   onSelect: (tab: QueueTab) => void;
 }) {
   const meta = STATUS_META.queue;
   return (
-    // Tabs keep their full labels; a column too narrow for all three scrolls them sideways instead.
+    // Tabs keep their full labels; a column too narrow for both scrolls them sideways instead.
     <div role="tablist" aria-label="Queue column" className="flex min-w-0 items-stretch gap-3 self-stretch overflow-x-auto [scrollbar-width:none]">
       {tabs.map((tab) => {
         const selected = tab.id === active;
@@ -170,11 +169,7 @@ function QueueTabs({ tabs, active, onSelect }: {
             }`}
           >
             <span>{tab.label}</span>
-            {/* In is work waiting on you: any of it shows red, selected or not. */}
-            <CountBadge
-              count={tab.count}
-              tone={tab.id === "incoming" ? ACCENT_BADGE.rose : selected ? meta.badge : tab.fresh > 0 ? ACCENT_BADGE.sky : STATUS_META.parked.badge}
-            />
+            <CountBadge count={tab.count} tone={selected ? meta.badge : STATUS_META.parked.badge} />
             {selected ? <span aria-hidden className={`pointer-events-none absolute inset-x-0 bottom-0 h-[2px] rounded-full ${meta.accent}`} /> : null}
           </button>
         );
@@ -295,7 +290,7 @@ function ParkedSection({ tasks, dragging, onDrop, renderCard }: {
   );
 }
 
-function BoardColumnView({ column, title, tasks, count, unreadFirst, renderCard, dragging, drop, onStartAdding, headerControl, tabs, body, addForm, parked, remote }: {
+function BoardColumnView({ column, title, tasks, count, unreadFirst, renderCard, dragging, drop, onStartAdding, headerControl, tabs, body, addForm, incoming, parked, remote }: {
   column: BoardColumn;
   title: string;
   tasks: BoardTask[];
@@ -313,10 +308,12 @@ function BoardColumnView({ column, title, tasks, count, unreadFirst, renderCard,
   headerControl: ReactElement | null;
   /** Drawn instead of the title and count: the Queue column's tabs. */
   tabs: ReactElement | null;
-  /** Drawn instead of the column's cards: an Incoming or Out tab. */
+  /** Drawn instead of the column's cards: the Out tab. */
   body: ReactElement | null;
   /** The new-thread form; non-null only while it is open. */
   addForm: ReactElement | null;
+  /** Incoming work at the bottom of Queue, below Parked. */
+  incoming: ReactElement | null;
   /** The Queue column's Parked section: idle threads set aside to come back to, and what a card dropped there does. */
   parked: { tasks: BoardTask[]; onDrop: (threadId: string) => void } | null;
   /** The Working column's Remote section, under its cards. */
@@ -377,6 +374,7 @@ function BoardColumnView({ column, title, tasks, count, unreadFirst, renderCard,
             {tasks.slice(unreadFirst).map(renderCard)}
             {parked ? <ParkedSection tasks={parked.tasks} dragging={dragging} onDrop={parked.onDrop} renderCard={renderCard} /> : null}
             {remote}
+            {incoming}
           </>
         )}
       </div>
@@ -488,35 +486,29 @@ export function BoardView({ api, reviews, work, remote }: { api: BoardApi; revie
     setChosenTab(tab);
     writeStored(QUEUE_TAB_KEY, tab);
   };
-  // A tab shows while its lists load, and once any of them has a search configured.
-  const incoming = visibleReviews(reviews);
-  const tabCounts: Record<QueueTab, { count: number; fresh: number; shown: boolean }> = {
-    queue: { count: grouped.get("queue")?.length ?? 0, fresh: 0, shown: true },
-    incoming: {
-      count: incoming.count + workItems.byList.assigned.length,
-      fresh: incoming.fresh,
-      shown: !reviews.state || !workItems.state || reviews.state.scopes.length > 0 || workItems.lists.includes("assigned"),
-    },
-    outgoing: {
-      count: workItems.byList.open.length + workItems.byList.shipped.length,
-      fresh: 0,
-      shown: !workItems.state || workItems.lists.includes("open") || workItems.lists.includes("shipped"),
-    },
+  const tasksIn = (column: BoardColumn) => grouped.get(column) ?? [];
+  // Out shows while its lists load, and once Open or Shipped has a search configured; Queue always shows.
+  const outgoingShown = !workItems.state || workItems.lists.includes("open") || workItems.lists.includes("shipped");
+  const tabCounts: Record<QueueTab, number> = {
+    queue: tasksIn("queue").length,
+    outgoing: workItems.byList.open.length + workItems.byList.shipped.length,
   };
-  const tabs = QUEUE_TABS.filter((tab) => tabCounts[tab.id].shown).map((tab) => ({ ...tab, ...tabCounts[tab.id] }));
-  const queueTab = tabs.some((tab) => tab.id === chosenTab) ? chosenTab : "queue";
-  const queueBody =
-    queueTab === "incoming" ? (
-      <div className="space-y-2.5">
-        <ReviewGroup reviews={reviews} now={now} />
-        <WorkGroup list="assigned" work={workItems} now={now} />
-      </div>
-    ) : queueTab === "outgoing" ? (
-      <div className="space-y-2.5">
-        <WorkGroup list="open" work={workItems} now={now} />
-        <WorkGroup list="shipped" work={workItems} now={now} />
-      </div>
-    ) : null;
+  const tabs = QUEUE_TABS.map((tab) => ({ ...tab, count: tabCounts[tab.id] }));
+  const queueTab = outgoingShown ? chosenTab : "queue";
+  // Incoming shows while its lists load, and once Reviews or Assigned has a search configured.
+  const incomingShown = !reviews.state || !workItems.state || reviews.state.scopes.includes("me") || workItems.lists.includes("assigned");
+  const incomingSection = incomingShown ? (
+    <section aria-label="In" className="space-y-1 pt-1">
+      <ReviewGroup reviews={reviews} now={now} />
+      <WorkGroup list="assigned" work={workItems} now={now} />
+    </section>
+  ) : null;
+  const queueBody = queueTab === "outgoing" ? (
+    <div className="space-y-2.5">
+      <WorkGroup list="open" work={workItems} now={now} />
+      <WorkGroup list="shipped" work={workItems} now={now} />
+    </div>
+  ) : null;
 
   const renderCard = (task: BoardTask) => (
     <TaskCard
@@ -538,15 +530,15 @@ export function BoardView({ api, reviews, work, remote }: { api: BoardApi; revie
   );
 
   // groupTasksByColumn puts these first in Done.
-  const unreadDone = (grouped.get("done") ?? []).filter((task) => task.unread).length;
+  const unreadDone = tasksIn("done").filter((task) => task.unread).length;
 
   const renderColumn = (column: { id: BoardColumn; title: string }) => (
     <BoardColumnView
       key={column.id}
       column={column.id}
       title={column.title}
-      tasks={grouped.get(column.id) ?? []}
-      count={column.id === "wip" ? null : column.id === "done" ? unreadDone : (grouped.get(column.id) ?? []).length}
+      tasks={tasksIn(column.id)}
+      count={column.id === "wip" ? null : column.id === "done" ? unreadDone : tasksIn(column.id).length}
       unreadFirst={column.id === "done" ? unreadDone : 0}
       renderCard={renderCard}
       dragging={draggingId !== null}
@@ -556,15 +548,16 @@ export function BoardView({ api, reviews, work, remote }: { api: BoardApi; revie
         column.id === "wip" && board ? (
           <WipLimitControl
             limit={board.wipLimit.limit}
-            working={(grouped.get("wip") ?? []).filter((task) => task.status === "wip").length}
+            working={tasksIn("wip").filter((task) => task.status === "wip").length}
             waiting={board.wipLimit.waiting}
             onChange={setWipLimit}
           />
         ) : null
       }
-      tabs={column.id === "queue" && tabs.length > 1 ? <QueueTabs tabs={tabs} active={queueTab} onSelect={selectTab} /> : null}
+      tabs={column.id === "queue" && outgoingShown ? <QueueTabs tabs={tabs} active={queueTab} onSelect={selectTab} /> : null}
       body={column.id === "queue" ? queueBody : null}
-      parked={column.id === "queue" ? { tasks: grouped.get("parked") ?? [], onDrop: dropPark } : null}
+      incoming={column.id === "queue" ? incomingSection : null}
+      parked={column.id === "queue" ? { tasks: tasksIn("parked"), onDrop: dropPark } : null}
       remote={column.id === "wip" ? <RemoteSection remote={remote} now={now} /> : null}
       addForm={
         column.id === "queue" && adding ? (

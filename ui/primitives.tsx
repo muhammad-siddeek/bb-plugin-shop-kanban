@@ -20,7 +20,7 @@ export const TYPE = {
   label: "text-[10px] font-semibold uppercase tracking-[0.1em]",
   /** Counts and small pills. */
   badge: "text-[10px] font-semibold tabular-nums",
-  /** Small toggles and their notes, such as Me | Team. */
+  /** Small notes beside a section title, such as Reviews' "3 new". */
   control: "text-[10px] font-medium",
   /** Category and risk chips in front of a title. */
   chip: "text-[9px] font-semibold uppercase tracking-[0.06em]",
@@ -44,6 +44,12 @@ export const DASHED_SLOT = `flex min-h-8 shrink-0 items-center justify-center ga
 export const EMPTY_NOTE = `${DASHED_SLOT} border-foreground/15 text-muted-foreground/90`;
 /** One-line cards and rows (Done, Parked, Out): 28px tall, the 20px line inside a 3px pad and the border. */
 export const ONE_LINE_PAD = "px-2 py-[3px]";
+/** Two-line rows (Reviews, Assigned): the title line, then a meta line of age, reference and the row's actions. */
+export const TWO_LINE_PAD = "px-2 pb-1 pt-1.5";
+/** A two-line row's second line; its actions end flush with the archive button above. */
+export const TWO_LINE_META_ROW = "-mr-[3px] mt-0.5 flex h-5 items-center gap-0.5 pointer-coarse:h-7";
+/** The second line's text, truncated before the actions. */
+export const TWO_LINE_META = `mr-1 min-w-0 flex-1 truncate ${TYPE.meta} tabular-nums text-muted-foreground/80`;
 /**
  * A one-line row's age at its end. Touch screens always show the row's actions over the end of the line, so the age
  * gives way there instead of showing half under them.
@@ -134,13 +140,14 @@ export function CountBadge({ count, tone = "bg-muted text-muted-foreground" }: {
 }
 
 /**
- * A section's header row inside a column (Parked, Read, and the Queue column's tabs' lists): an uppercase title and
- * its count, then `children` (toggles), a hairline to the end, and there a spinner while it refreshes and an amber
+ * A section's header row inside a column (Parked, Read, and the work and review lists): an uppercase title and
+ * its count, then `children` (notes), a hairline to the end, and there a spinner while it refreshes and an amber
  * mark while it has problems.
  */
-export function GroupHeader({ title, count, refreshing = false, problems = [], children }: {
+export function GroupHeader({ title, count, countTone, refreshing = false, problems = [], children }: {
   title: string;
   count: number | null;
+  countTone?: string;
   refreshing?: boolean;
   problems?: string[];
   children?: ReactNode;
@@ -149,7 +156,7 @@ export function GroupHeader({ title, count, refreshing = false, problems = [], c
     <div className={`flex h-6 items-center gap-1.5 ${CARD_INSET} pointer-coarse:h-7`}>
       <h3 className={`flex min-w-0 items-center gap-1.5 ${TYPE.label} leading-none text-muted-foreground`}>
         <span className="truncate">{title}</span>
-        {count !== null ? <CountBadge count={count} /> : null}
+        {count !== null ? <CountBadge count={count} tone={countTone} /> : null}
       </h3>
       {children}
       <span className="h-px min-w-2 flex-1 bg-border/60" aria-hidden />

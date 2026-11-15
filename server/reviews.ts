@@ -21,7 +21,7 @@ import { reviewRiskSchema, type ReviewCard, type ReviewScope, type ReviewSource,
 import { coalesced, errorMessage, jobQueue, throttledLog } from "./text";
 
 // Review queue: open pull requests waiting on the user's review, read through the forge CLIs (`dt`, `gh`) on the
-// user's persistent host and listed in the Queue column's In tab. The searches come from settings, so each
+// user's persistent host and listed in the Queue tab's In section. The searches come from settings, so each
 // user gets their own and their teams' requests; pull requests they already reviewed drop off. The labeler model
 // writes each one a "[risk] what, why" first read, cached per head commit. Read, archived and reviewed marks and
 // the summaries live in KV.
@@ -93,14 +93,14 @@ export function createReviewQueue(bb: BbPluginApi, labeler: Labeler) {
     reviewSearchesMe: {
       type: "string",
       label: "Review queue: requested of you",
-      description: `Open pull requests asking for your review by name, under Me in the Queue column's In tab. ${LINE_SYNTAX} Delta's \`review-requested:@me\` and GitHub's \`user-review-requested:@me\` leave out your teams' requests. Leave empty to hide Me.`,
+      description: `Open pull requests asking for your review by name, in the Queue tab's In section. ${LINE_SYNTAX} Delta's \`review-requested:@me\` and GitHub's \`user-review-requested:@me\` leave out your teams' requests. Leave empty to hide Reviews.`,
       default: "delta: review-requested:@me -author:@me -is:draft\ngithub: user-review-requested:@me -author:@me -is:draft",
       experimental_multiline: true,
     },
     reviewSearchesTeam: {
       type: "string",
       label: "Review queue: requested of your teams",
-      description: `Open pull requests asking your teams for review, under Team in the Queue column's In tab; one a search for you also finds is listed under Me only. ${LINE_SYNTAX} Delta's \`team-review-requested:@me\` matches every team you are on; on GitHub, \`review-requested:@me -user-review-requested:@me\` does. For one team, Delta takes the team slug (\`team-review-requested:exp\`) and GitHub \`team-review-requested:<org>/<team>\`. Leave empty to hide Team.`,
+      description: `Legacy team searches (not shown on the board); one a search for you also finds is listed under Me only. ${LINE_SYNTAX} Delta's \`team-review-requested:@me\` matches every team you are on; on GitHub, \`review-requested:@me -user-review-requested:@me\` does. For one team, Delta takes the team slug (\`team-review-requested:exp\`) and GitHub \`team-review-requested:<org>/<team>\`. Leave empty to stop fetching team requests.`,
       default:
         "delta: team-review-requested:@me -author:@me -is:draft\ngithub: review-requested:@me -user-review-requested:@me -author:@me -is:draft",
       experimental_multiline: true,

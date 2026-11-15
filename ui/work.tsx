@@ -14,17 +14,21 @@ import {
   ROW_ACTION,
   RowActions,
   ShowMore,
+  TWO_LINE_META,
+  TWO_LINE_META_ROW,
+  TWO_LINE_PAD,
   TYPE,
   useBbLinks,
   useRowError,
 } from "./primitives";
 
-// Work lists in the Queue column's tabs: Open and Shipped in Out (one line each), Assigned in In (two lines).
+// Work lists in the Queue column: Open and Shipped in the Out tab (one line each), Assigned at the bottom of the Queue
+// tab (two lines).
 // The title opens a new-thread draft that takes the item further (land it, measure and demo it, or work the
 // issue); the forge link opens it on its forge, and on shipped pull requests the toggles mark it measured or demoed.
 
 const SHOWN_MAX = 8;
-const LIST_META: Record<WorkList, { title: string; hint: string; empty: string; mark: string; tone: string }> = {
+const LIST_META: Record<WorkList, { title: string; hint: string; empty: string; mark: string; tone: string; countTone?: string }> = {
   open: {
     title: "Open",
     hint: "Your open pull requests, drafts included",
@@ -45,6 +49,8 @@ const LIST_META: Record<WorkList, { title: string; hint: string; empty: string; 
     empty: "No issues assigned to you.",
     mark: "CircleDot",
     tone: ACCENT_TEXT.amber,
+    // Issues waiting on the user: the count shows red.
+    countTone: ACCENT_BADGE.rose,
   },
 };
 const FOLLOW_UPS: { mark: "measured" | "demoed"; label: string }[] = [
@@ -150,13 +156,13 @@ function WorkRow({ item, now, onMark }: {
   }
 
   return (
-    <article className={`group relative ${CARD_SURFACE} ${CARD_EDGE} px-2 pb-1 pt-1.5`}>
+    <article className={`group relative ${CARD_SURFACE} ${CARD_EDGE} ${TWO_LINE_PAD}`}>
       <div className="flex items-start gap-2">
         {mark}
         <div className="min-w-0 flex-1">
           {titleButton}
-          <div className="-mr-[3px] mt-0.5 flex h-5 items-center gap-0.5 pointer-coarse:h-7">
-            <span className={`mr-1 min-w-0 flex-1 truncate ${TYPE.meta} tabular-nums text-muted-foreground/80`}>
+          <div className={TWO_LINE_META_ROW}>
+            <span className={TWO_LINE_META}>
               {Number.isFinite(at) ? `${formatShortAge(at, now)} · ` : ""}
               {item.repo.split("/").pop()}#{item.number}
             </span>
@@ -250,6 +256,7 @@ export function WorkGroup({ list, work, now }: { list: WorkList; work: WorkItems
       <GroupHeader
         title={meta.title}
         count={items.length}
+        countTone={meta.countTone}
         refreshing={state.refreshing}
         problems={problems}
       />

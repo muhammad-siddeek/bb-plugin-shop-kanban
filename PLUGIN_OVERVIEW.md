@@ -6,7 +6,7 @@
 - Queue and Working cards are two rows: status, a `[category] intent` title and what the thread, its child threads and subagents spent (`~` if estimated); then context-window fill (amber at 70%, red at 90%), a one-line summary and its age. Hover a card for its status, full summary, model, tokens and cost.
 - Clicking a thread opens it at the latest message. The New thread form keeps your draft across reloads and crashes.
 - The title-bar search finds any thread by what was said in it, archived threads included. Beside it, chips show CPU, memory, disk and battery, each with a popover of the heaviest apps, and, for Shopify accounts only, today's Shopify AI proxy spend, with a popover charting the last 7 days.
-- Queue's In tab lists pull requests waiting on your review on Delta and GitHub, with a Me | Team toggle (`reviewSearchesMe`, `reviewSearchesTeam`), then issues assigned to you. Each review has a risk chip, a title that drafts a thread asking what changed and how risky it is, and links to open, approve (click twice), or request changes. Archive hides one for good; reviewed ones return as `re-review` when new commits land.
+- The bottom of Queue, below Parked, lists pull requests requested of you by name on Delta and GitHub (`reviewSearchesMe`), then issues assigned to you. Each review has a risk chip, a title that drafts a thread asking what changed and how risky it is, and links to open, approve (click twice), or request changes. Archive hides one for good; reviewed ones return as `re-review` when new commits land.
 - The Out tab lists your open pull requests and ones merged in the last 30 days, until you mark them Measured and Demoed.
 
 ## For agents
