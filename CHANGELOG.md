@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.22.1
+
+- The plugin overview fits the marketplace's 4,000-character limit again.
+
 ## 0.22.0
 
 - Queue and Working cards are two rows instead of three: status, tag and
