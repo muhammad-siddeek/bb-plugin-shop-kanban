@@ -4,7 +4,7 @@ import { failure, run } from "./run";
 
 // Remote work the user is part of, read with their own Google identity token (`gcloud auth print-identity-token`):
 // Torrent tickets from Torrent's "Your work" (`GET /me/work`), and River sessions they have spoken in from Aquifer,
-// the platform River runs on (`POST /v1/sessions/query`, the query Omarchy's River widget uses). Only what is live
+// the platform River runs on (`POST /v1/sessions/query`). Only what is live
 // is kept: tickets an agent is working or that wait on the user, and River sessions with a turn in progress or
 // blocked.
 
@@ -25,7 +25,7 @@ const RIVER_LIMIT = 200;
 const PROMPT_SCAN = 25;
 /**
  * An idle session holding an unconsumed command is about to start a turn, but only while the command is fresh: most
- * idle River sessions carry one forever (Omarchy's River widget, QUEUED_WINDOW_MS).
+ * idle River sessions carry one forever.
  */
 const QUEUED_WINDOW_MS = 120_000;
 const TITLE_MAX = 110;

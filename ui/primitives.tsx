@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { experimental_Icon as Icon, useBbContext, useBbNavigate } from "@get-bb/plugin-sdk/app";
-import { ACCENT_TEXT, errorMessage } from "./model";
+import { ACCENT_TEXT, errorMessage, formatShortAge } from "./model";
 
 /**
  * The board's type scale. Every text size, and the weight and tracking of headings, badges and chips, comes from here so
@@ -49,6 +49,15 @@ export const ONE_LINE_PAD = "px-2 py-[3px]";
  * gives way there instead of showing half under them.
  */
 export const ONE_LINE_AGE = `shrink-0 whitespace-nowrap ${TYPE.meta} tabular-nums text-muted-foreground/80 [@media(hover:none)]:hidden`;
+
+/** How long ago `at` (epoch ms) was, as a `<time>`: `5m`, `3h`, `2d`. */
+export function Age({ at, now, className }: { at: number; now: number; className: string }) {
+  return (
+    <time dateTime={new Date(at).toISOString()} className={className}>
+      {formatShortAge(at, now)}
+    </time>
+  );
+}
 
 /** bb's composer and links: a new-thread draft in the open thread's project, and URLs (a new tab when bb can't). */
 export function useBbLinks() {

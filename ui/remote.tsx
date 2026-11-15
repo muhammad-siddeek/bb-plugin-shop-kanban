@@ -1,7 +1,7 @@
 import { TaskStatusMark } from "./card";
 import type { RemoteApi } from "./hooks";
-import { ACCENT_TEXT, CARD_EDGE, CARD_SURFACE, formatMoney, formatShortAge, type RemoteItem } from "./model";
-import { CHIP, GroupHeader, ONE_LINE_AGE, ONE_LINE_PAD, TYPE, listProblems, useBbLinks } from "./primitives";
+import { ACCENT_TEXT, CARD_EDGE, CARD_SURFACE, formatMoney, type RemoteItem } from "./model";
+import { Age, CHIP, GroupHeader, ONE_LINE_AGE, ONE_LINE_PAD, TYPE, listProblems, useBbLinks } from "./primitives";
 
 // The Working column's Remote section: River sessions and Torrent tickets the user is part of that are live, one line
 // each, with the board's own working and blocked marks. A row opens the ticket on Torrent or the session's Slack
@@ -36,9 +36,7 @@ function RemoteRow({ item, now }: { item: RemoteItem; now: number }) {
         {item.cost !== null ? (
           <span className={ONE_LINE_AGE}>{formatMoney(item.cost)}</span>
         ) : Number.isFinite(at) ? (
-          <time dateTime={new Date(at).toISOString()} className={ONE_LINE_AGE}>
-            {formatShortAge(at, now)}
-          </time>
+          <Age at={at} now={now} className={ONE_LINE_AGE} />
         ) : null}
       </div>
     </article>

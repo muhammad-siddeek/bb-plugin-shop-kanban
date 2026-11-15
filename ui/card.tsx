@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
-import { ACCENT_TEXT, CARD_EDGE, CARD_SURFACE, STATUS_META, THREAD_DRAG_TYPE, formatShortAge, taskActivityTime, taskCardTitle, type BoardStatus, type BoardTask } from "./model";
-import { CHIP, MARK_FRAME, ONE_LINE_AGE, ONE_LINE_PAD, RowActions, Spinner, TYPE } from "./primitives";
+import { ACCENT_TEXT, CARD_EDGE, CARD_SURFACE, STATUS_META, THREAD_DRAG_TYPE, taskActivityTime, taskCardTitle, type BoardStatus, type BoardTask } from "./model";
+import { Age, CHIP, MARK_FRAME, ONE_LINE_AGE, ONE_LINE_PAD, RowActions, Spinner, TYPE } from "./primitives";
 import { CardTooltip, ContextPie, SessionCost, type AgentProvider } from "./session";
 
 const CARD_ACTION =
@@ -271,12 +271,7 @@ export function TaskCard({ task, now, unread, selected, dragging, starting, prov
   // Done cards don't repeat "Completed"; parked ones say how they were left, so they do.
   const reason = task.statusReason && task.status !== "done" && task.statusReason !== "Working" ? task.statusReason : null;
   const compactHint = [reason, task.note].filter(Boolean).join(" — ");
-  const age =
-    activity !== null ? (
-      <time dateTime={new Date(activity).toISOString()} className={META_LINE}>
-        {formatShortAge(activity, now)}
-      </time>
-    ) : null;
+  const age = activity !== null ? <Age at={activity} now={now} className={META_LINE} /> : null;
   const titleButton = canOpen ? (
     <button
       type="button"
@@ -359,10 +354,10 @@ export function TaskCard({ task, now, unread, selected, dragging, starting, prov
             <TaskStatusMark status={task.status} unread={unread} />
           </span>
           {titleButton}
-          {task.session?.cost ? <SessionCost session={task.session} className={ONE_LINE_AGE} /> : activity !== null ? (
-            <time dateTime={new Date(activity).toISOString()} className={ONE_LINE_AGE}>
-              {formatShortAge(activity, now)}
-            </time>
+          {task.session?.cost ? (
+            <SessionCost session={task.session} className={ONE_LINE_AGE} />
+          ) : activity !== null ? (
+            <Age at={activity} now={now} className={ONE_LINE_AGE} />
           ) : null}
         </div>
       ) : (

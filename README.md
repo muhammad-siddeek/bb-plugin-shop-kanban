@@ -380,7 +380,7 @@ bb shop-kanban remove <thread-id> [--json]   # archives the thread; exits 1 if n
 From the bb plugin store, or from this repository:
 
 ```sh
-bb plugin install git:https://github.com/muhammad-siddeek/bb-plugin-shop-kanban.git@^0.15.0
+bb plugin install git:https://github.com/muhammad-siddeek/bb-plugin-shop-kanban.git@^0.22.2
 ```
 
 ## Development

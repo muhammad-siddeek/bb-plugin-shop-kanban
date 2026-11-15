@@ -8,7 +8,7 @@
 // minted only for a gcloud account on shopify.com. Anyone else gets no chip and no requests beyond a local check.
 
 import { execFile } from "node:child_process";
-import { homedir } from "node:os";
+import { homedir, userInfo } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import type { AiUsage } from "./schema";
@@ -61,13 +61,8 @@ GROUP BY day`;
 /** Recorded days kept past the graph, so a timezone change or clock skew doesn't lose them. */
 const KEEP_DAYS = 14;
 
-const GCLOUD_CANDIDATES = [
-  "gcloud",
-  `${homedir()}/.local/state/tec/toolchain/base_profile/bin/gcloud`,
-  "/opt/homebrew/bin/gcloud",
-  "/usr/local/bin/gcloud",
-  `${homedir()}/google-cloud-sdk/bin/gcloud`,
-];
+/** Where the Cloud SDK's installers put gcloud, for when neither the server's PATH nor the login shell has it. */
+const GCLOUD_INSTALLS = ["/opt/homebrew/bin/gcloud", "/usr/local/bin/gcloud", join(homedir(), "google-cloud-sdk", "bin", "gcloud")];
 
 type Key = { value: string; expiresAt: number; fromEnv: boolean };
 
@@ -101,11 +96,41 @@ class NoShopifyAccount extends Error {}
 
 type GcloudAccount = { bin: string; account: string };
 
+/**
+ * gcloud as the user's login shell finds it, absolute; null when it doesn't. A bb server started by the desktop app
+ * lacks the shell's PATH, where toolchain managers and SDK installs put gcloud.
+ */
+async function loginShellGcloud(): Promise<string | null> {
+  let shell: string | null | undefined;
+  try {
+    shell = userInfo().shell;
+  } catch {
+    // No passwd entry: fall back to the environment.
+  }
+  shell ||= process.env.SHELL;
+  if (!shell) return null;
+  const found = (await run(shell, ["-lc", "command -v gcloud"]))?.split("\n").pop()?.trim();
+  return found && isAbsolute(found) ? found : null;
+}
+
+/** The gcloud that answered last; tried first, so the login shell is asked only until one answers. */
+let knownGcloud: string | null = null;
+
+/** Every gcloud worth trying, in order; each is resolved only when the ones before it didn't answer. */
+async function* gcloudCandidates(): AsyncGenerator<string> {
+  if (knownGcloud) yield knownGcloud;
+  yield "gcloud";
+  const fromShell = await loginShellGcloud();
+  if (fromShell) yield fromShell;
+  yield* GCLOUD_INSTALLS;
+}
+
 /** The first gcloud that answers, with its active account, when that account is a Shopify one. */
 async function shopifyGcloud(): Promise<GcloudAccount | null> {
-  for (const bin of GCLOUD_CANDIDATES) {
+  for await (const bin of gcloudCandidates()) {
     const account = await run(bin, ["config", "get-value", "account"]);
     if (account === null) continue;
+    knownGcloud = bin;
     return SHOPIFY_ACCOUNT.test(account) ? { bin, account: account.toLowerCase() } : null;
   }
   return null;
