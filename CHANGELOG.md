@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.19.1
 
 - Only one-line (Done and Parked) cards open a hover tooltip; full cards
   already show their text and footer, so hovering them opens nothing.
