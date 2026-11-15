@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.22.0
 
 - Queue and Working cards are two rows instead of three: status, tag and
   title, and cost; then the context pie, a one-line summary, and the age. The
