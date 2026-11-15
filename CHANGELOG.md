@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.20.0
 
 - One-line (Done and Parked) cards show the thread's cost where they showed
   its age; cards without a cost yet keep the age.
