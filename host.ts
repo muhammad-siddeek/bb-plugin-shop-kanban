@@ -6,6 +6,7 @@ import { z } from "zod";
 import { hostContract } from "./contract";
 import { prDetail, prReview, prSearch } from "./host/forge";
 import { failure, parseOutput, run } from "./host/run";
+import { remoteWork } from "./host/remote";
 import { ompSpend, piSpend } from "./host/spend";
 
 const LABELER_FLAGS = [
@@ -115,5 +116,6 @@ export default experimental_defineHostEntry({
     pr_search: (input, context) => prSearch(input, context.signal),
     pr_detail: (input, context) => prDetail(input, context.signal),
     pr_review: (input, context) => prReview(input, context.signal),
+    remote_work: (_input, context) => remoteWork(context.signal),
   },
 });

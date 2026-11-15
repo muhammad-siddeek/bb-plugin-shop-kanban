@@ -22,6 +22,7 @@ import { createSessionInfo } from "./server/session";
 import { createLabeler } from "./server/labeler";
 import { createThreadReader } from "./server/threads";
 import { createSearchIndex } from "./server/search";
+import { createRemoteWork } from "./server/remote";
 import { createReviewQueue } from "./server/reviews";
 import { createWipLimit } from "./server/wip-limit";
 import { createWorkLists } from "./server/work";
@@ -83,6 +84,7 @@ export default async function plugin(bb: BbPluginApi) {
   const search = createSearchIndex(bb, reader);
   const reviews = createReviewQueue(bb, labels);
   const work = createWorkLists(bb);
+  const remote = createRemoteWork(bb);
   const wip = createWipLimit(bb, reader, publishBoardChanged);
   const system = createSystemMonitor(bb);
   const aiUsage = createAiUsage(bb);
@@ -392,6 +394,7 @@ export default async function plugin(bb: BbPluginApi) {
     reviews_submit: ({ id, verdict, body }) => reviews.submit(id, verdict, body),
     work_list: () => work.list(),
     work_mark: ({ id, mark, on }) => work.mark(id, mark, on),
+    remote_list: () => remote.list(),
     system_stats: () => system.stats(),
     system_processes: () => system.processes(),
     ai_usage: () => aiUsage.read(),
@@ -457,6 +460,7 @@ export default async function plugin(bb: BbPluginApi) {
     search.dispose();
     reviews.dispose();
     work.dispose();
+    remote.dispose();
     wip.dispose();
     system.dispose();
     aiUsage.dispose();

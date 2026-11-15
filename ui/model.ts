@@ -8,6 +8,7 @@ import type {
   ReviewCard,
   ReviewScope,
   ReviewState,
+  RemoteState,
   SearchResponse,
   Status,
   SystemProcesses,
@@ -23,7 +24,8 @@ import type {
 // Shared board types, constants, and pure helpers.
 
 // Type-only re-exports of the server's schema types; keeps zod out of the browser bundle.
-export type { AiUsage, BoardSession, BoardTask, ReviewCard, ReviewScope, ReviewState, SearchResponse, SystemProcesses, SystemStats, WorkItem, WorkList, WorkMark, WorkSource, WorkState };
+export type { AiUsage, BoardSession, BoardTask, RemoteState, ReviewCard, ReviewScope, ReviewState, SearchResponse, SystemProcesses, SystemStats, WorkItem, WorkList, WorkMark, WorkSource, WorkState };
+export type RemoteItem = RemoteState["items"][number];
 export type BoardColumn = Column;
 export type BoardStatus = Status;
 export type BoardState = z.infer<(typeof rpcContract)["board_list"]["output"]>;

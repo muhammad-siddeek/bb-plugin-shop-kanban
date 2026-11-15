@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.21.0
+
+- A **Remote** section at the bottom of Working lists your live River
+  sessions (ones you spoke in this week, with a turn in progress or blocked)
+  and Torrent tickets (worked by an agent or waiting on you, with their cost),
+  read with your gcloud identity on the persistent host.
+- The title bar and the hidden board's pill no longer show the `+N waiting`
+  count; Working's header still does.
+- The title bar and the pill lead with the Shopify bag alone, in white,
+  instead of the list icon and the Shop Kanban name.
+
 ## 0.20.0
 
 - One-line (Done and Parked) cards show the thread's cost where they showed

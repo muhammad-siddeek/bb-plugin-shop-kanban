@@ -66,10 +66,38 @@ const forgePrDetailSchema = z
 export type ForgePrDetail = z.infer<typeof forgePrDetailSchema>;
 
 /**
+ * A River session or Torrent ticket the user is part of that is live: an agent working it (`wip`), or it waiting on
+ * the user (`blocked`).
+ */
+export const remoteItemSchema = z
+  .object({
+    /** `torrent:<ticket id>` or `river:<session id>` */
+    id: z.string(),
+    source: z.enum(["torrent", "river"]),
+    /** The ticket's key (`EXP-203`), or `River`. */
+    key: z.string(),
+    title: z.string(),
+    /** The ticket on Torrent, or the session's Slack thread. */
+    url: z.string(),
+    status: z.enum(["wip", "blocked"]),
+    /** Torrent's state name (`In Progress`, `Human Review`) or Aquifer's session status (`running`). */
+    detail: z.string(),
+    updatedAt: z.string(),
+    /** What the ticket's agent sessions spent, in USD; null when unknown (always, for River). */
+    cost: z.number().nullable(),
+  })
+  .strict();
+export type RemoteItem = z.infer<typeof remoteItemSchema>;
+/** How one remote source's read went; `missing` when it can't work here (no gcloud, signed out, not a Shopify account). */
+export const remoteSourceSchema = z.object({ source: remoteItemSchema.shape.source, error: z.string().nullable(), missing: z.boolean() }).strict();
+export type RemoteSource = z.infer<typeof remoteSourceSchema>;
+
+/**
  * Server ↔ host contract. The host runs a small model through a pi-compatible CLI to label threads, keeps
  * the thread search index (one markdown file per thread in the plugin's host data dir, indexed by qmd),
- * reads what omp and Pi sessions spent from their transcripts, and reads and reviews pull requests through
- * the user's signed-in `dt` and `gh`.
+ * reads what omp and Pi sessions spent from their transcripts, reads and reviews pull requests through
+ * the user's signed-in `dt` and `gh`, and reads the user's live River sessions and Torrent tickets with their gcloud
+ * identity.
  */
 export const hostContract = defineRpcContract({
   complete: {
@@ -170,5 +198,10 @@ export const hostContract = defineRpcContract({
       })
       .strict(),
     output: z.object({ error: z.string().nullable() }).strict(),
+  },
+  /** The user's live Torrent tickets and the River sessions they have spoken in this week that are live. */
+  remote_work: {
+    input: z.object({}).strict(),
+    output: z.object({ items: z.array(remoteItemSchema), sources: z.array(remoteSourceSchema) }).strict(),
   },
 });

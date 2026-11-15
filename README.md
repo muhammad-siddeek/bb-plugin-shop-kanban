@@ -22,7 +22,17 @@ thread (see Parked) and starting a waiting one (see Working limit).
   thread is idle and needs you (a pending interaction, an error, or a last
   reply that asks a question). The title bar, and the pill when the board is
   hidden, show the Working limit's meter (below) with one red dot per blocked
-  thread ahead of it.
+  thread ahead of it; waiting messages show only in Working's header.
+- **Remote** (a section at the bottom of Working): Shopify River sessions and
+  Torrent tickets you're part of that are live, one line each. River sessions
+  are those you have spoken in this week (yours or someone else's thread) with
+  a turn in progress or blocked; Torrent tickets are the ones in your Your work
+  that an agent is working or that wait on you (Human Review, Blocked on
+  Human), with what their agents spent. Red marks the ones waiting on you; a
+  row opens the ticket on Torrent or the session's Slack thread. They are read
+  on the connected persistent host with `gcloud auth print-identity-token`,
+  about a minute behind; without gcloud or a Shopify account the section stays
+  hidden. Remote work doesn't count toward the working limit.
 - **Done**: the thread is idle and its last reply reports completion. Cards
   are one line (status, tag, title, and what the thread's tree has spent, or
   its age while it has no cost). Unread ones come first with a solid
@@ -43,7 +53,7 @@ thread (see Parked) and starting a waiting one (see Working limit).
 The picker at the top of Working caps how many threads work at once, to keep
 a steady spend rate: Max 0 to Max 5 working, or No limit. It shows one amber
 dot per slot, filled as threads take them (`●●○ 2/3`), with threads over the
-limit as amber dots with an exclamation mark cut through, and `+2 waiting`
+limit as slightly smaller amber dots with a hole, and `+2 waiting`
 while messages wait; the default is no limit, and the choice is kept across
 reloads.
 

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
 import type { rpcContract } from "../server/schema";
-import { errorMessage, type WorkMark } from "./model";
+import { errorMessage, type RemoteState, type WorkMark } from "./model";
 
 const BOARD_REFRESH_MS = 1000;
 /** The review queue and work lists re-read on the server's change signal; this clock only backs it up. */
@@ -134,3 +134,13 @@ export function useWork() {
 }
 
 export type WorkApi = ReturnType<typeof useWork>;
+
+/** The Working column's Remote section: live River sessions and Torrent tickets; `error` is why the last read failed. */
+export type RemoteApi = { state: RemoteState | null; error: string | null };
+
+export function useRemote(): RemoteApi {
+  const rpc = useRpc<typeof rpcContract>();
+  const read = useCallback(() => rpc.call("remote_list", null), [rpc]);
+  const { value: state, error } = usePolledRead(read, REVIEWS_POLL_MS, "remote-changed");
+  return useMemo(() => ({ state, error }), [state, error]);
+}

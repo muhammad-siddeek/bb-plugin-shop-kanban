@@ -6,11 +6,11 @@ const LIMIT_CHOICES = [0, 1, 2, 3, 4, 5];
 /** Past this many marks a row stops reading at a glance; a count shows instead. */
 const MAX_MARKS = 6;
 
-/** A thread working past the limit: the slot dot with an exclamation mark punched through it. */
+/** A thread working past the limit: the slot dot with a hole punched through it, a pixel smaller. */
 function OverLimitMark() {
   return (
-    <svg viewBox="0 0 16 16" className="size-2 shrink-0 text-amber-500" fill="currentColor" fillRule="evenodd" aria-hidden>
-      <path d="M8 0a8 8 0 1 0 0 16A8 8 0 1 0 8 0zM8 3a1 1 0 0 0-1 1v4.4a1 1 0 0 0 2 0V4a1 1 0 0 0-1-1zm0 7.6a1.2 1.2 0 1 0 0 2.4 1.2 1.2 0 1 0 0-2.4z" />
+    <svg viewBox="0 0 16 16" className="size-[7px] shrink-0 text-amber-500" fill="currentColor" fillRule="evenodd" aria-hidden>
+      <path d="M8 0a8 8 0 1 0 0 16A8 8 0 1 0 8 0zm0 4.8a3.2 3.2 0 1 0 0 6.4 3.2 3.2 0 1 0 0-6.4z" />
     </svg>
   );
 }

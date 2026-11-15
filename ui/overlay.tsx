@@ -3,14 +3,25 @@ import type { KeyboardEvent, PointerEvent } from "react";
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
 import { PLUGIN_NAME } from "../brand";
 import { ACCENT_TEXT, BOTTOM_BOARD_COLLAPSED_CLASS, BOTTOM_BOARD_HEIGHT_VAR, BOTTOM_BOARD_OPEN_CLASS, type BoardState, type BoardTask } from "./model";
-import { useBoard, useReviews, useWork } from "./hooks";
+import { useBoard, useRemote, useReviews, useWork } from "./hooks";
 import { IconButton, TYPE } from "./primitives";
 import { BoardView } from "./column";
 import { ThreadSearch } from "./search";
 import { SystemMonitor } from "./system";
 import { WorkingMeter } from "./wip-limit";
 
-const PLUGIN_ICON = "ListTodo";
+/** Shopify's bag (Simple Icons' `shopify` path), in white: the board's only mark in its title bar and pill. */
+const SHOPIFY_BAG =
+  "M15.337 23.979l7.216-1.561s-2.604-17.613-2.625-17.73c-.018-.116-.114-.192-.211-.192s-1.929-.136-1.929-.136-1.275-1.274-1.439-1.411c-.045-.037-.075-.057-.121-.074l-.914 21.104h.023zM11.71 11.305s-.81-.424-1.774-.424c-1.447 0-1.504.906-1.504 1.141 0 1.232 3.24 1.715 3.24 4.629 0 2.295-1.44 3.76-3.406 3.76-2.354 0-3.54-1.465-3.54-1.465l.646-2.086s1.245 1.066 2.28 1.066c.675 0 .975-.545.975-.932 0-1.619-2.654-1.694-2.654-4.359-.034-2.237 1.571-4.416 4.827-4.416 1.257 0 1.875.361 1.875.361l-.945 2.715-.02.01zM11.17.83c.136 0 .271.038.405.135-.984.465-2.064 1.639-2.508 3.992-.656.213-1.293.405-1.889.578C7.697 3.75 8.951.84 11.17.84V.83zm1.235 2.949v.135c-.754.232-1.583.484-2.394.736.466-1.777 1.333-2.645 2.085-2.971.193.501.309 1.176.309 2.1zm.539-2.234c.694.074 1.141.867 1.429 1.755-.349.114-.735.231-1.158.366v-.252c0-.752-.096-1.371-.271-1.871v.002zm2.992 1.289c-.02 0-.06.021-.078.021s-.289.075-.714.21c-.423-1.233-1.176-2.37-2.508-2.37h-.115C12.135.209 11.669 0 11.265 0 8.159 0 6.675 3.877 6.21 5.846c-1.194.365-2.063.636-2.16.674-.675.213-.694.232-.772.87-.075.462-1.83 14.063-1.83 14.063L15.009 24l.927-21.166z";
+
+function ShopifyMark({ className }: { className: string }) {
+  return (
+    <svg viewBox="0 0 24 24" role="img" aria-label={PLUGIN_NAME} className={`shrink-0 text-white ${className}`} fill="currentColor">
+      <path d={SHOPIFY_BAG} />
+    </svg>
+  );
+}
+
 const DEFAULT_PANEL_MIN_HEIGHT = 320;
 const PANEL_MIN_HEIGHT = 240;
 /** Resize-handle keys and how far each moves the panel edge; Home/End jump to the limits. */
@@ -66,15 +77,17 @@ function useSidebarInset(): number {
   return inset;
 }
 
-/** The Working column's meter with blocked threads ahead of it, in the title bar and the pill; nothing while it'd be empty. */
+/**
+ * The Working column's meter with blocked threads ahead of it, in the title bar and the pill; nothing while it'd be empty.
+ * Waiting messages stay in the Working column's header only.
+ */
 function BoardStatus({ tasks, wipLimit }: { tasks: readonly BoardTask[]; wipLimit: BoardState["wipLimit"] | undefined }) {
   const blocked = tasks.filter((task) => task.status === "blocked").length;
   const working = tasks.filter((task) => task.status === "wip").length;
-  const waiting = wipLimit?.waiting ?? 0;
-  if (blocked + working + waiting === 0) return null;
+  if (blocked + working === 0) return null;
   return (
     <span className={`inline-flex shrink-0 items-center ${TYPE.badge} leading-none ${ACCENT_TEXT.amber}`}>
-      <WorkingMeter limit={wipLimit?.limit ?? null} working={working} waiting={waiting} blocked={blocked} />
+      <WorkingMeter limit={wipLimit?.limit ?? null} working={working} waiting={0} blocked={blocked} />
     </span>
   );
 }
@@ -89,6 +102,7 @@ export function BottomBoardOverlay() {
   const api = useBoard();
   const reviews = useReviews();
   const work = useWork();
+  const remote = useRemote();
   const { board } = api;
   const tasks = board?.tasks ?? [];
 
@@ -162,10 +176,7 @@ export function BottomBoardOverlay() {
         onClick={() => setOpen(true)}
         aria-label={`Open ${PLUGIN_NAME} board`}
       >
-        <span className="inline-flex size-6 shrink-0 items-center justify-center rounded-full bg-muted text-foreground">
-          <Icon name={PLUGIN_ICON} className="size-3.5" aria-hidden />
-        </span>
-        <span>{PLUGIN_NAME}</span>
+        <ShopifyMark className="size-5" />
         <BoardStatus tasks={tasks} wipLimit={board?.wipLimit} />
         <Icon name="ChevronUp" className="size-3.5 text-muted-foreground transition-transform duration-150 group-hover:-translate-y-px group-hover:text-foreground max-sm:ml-auto max-sm:size-5" aria-hidden />
       </button>
@@ -195,13 +206,7 @@ export function BottomBoardOverlay() {
 
       {/* `relative`: on phones the search dropdown spans this bar instead of hanging off the search box. */}
       <div className="relative flex h-9 shrink-0 items-center gap-2 border-b border-border pl-[15px] pr-1.5 pointer-coarse:h-12 pointer-coarse:pr-1 max-sm:gap-1.5 max-sm:pr-1">
-        <div className="flex min-w-0 items-center gap-2">
-          <span className="inline-flex size-4 shrink-0 items-center justify-center text-muted-foreground">
-            <Icon name={PLUGIN_ICON} className="size-4" aria-hidden />
-          </span>
-          {/* Phones give the name's room to search; the icon stays. */}
-          <span className={`truncate ${TYPE.body} font-semibold text-foreground max-sm:sr-only`}>{PLUGIN_NAME}</span>
-        </div>
+        <ShopifyMark className="size-4" />
         <BoardStatus tasks={tasks} wipLimit={board?.wipLimit} />
         <div className="ml-1 min-w-0 max-lg:ml-0 max-lg:flex-1">
           {/* Header (40px, 48px on touch) plus a little breathing room below the list. */}
@@ -216,7 +221,7 @@ export function BottomBoardOverlay() {
       </div>
 
       <div className="min-h-0 flex-1">
-        <BoardView api={api} reviews={reviews} work={work} />
+        <BoardView api={api} reviews={reviews} work={work} remote={remote} />
       </div>
     </div>
   );

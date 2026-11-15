@@ -78,7 +78,7 @@ function boardCardLayoutKey(card: HTMLElement): string | null {
 /** The Working mark's petals, from 12 o'clock clockwise; each fades a step further behind the leading one. */
 const PETALS = Array.from({ length: 8 }, (_, i) => ({ angle: i * 45, opacity: 1 - i * 0.11 }));
 
-function TaskStatusMark({ status, unread }: { status: BoardStatus; unread: boolean }) {
+export function TaskStatusMark({ status, unread }: { status: BoardStatus; unread: boolean }) {
   if (status === "wip") {
     // A petal spinner, ticking a petal at a time: a stroked arc would read as the context pie below it.
     return (

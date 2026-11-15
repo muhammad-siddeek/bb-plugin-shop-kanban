@@ -3,8 +3,9 @@ import type { DragEvent, ReactElement, ReactNode } from "react";
 import { experimental_Icon as Icon, experimental_NewThreadComposer as NewThreadComposer, experimental_useProviders, experimental_useSidebarThreads, useBbContext, useBbNavigate, type NewThreadRequest } from "@get-bb/plugin-sdk/app";
 import { PLUGIN_SLUG } from "../brand";
 import { ACCENT_BADGE, CLOCK_TICK_MS, STATUS_META, THREAD_DRAG_TYPE, groupTasksByColumn, shortNameFromPrompt, type BoardColumn, type BoardState, type BoardTask } from "./model";
-import { useNow, type BoardApi, type ReviewsApi, type WorkApi } from "./hooks";
+import { useNow, type BoardApi, type RemoteApi, type ReviewsApi, type WorkApi } from "./hooks";
 import { TaskCard } from "./card";
+import { RemoteSection } from "./remote";
 import { ReviewGroup, visibleReviews } from "./reviews";
 import { WipLimitControl } from "./wip-limit";
 import { WorkGroup, useWorkItems } from "./work";
@@ -294,7 +295,7 @@ function ParkedSection({ tasks, dragging, onDrop, renderCard }: {
   );
 }
 
-function BoardColumnView({ column, title, tasks, count, unreadFirst, renderCard, dragging, drop, onStartAdding, headerControl, tabs, body, addForm, parked }: {
+function BoardColumnView({ column, title, tasks, count, unreadFirst, renderCard, dragging, drop, onStartAdding, headerControl, tabs, body, addForm, parked, remote }: {
   column: BoardColumn;
   title: string;
   tasks: BoardTask[];
@@ -318,6 +319,8 @@ function BoardColumnView({ column, title, tasks, count, unreadFirst, renderCard,
   addForm: ReactElement | null;
   /** The Queue column's Parked section: idle threads set aside to come back to, and what a card dropped there does. */
   parked: { tasks: BoardTask[]; onDrop: (threadId: string) => void } | null;
+  /** The Working column's Remote section, under its cards. */
+  remote: ReactElement | null;
 }) {
   const meta = STATUS_META[column];
   const adding = addForm !== null;
@@ -373,6 +376,7 @@ function BoardColumnView({ column, title, tasks, count, unreadFirst, renderCard,
             ) : null}
             {tasks.slice(unreadFirst).map(renderCard)}
             {parked ? <ParkedSection tasks={parked.tasks} dragging={dragging} onDrop={parked.onDrop} renderCard={renderCard} /> : null}
+            {remote}
           </>
         )}
       </div>
@@ -380,7 +384,7 @@ function BoardColumnView({ column, title, tasks, count, unreadFirst, renderCard,
   );
 }
 
-export function BoardView({ api, reviews, work }: { api: BoardApi; reviews: ReviewsApi; work: WorkApi }) {
+export function BoardView({ api, reviews, work, remote }: { api: BoardApi; reviews: ReviewsApi; work: WorkApi; remote: RemoteApi }) {
   const context = useBbContext();
   const selectedThreadId = context.threadId;
   // Same roster and lookup as bb's sidebar: a thread's harness icon is its agent provider's artwork.
@@ -561,6 +565,7 @@ export function BoardView({ api, reviews, work }: { api: BoardApi; reviews: Revi
       tabs={column.id === "queue" && tabs.length > 1 ? <QueueTabs tabs={tabs} active={queueTab} onSelect={selectTab} /> : null}
       body={column.id === "queue" ? queueBody : null}
       parked={column.id === "queue" ? { tasks: grouped.get("parked") ?? [], onDrop: dropPark } : null}
+      remote={column.id === "wip" ? <RemoteSection remote={remote} now={now} /> : null}
       addForm={
         column.id === "queue" && adding ? (
           <AddTaskForm defaultProjectId={context.projectId ?? undefined} onAdd={addTask} onClose={() => setAdding(false)} onError={report} />

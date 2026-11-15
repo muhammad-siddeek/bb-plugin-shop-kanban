@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { forgeInput } from "../contract";
+import { forgeInput, remoteItemSchema, remoteSourceSchema } from "../contract";
 
 /**
  * A card's state. Blocked cards (waiting on the user or errored) sit in the Working column, marked red; Parked holds idle
@@ -244,6 +244,15 @@ const workStateSchema = z.object({
 /** What a work mark records: archived hides an item for good; shipped ones leave once both measured and demoed. */
 const workMarkSchema = z.enum(["archived", "measured", "demoed"]);
 
+/** The Working column's Remote section: live River sessions and Torrent tickets, most recently updated first. */
+const remoteStateSchema = z.object({
+  items: z.array(remoteItemSchema),
+  sources: z.array(remoteSourceSchema),
+  refreshing: z.boolean(),
+  refreshedAt: z.number().nullable(),
+  error: z.string().nullable(),
+});
+
 /** macOS memory pressure (kern.memorystatus_vm_pressure_level), the signal Activity Monitor's pressure graph shows. */
 const memoryPressureSchema = z.enum(["normal", "warn", "critical"]);
 
@@ -399,6 +408,7 @@ export const rpcContract = {
   work_list: { input: z.null(), output: workStateSchema },
   /** Set or clear a mark on a work item. */
   work_mark: { input: z.object({ id: reviewRefSchema.shape.id, mark: workMarkSchema, on: z.boolean() }), output: okSchema },
+  remote_list: { input: z.null(), output: remoteStateSchema },
   /** The bb server machine's CPU, memory, swap, disk and battery; reading starts a sampler that idles once reads stop. */
   system_stats: { input: z.null(), output: systemStatsSchema },
   /** The heaviest processes on the bb server machine, grouped by name. */
@@ -437,3 +447,4 @@ export type WorkMark = z.infer<typeof workMarkSchema>;
 export type WorkItem = z.infer<typeof workItemSchema>;
 export type WorkSource = z.infer<typeof workSourceSchema>;
 export type WorkState = z.infer<typeof workStateSchema>;
+export type RemoteState = z.infer<typeof remoteStateSchema>;

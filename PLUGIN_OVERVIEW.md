@@ -23,7 +23,8 @@ Titles, summaries, and the Blocked-or-Done call come from a small model. The plu
 - For model-written labels: a pi-compatible CLI on each host that runs threads.
 - For thread search: [qmd](https://github.com/tobi/qmd) (`npm install -g @tobilu/qmd`) on a connected persistent host.
 - For the review queue and work lists: `dt` (Delta) and/or `gh` (GitHub), signed in, on that same host.
+- For Working's Remote section (Shopify only): `gcloud`, signed in with your Shopify account, on that same host.
 
-Each is optional: without a labeler threads keep heuristic titles, search shows how to install qmd, and review searches that can't run are skipped quietly.
+Each is optional: without a labeler threads keep heuristic titles, search shows how to install qmd, and review searches and the Remote section that can't run are skipped quietly.
 
 If you replace bb's omp agent with a custom ACP agent entry, the plugin draws bb's omp mark for it in omp's pink (`#f84fcc`) instead of a generic toolbox glyph, in bb's sidebar and pickers as well as on the board.
