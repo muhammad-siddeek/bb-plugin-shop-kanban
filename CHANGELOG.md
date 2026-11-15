@@ -6,6 +6,8 @@
   title, and cost; then the context pie, a one-line summary, and the age. The
   harness icon is gone, and the status note (`Asked a question`, `1 child
   thread working`) moved to the card's tooltip, which every card now has.
+- The title bar's Shopify AI spend is green, like Done, while it is under the
+  amber mark; amber and red still take over past their thresholds.
 
 ## 0.21.0
 
