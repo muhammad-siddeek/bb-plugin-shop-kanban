@@ -130,12 +130,12 @@ function BatteryGlyph({ charging = false, ...props }: GlyphProps & { charging?: 
   );
 }
 
-/** A four-point sparkle with a small companion: AI spend. */
-function SparkleGlyph(props: GlyphProps) {
+/** A wallet: a card peeking out of the top, and a clasp with its stud on the right: AI spend. */
+function WalletGlyph(props: GlyphProps) {
   return (
     <Glyph {...props}>
-      <path d="M8.5 2c.3 0 .55.2.62.49l.7 2.8a3.5 3.5 0 0 0 2.54 2.54l2.8.7a.64.64 0 0 1 0 1.24l-2.8.7a3.5 3.5 0 0 0-2.54 2.54l-.7 2.8a.64.64 0 0 1-1.24 0l-.7-2.8a3.5 3.5 0 0 0-2.54-2.54l-2.8-.7a.64.64 0 0 1 0-1.24l2.8-.7a3.5 3.5 0 0 0 2.54-2.54l.7-2.8A.64.64 0 0 1 8.5 2Z" />
-      <path d="M15.5 12.5c.18 0 .33.12.38.29l.32 1.2a1.5 1.5 0 0 0 1.06 1.06l1.2.32a.39.39 0 0 1 0 .76l-1.2.32a1.5 1.5 0 0 0-1.06 1.06l-.32 1.2a.39.39 0 0 1-.76 0l-.32-1.2a1.5 1.5 0 0 0-1.06-1.06l-1.2-.32a.39.39 0 0 1 0-.76l1.2-.32a1.5 1.5 0 0 0 1.06-1.06l.32-1.2a.39.39 0 0 1 .38-.29Z" />
+      <path d="M3.2 5.2 13 2.3a1.6 1.6 0 0 1 2 1.1l.5 1.8H3.2Z" />
+      <path fillRule="evenodd" d="M4 6h12.5A2.5 2.5 0 0 1 19 8.5v7a2.5 2.5 0 0 1-2.5 2.5H4a2.5 2.5 0 0 1-2.5-2.5v-7A2.5 2.5 0 0 1 4 6Zm9.5 4a1.75 1.75 0 0 0 0 3.5H19V10h-5.5Zm.25 1a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Z" />
     </Glyph>
   );
 }
@@ -391,7 +391,7 @@ export function SystemMonitor({ maxPanelHeight }: { maxPanelHeight: number }) {
       {aiUsage?.todayCost != null
         ? chip(
             "ai",
-            <StripChip glyph={<SparkleGlyph className="size-3 shrink-0" />} label={formatMoney(aiUsage.todayCost)} level={spendLevel(aiUsage.todayCost)} okTone={ACCENT_TEXT.emerald} dim={Boolean(aiUsage.error)} />,
+            <StripChip glyph={<WalletGlyph className="size-3 shrink-0" />} label={formatMoney(aiUsage.todayCost)} level={spendLevel(aiUsage.todayCost)} okTone={ACCENT_TEXT.emerald} dim={Boolean(aiUsage.error)} />,
             `Shopify AI spend today ${formatMoney(aiUsage.todayCost, "USD", true)}`,
           )
         : null}
@@ -615,7 +615,7 @@ function AiUsageSection({ usage }: { usage: AiUsage }) {
   return (
     <section className="px-3.5 py-2.5">
       <h4 className={`mb-2 flex items-center gap-1.5 ${TYPE.label} text-muted-foreground`}>
-        <SparkleGlyph className="size-3 text-muted-foreground" />
+        <WalletGlyph className="size-3 text-muted-foreground" />
         Shopify AI spend
       </h4>
       <div className="grid grid-cols-2 gap-3">

@@ -7,7 +7,8 @@
   harness icon is gone, and the status note (`Asked a question`, `1 child
   thread working`) moved to the card's tooltip, which every card now has.
 - The title bar's Shopify AI spend is green, like Done, while it is under the
-  amber mark; amber and red still take over past their thresholds.
+  amber mark; amber and red still take over past their thresholds. Its icon,
+  and the spend popover's, is a wallet instead of sparkles.
 
 ## 0.21.0
 
