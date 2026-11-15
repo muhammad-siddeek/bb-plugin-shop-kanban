@@ -69,18 +69,8 @@ export function SessionCost({ session, className = `inline-flex h-5 shrink-0 ite
   );
 }
 
-/** The thread's harness icon, small and greyed so it sits under the status mark without competing with it. */
-export function ModelMark({ provider }: { provider: AgentProvider | null }) {
-  if (!provider) return null;
-  return (
-    <span role="img" aria-label={provider.displayName} className="inline-flex">
-      <ProviderIcon providerKind="agent" provider={provider} className="size-3 shrink-0 opacity-60 grayscale [&>svg]:size-3" aria-hidden />
-    </span>
-  );
-}
-
 /**
- * Context-window fill as a pie: a solid wedge over a faint disc. Dimmer than the grey harness icon above it until it
+ * Context-window fill as a pie: a solid wedge over a faint disc. Dim grey under the status mark until it
  * turns amber, then red, as the window fills. Filled rather than stroked, so it never reads as the Working spinner.
  */
 export function ContextPie({ session }: { session: BoardSession | null }) {

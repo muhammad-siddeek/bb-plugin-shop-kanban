@@ -2,7 +2,7 @@ import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
 import { ACCENT_TEXT, CARD_EDGE, CARD_SURFACE, STATUS_META, THREAD_DRAG_TYPE, formatShortAge, taskActivityTime, taskCardTitle, type BoardStatus, type BoardTask } from "./model";
 import { CHIP, MARK_FRAME, ONE_LINE_AGE, ONE_LINE_PAD, RowActions, Spinner, TYPE } from "./primitives";
-import { CardTooltip, ContextPie, ModelMark, SessionCost, type AgentProvider } from "./session";
+import { CardTooltip, ContextPie, SessionCost, type AgentProvider } from "./session";
 
 const CARD_ACTION =
   "inline-flex size-5 items-center justify-center rounded-md text-muted-foreground/70 transition-[color,background-color] duration-150 hover:bg-accent hover:text-foreground focus-visible:bg-accent focus-visible:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:pointer-events-none pointer-coarse:size-7";
@@ -11,6 +11,8 @@ const BLOCKED_STRIPE =
 
 /** Resting on a card this long opens its tooltip; quick passes across the board don't. */
 const TOOLTIP_DELAY_MS = 350;
+/** A full card's cost and age: 18px lines at the ends of its two rows. */
+const META_LINE = `flex h-[18px] shrink-0 items-center whitespace-nowrap ${TYPE.meta} tabular-nums text-muted-foreground/80`;
 
 // Reveal margins: the column list's p-1.5 (covers the selected card's 3px outline); columns sit flush with the
 // board's edges, so horizontally a column only needs to be inside the scroller.
@@ -145,16 +147,6 @@ export function TaskStatusMark({ status, unread }: { status: BoardStatus; unread
   );
 }
 
-/** A "· text" fact after the footer's time. */
-function FooterNote({ tone, text }: { tone: string; text: string }) {
-  return (
-    <span className={`min-w-0 truncate ${TYPE.meta} font-medium ${tone}`}>
-      <span className="text-muted-foreground/50" aria-hidden>· </span>
-      {text}
-    </span>
-  );
-}
-
 export function TaskCard({ task, now, unread, selected, dragging, starting, provider, onArchive, onPark, onMarkUnread, onStart, onDragChange, onOpen }: {
   task: BoardTask;
   now: number;
@@ -224,11 +216,11 @@ export function TaskCard({ task, now, unread, selected, dragging, starting, prov
   const tooltipId = useId();
   const [tooltipOpen, setTooltipOpen] = useState(false);
   const tooltipTimer = useRef(0);
-  // Only compact (Done/Parked, one-line) cards have a tooltip: it carries the session details and the hint their
-  // single line hides. Full cards already show their text and footer, so hovering them opens nothing.
+  // Every card has a tooltip: it carries the session details and what the card's lines hide (how it was left or why
+  // it waits, and the summary past its truncation).
   const hasSession = provider !== null || task.session !== null;
   const showTooltip = () => {
-    if (compact && (hasSession || compactHint)) setTooltipOpen(true);
+    if (hasSession || compactHint) setTooltipOpen(true);
   };
   const hideTooltip = () => {
     window.clearTimeout(tooltipTimer.current);
@@ -256,32 +248,8 @@ export function TaskCard({ task, now, unread, selected, dragging, starting, prov
   // Done and Parked cards are finished or set aside: one line (mark, tag, title, and cost, else age), the rest in the
   // tooltip.
   const compact = parked || task.status === "done";
-  // Lines 1-2: "[tag] title — summary" as one run of text; full cards have no tooltip.
-  // The 18px lines come from the 12px strut; the 13px title is leading-none so it can't grow a line.
-  const text = (
-    <span className={`line-clamp-2 ${TYPE.body} leading-[18px]`}>
-      {category ? (
-        <span className={`${CHIP} mr-1.5 mt-px max-w-[80%] bg-muted align-top text-muted-foreground`}>
-          <span className="truncate">{category}</span>
-        </span>
-      ) : null}
-      <span
-        className={`${TYPE.title} leading-none decoration-muted-foreground/40 underline-offset-2 group-hover/open:underline ${
-          parked ? "text-foreground/70" : "text-foreground"
-        } ${unread ? "font-bold" : "font-semibold"}`}
-      >
-        {intent}
-      </span>
-      {task.note ? (
-        <>
-          <span className="text-muted-foreground/50" aria-hidden> — </span>
-          <span className="text-muted-foreground">{task.note}</span>
-        </>
-      ) : null}
-    </span>
-  );
-  // One line: tag and title only; how a parked card was left and its summary lead its tooltip instead.
-  const compactText = (
+  // Tag and title on one line: a full card's first line, or a one-line card's only one.
+  const titleText = (
     <span className={`flex min-w-0 items-center gap-1.5 ${TYPE.body} leading-5`}>
       {category ? (
         <span className={`${CHIP} bg-muted text-muted-foreground`}>
@@ -290,7 +258,7 @@ export function TaskCard({ task, now, unread, selected, dragging, starting, prov
       ) : null}
       <span
         className={`min-w-0 truncate ${TYPE.title} decoration-muted-foreground/40 underline-offset-2 group-hover/open:underline ${
-          parked ? "text-foreground/70" : unread ? "text-foreground" : "text-foreground/85"
+          parked ? "text-foreground/70" : unread || !compact ? "text-foreground" : "text-foreground/85"
         } ${unread ? "font-bold" : "font-semibold"}`}
       >
         {intent}
@@ -303,6 +271,25 @@ export function TaskCard({ task, now, unread, selected, dragging, starting, prov
   // Done cards don't repeat "Completed"; parked ones say how they were left, so they do.
   const reason = task.statusReason && task.status !== "done" && task.statusReason !== "Working" ? task.statusReason : null;
   const compactHint = [reason, task.note].filter(Boolean).join(" — ");
+  const age =
+    activity !== null ? (
+      <time dateTime={new Date(activity).toISOString()} className={META_LINE}>
+        {formatShortAge(activity, now)}
+      </time>
+    ) : null;
+  const titleButton = canOpen ? (
+    <button
+      type="button"
+      data-card-open=""
+      onClick={open}
+      aria-describedby={tooltipOpen ? tooltipId : undefined}
+      className="group/open block min-w-0 flex-1 truncate rounded-sm text-left focus-visible:outline-none"
+    >
+      {titleText}
+    </button>
+  ) : (
+    <div className="min-w-0 flex-1 truncate">{titleText}</div>
+  );
   // Idle cards can be parked, and parked ones unparked; working ones can't be either.
   const parkToggle = canOpen && task.status !== "wip";
   // Idle cards outside Parked can also be dragged there; a startable Queue card can also be dropped on Working to start it.
@@ -362,7 +349,7 @@ export function TaskCard({ task, now, unread, selected, dragging, starting, prov
       onKeyDown={(event) => {
         if (event.key === "Escape") hideTooltip();
       }}
-      className={`group relative ${CARD_SURFACE} ${compact ? ONE_LINE_PAD : "px-2 pb-1 pt-1.5"} has-[[data-card-open]:focus-visible]:ring-2 has-[[data-card-open]:focus-visible]:ring-ring/60 ${
+      className={`group relative ${CARD_SURFACE} ${compact ? ONE_LINE_PAD : "px-2 py-1.5"} has-[[data-card-open]:focus-visible]:ring-2 has-[[data-card-open]:focus-visible]:ring-ring/60 ${
         canOpen ? "cursor-pointer" : ""
       } ${dragging ? "opacity-40" : ""} ${stateClass} ${surfaceClass}`}
     >
@@ -371,56 +358,31 @@ export function TaskCard({ task, now, unread, selected, dragging, starting, prov
           <span className="-mt-px flex w-4 shrink-0 justify-center">
             <TaskStatusMark status={task.status} unread={unread} />
           </span>
-          {canOpen ? (
-            <button
-              type="button"
-              data-card-open=""
-              onClick={open}
-              aria-describedby={tooltipOpen ? tooltipId : undefined}
-              className="group/open block min-w-0 flex-1 truncate rounded-sm text-left focus-visible:outline-none"
-            >
-              {compactText}
-            </button>
-          ) : (
-            <div className="min-w-0 flex-1 truncate">{compactText}</div>
-          )}
-          {task.session?.cost ? (
-            <SessionCost session={task.session} className={ONE_LINE_AGE} />
-          ) : activity !== null ? (
-            <time
-              dateTime={new Date(activity).toISOString()}
-              className={ONE_LINE_AGE}
-            >
+          {titleButton}
+          {task.session?.cost ? <SessionCost session={task.session} className={ONE_LINE_AGE} /> : activity !== null ? (
+            <time dateTime={new Date(activity).toISOString()} className={ONE_LINE_AGE}>
               {formatShortAge(activity, now)}
             </time>
           ) : null}
         </div>
       ) : (
+        // Two lines: status, tag and title, cost; context fill, summary, age. The status reason is in the tooltip.
         <>
-          {/* Status, harness and context fill: one column down the card's left gutter, spread over its padded height
-              (status on the title's first line, the ring on the footer's), so the marks never add height. */}
-          <div className="absolute bottom-1 left-2 top-1.5 flex w-4 flex-col items-center justify-between">
-            <TaskStatusMark status={task.status} unread={unread} />
-            <ModelMark provider={provider} />
-            <span className="flex h-[18px] items-center">
+          <div className="flex h-[18px] items-center gap-2">
+            <span className="flex w-4 shrink-0 justify-center">
+              <TaskStatusMark status={task.status} unread={unread} />
+            </span>
+            {titleButton}
+            <SessionCost session={task.session} className={META_LINE} />
+          </div>
+          <div className="flex h-[18px] items-center gap-2">
+            <span className="flex w-4 shrink-0 justify-center">
               <ContextPie session={task.session} />
             </span>
-          </div>
-          <div className="flex items-start gap-2 pl-6">
-            {/* Always two lines tall, so a one-line title keeps the card the same height as its neighbours. */}
-            {canOpen ? (
-              <button
-                type="button"
-                data-card-open=""
-                onClick={open}
-                aria-describedby={tooltipOpen ? tooltipId : undefined}
-                className="group/open block h-9 min-w-0 flex-1 rounded-sm text-left focus-visible:outline-none"
-              >
-                {text}
-              </button>
-            ) : (
-              <div className="h-9 min-w-0 flex-1">{text}</div>
-            )}
+            <span className={`min-w-0 flex-1 truncate ${TYPE.body} ${task.missingThread ? `font-medium ${ACCENT_TEXT.rose}` : "text-muted-foreground"}`}>
+              {task.missingThread ? "no thread" : task.note}
+            </span>
+            {age}
           </div>
         </>
       )}
@@ -462,25 +424,8 @@ export function TaskCard({ task, now, unread, selected, dragging, starting, prov
         ) : null}
       </RowActions>
 
-      {compact ? null : (
-        <div className="mt-0.5 flex h-[18px] items-center gap-2 pl-6">
-          <div className="flex min-w-0 flex-1 items-center gap-1.5">
-            <SessionCost session={task.session} />
-            {reason ? <FooterNote tone={`opacity-90 ${meta.title}`} text={reason} /> : null}
-            {task.missingThread ? <FooterNote tone={ACCENT_TEXT.rose} text="no thread" /> : null}
-          </div>
-          {activity !== null ? (
-            <time
-              dateTime={new Date(activity).toISOString()}
-              className={`shrink-0 whitespace-nowrap ${TYPE.meta} tabular-nums text-muted-foreground/80`}
-            >
-              {formatShortAge(activity, now)}
-            </time>
-          ) : null}
-        </div>
-      )}
       {tooltipOpen ? (
-        <CardTooltip id={tooltipId} anchor={ref} provider={provider} session={task.session} summary={compact ? compactHint : undefined} />
+        <CardTooltip id={tooltipId} anchor={ref} provider={provider} session={task.session} summary={compactHint} />
       ) : null}
     </article>
   );

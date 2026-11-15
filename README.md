@@ -83,20 +83,19 @@ reloads.
 - A `[category] intent` title, e.g. `[docs site] search page`. The title is
   written back to the bb sidebar thread title unless you rename the thread
   yourself.
-- On Queue and Working cards, a two-line summary of the latest exchange.
-- Down the card's left edge, one column: the status mark beside the title
-  (an amber petal spinner while working), the icon of the harness the thread
-  runs on in grey (omp, Pi, Codex, …; the same icon as the bb sidebar), and a
-  pie with how full its context window is (dim grey, amber at 70%, red at
-  90%). The footer has what the thread's whole tree has spent and its status
-  on the left, and how long ago it was updated on the right (`5m`, `3h`,
-  `2d`). Costs show cents under $10 (`$4.30`, `$53`); the tooltip is exact.
-  Working threads refresh these every 5 seconds, idle threads every minute.
+- Queue and Working cards are two rows. The first has the status mark (an
+  amber petal spinner while working), the tag and title on one line, and what
+  the thread's whole tree has spent; the second has a pie with how full its
+  context window is (dim grey, amber at 70%, red at 90%), a one-line summary
+  of the latest exchange, and how long ago it was updated (`5m`, `3h`, `2d`).
+  Costs show cents under $10 (`$4.30`, `$53`); the tooltip is exact. Working
+  threads refresh these every 5 seconds, idle threads every minute.
 - Resting the pointer anywhere on a card, or tabbing to it, opens a tooltip
   beside the card (never over it) with the harness session: harness, model
   and thinking level, token counts and cost, access mode, service tier and
-  model id; on one-line cards it starts with the summary and how the thread
-  was left. Threads with no session yet have none. A tap on a touch screen
+  model id, led by why the thread waits or how it was left (`Asked a
+  question`, `1 child thread working`) and its summary. Threads with no
+  session or note have none. A tap on a touch screen
   opens the thread.
 - The cost adds up the thread, every descendant thread (hidden and archived
   ones included) and their harness subagents; the tooltip says how many

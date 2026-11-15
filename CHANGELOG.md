@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Queue and Working cards are two rows instead of three: status, tag and
+  title, and cost; then the context pie, a one-line summary, and the age. The
+  harness icon is gone, and the status note (`Asked a question`, `1 child
+  thread working`) moved to the card's tooltip, which every card now has.
+
 ## 0.21.0
 
 - A **Remote** section at the bottom of Working lists your live River
