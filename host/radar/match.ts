@@ -70,6 +70,11 @@ export async function match(ideas: Classification[], problems: Problem[]): Promi
         .join("\n\n"),
       schema: SCHEMA,
     });
+    const wanted = new Set(batch.map((idea) => idea.ts));
+    const received = new Set(res.items.map((item) => item.ts));
+    if (res.items.length !== wanted.size || received.size !== wanted.size || [...wanted].some((ts) => !received.has(ts))) {
+      throw new Error("Matching omitted or duplicated ideas; discovery checkpoint was not advanced");
+    }
     return res.items.map((m) => (ids.has(m.problemId) ? m : { ...m, problemId: "none", strength: 0 }));
   });
 }

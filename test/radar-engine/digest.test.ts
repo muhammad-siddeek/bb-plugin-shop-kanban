@@ -1,36 +1,38 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { splitLines } from "../../host/radar/digest";
+import { renderMarkdown, type Digest } from "../../host/radar/digest";
 
-const text = [
-  "RESILIENCY BACKLOG",
-  "",
-  "• backlog one",
-  "• backlog two",
-  "",
-  "OPPORTUNITIES",
-  "",
-  "• opportunity",
-  "   1. fix",
-  "   2. platform",
-  "   3. agent",
-  "",
-  "IDEAS FROM #AI-CENTAURS",
-  "",
-  "• idea",
-].join("\n");
-
-test("splitLines sends everything, breaking only between whole items", () => {
-  assert.deepEqual(splitLines(text, text.length), [text]);
-  // 70 fits the largest block (the opportunity with its heading and solutions) but not two sections together.
-  const parts = splitLines(text, 70);
-  assert.ok(parts.length > 1);
-  assert.ok(parts.every((p) => p.length <= 70));
-  // Nothing dropped: rejoining gives back every non-blank line in order.
-  const nonBlank = (s: string) => s.split("\n").filter((l) => l.trim());
-  assert.deepEqual(parts.flatMap(nonBlank), nonBlank(text));
-  // An opportunity keeps its solutions; a heading stays with its first item; no part starts blank.
-  assert.ok(parts.some((p) => p.includes("• opportunity\n   1. fix\n   2. platform\n   3. agent")));
-  assert.ok(parts.some((p) => p.startsWith("IDEAS FROM #AI-CENTAURS\n\n• idea")));
-  assert.ok(parts.every((p) => p.trim() && !p.startsWith("\n")));
+test("local markdown renders every retained opportunity and solution without delivery limits", () => {
+  const digest: Digest = {
+    date: "2026-11-16",
+    generatedAt: "2026-11-16T12:00:00Z",
+    windowHours: 0,
+    scanned: 0,
+    qualified: 0,
+    pairings: [],
+    others: [],
+    othersHidden: 0,
+    backlog: [],
+    watch: {
+      scanned: 12,
+      skipped: ["#retry-me"],
+      opportunities: Array.from({ length: 12 }, (_, i) => ({
+        key: `problem-${i}`,
+        title: `Opportunity ${i}`,
+        problem: "Repeated cross-team failures",
+        owner: "unowned",
+        ask: 5,
+        askWhy: "Affects the whole platform",
+        solutions: Array.from({ length: 3 }, (_, j) => ({ idea: `Solution ${i}/${j}`, fit: 4, buyIn: 4, ambition: 5 })),
+        evidence: [{ ref: `thread-${i}`, quote: "This keeps happening", url: `https://example.com/${i}` }],
+        resurfaced: false,
+      })),
+    },
+  };
+  const text = renderMarkdown(digest);
+  for (const opportunity of digest.watch.opportunities) {
+    assert.ok(text.includes(opportunity.title));
+    for (const solution of opportunity.solutions) assert.ok(text.includes(solution.idea));
+  }
+  assert.match(text, /retried next run.*#retry-me/);
 });

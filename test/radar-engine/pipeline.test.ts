@@ -79,13 +79,13 @@ test("buildDigest gates pairings on match strength and ranks by score", () => {
   assert.deepEqual(
     d.pairings.map((p) => [p.ts, p.id]),
     [
-      ["2", "1003-1"],
-      ["1", "1003-2"],
+      ["2", "idea-2"],
+      ["1", "idea-1"],
     ],
   );
   assert.deepEqual(
     d.others.map((o) => [o.ts, o.id]),
-    [["3", "1003-3"]],
+    [["3", "idea-3"]],
   );
 });
 
@@ -109,8 +109,8 @@ test("buildDigest rates direct hits P0 and lists them above more popular P1 pair
   );
 });
 
-test("buildDigest lists unpaired ideas by promise (near-miss fit counts), capped, never overflow pairings", () => {
-  const overflow = Array.from({ length: CONFIG.maxPairings + 1 }, (_, i) => candidate(`m${i}`, { leadership: 0.9 }));
+test("buildDigest retains every pairing and unpaired idea in promise order", () => {
+  const overflow = Array.from({ length: 12 }, (_, i) => candidate(`m${i}`, { leadership: 0.9 }));
   const near = candidate("near");
   const hallucinated = candidate("ghost", { leadership: 0.9 });
   const unpaired = [candidate("plain", { traction: 0.5 }), candidate("mid", { traction: 0.3 }), candidate("faint", { traction: 0.1 })];
@@ -128,17 +128,17 @@ test("buildDigest lists unpaired ideas by promise (near-miss fit counts), capped
     problems: overflow.map((_, i) => problem(`p${i}`)),
     backlog: [],
   });
-  assert.equal(d.pairings.length, CONFIG.maxPairings);
+  assert.equal(d.pairings.length, overflow.length);
   const byPromise = ["near", "ghost", "plain", "mid", "faint"];
   assert.deepEqual(
     d.others.map((o) => o.ts),
-    byPromise.slice(0, CONFIG.maxOthers),
+    byPromise,
   );
-  assert.equal(d.othersHidden, Math.max(0, byPromise.length - CONFIG.maxOthers));
+  assert.equal(d.othersHidden, 0);
 });
 
-test("buildDigest caps pairings per problem and keeps capped ideas out of the others", () => {
-  const sameProblem = Array.from({ length: CONFIG.maxPairingsPerProblem + 1 }, (_, i) =>
+test("buildDigest retains all qualifying ideas for the same problem", () => {
+  const sameProblem = Array.from({ length: 8 }, (_, i) =>
     candidate(`s${i}`, { leadership: 0.9, traction: 0.9 - i * 0.1 }),
   );
   const other = candidate("o", { traction: 0.1 });
@@ -154,7 +154,24 @@ test("buildDigest caps pairings per problem and keeps capped ideas out of the ot
   });
   assert.deepEqual(
     d.pairings.map((p) => p.ts),
-    [...sameProblem.slice(0, CONFIG.maxPairingsPerProblem).map((c) => c.msg.ts), "o"],
+    [...sameProblem.map((c) => c.msg.ts), "o"],
   );
   assert.deepEqual(d.others, []);
+});
+
+test("incremental scans use stable per-thread feedback ids rather than colliding daily positions", () => {
+  const build = (ts: string) => {
+    const candidates = [candidate(ts)];
+    return buildDigest({
+      date: "2026-10-03",
+      scanned: 1,
+      analysis: analysis(candidates),
+      ideas: selectIdeas(candidates, {}),
+      matches: [],
+      problems: [],
+      backlog: [],
+    });
+  };
+  assert.notEqual(build("1").others[0].id, build("2").others[0].id);
+  assert.equal(build("1").others[0].id, build("1").others[0].id);
 });

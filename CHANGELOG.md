@@ -1,7 +1,19 @@
 # Changelog
 
-## Unreleased
+## 0.25.0
 
+- Simplify Radar scoring and reuse ranking schemas without changing selection
+  thresholds, review rounds, or persisted inbox behavior.
+- Opening Radar reads the saved inbox without invoking the ranker, avoiding a
+  loading screen that waits for six model calls. Scans still persist reviewed ordering.
+- Radar removes Slack delivery and daily digests; weekday hourly scans remain
+  07:00–15:00 America/Toronto, with completed hours preserved across reloads.
+- Discovery resumes durable source checkpoints without rolling lookback or
+  catch-up caps, compares non-incremental sources against saved snapshots, and
+  retains every qualifying opportunity.
+- Three ranker/reviewer rounds order the complete Radar inbox by impact and
+  availability to own the work. Opportunities and techniques share the saved
+  reviewed order; read/dismissed state and linked threads are preserved.
 - The board's new-thread form opens on the project bb's New thread page last
   used, so its model and other pickers show the same defaults as that page.
 

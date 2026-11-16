@@ -1,4 +1,4 @@
-// Pipeline stages: classify + score the channel window, pick novel ideas, pair with ExP, build the digest.
+// Incremental discovery: classify changed threads, retain qualifying ideas, pair them with ExP, and build the inbox snapshot.
 import { CONFIG, KEEP_CATEGORIES, PATHS } from "./config";
 import type { BacklogItem } from "./backlog";
 import { classify, type Classification } from "./classify";
@@ -19,7 +19,7 @@ import {
   type ReportedIdea,
   type TractionSample,
 } from "./score";
-import { fetchThreads, permalink, resolveUsers, type Message } from "./slack";
+import { fetchThreads, permalink, resolveUsers, type Message, type Reply, type SlackChannelState } from "./slack";
 import { timed } from "./log";
 import { readJson, writeJson } from "./store";
 
@@ -33,19 +33,20 @@ export interface ItemRecord {
 }
 
 export interface State {
-  /** Toronto date (YYYY-MM-DD) of the last delivered digest. */
+  /** Legacy delivery date, preserved for imported stores; scans never gate on or change it. */
   lastRunDate: string;
-  /** Classification cache by message ts; replyCount is the thread size it was judged at. */
-  classified: Record<string, { replyCount: number; c: Classification }>;
-  /** Ideas already delivered, by ideaKey. */
+  /** Classification cache by parent ts, invalidated by any newly discovered thread activity. */
+  classified: Record<string, { replyCount: number; signature?: string; c: Classification }>;
   reported: Record<string, ReportedIdea>;
-  /** Delivered digest items by id, for reader feedback. */
+  /** Published items by stable id, for reader feedback. */
   items: Record<string, ItemRecord>;
+  cursors?: Record<string, number>;
+  channels?: Record<string, SlackChannelState>;
 }
 
 export function loadState(): State {
   const s = readJson<Partial<State>>(PATHS.state, {});
-  return { lastRunDate: s.lastRunDate ?? "", classified: s.classified ?? {}, reported: s.reported ?? {}, items: s.items ?? {} };
+  return { ...s, lastRunDate: s.lastRunDate ?? "", classified: s.classified ?? {}, reported: s.reported ?? {}, items: s.items ?? {}, cursors: s.cursors ?? {}, channels: s.channels ?? {} };
 }
 
 export const saveState = (s: State): void => writeJson(PATHS.state, s);
@@ -69,21 +70,23 @@ export interface Analysis {
 
 const KEEP = new Set<string>(KEEP_CATEGORIES);
 
-/** Classify the window (reusing cached verdicts unless a thread grew), then score every kept message. */
-export async function analyze(window: Message[], baselineSample: Message[], state: State, leaders: Leaders): Promise<Analysis> {
+/** Classify changed threads with complete reply context, then score every kept message. */
+export async function analyze(
+  window: Message[],
+  baselineSample: Message[],
+  state: State,
+  leaders: Leaders,
+  threadContext: Record<string, Reply[]> = {},
+): Promise<Analysis> {
   const baseline = computeBaseline(baselineSample.map(engagement));
 
   const stale = window.filter((m) => {
     const hit = state.classified[m.ts];
-    return !hit || m.replyCount - hit.replyCount >= CONFIG.reclassifyReplyGrowth;
+    return !hit || hit.signature !== JSON.stringify(m);
   });
   if (stale.length) {
-    const parents = stale
-      .filter((m) => m.replyCount >= CONFIG.threadMinReplies)
-      .sort((a, b) => b.replyCount - a.replyCount)
-      .slice(0, CONFIG.maxThreads)
-      .map((m) => m.ts);
-    const threads = await timed(`threads (${parents.length})`, () => fetchThreads(CONFIG.channel.id, parents));
+    const parents = stale.filter((message) => message.replyCount > 0 && !Object.hasOwn(threadContext, message.ts)).map((message) => message.ts);
+    const threads = { ...threadContext, ...await timed(`threads (${parents.length})`, () => fetchThreads(CONFIG.channel.id, parents)) };
     const authors = await timed("authors", () => resolveUsers(stale.map((m) => m.user)));
     const fresh = await timed(`classify (${stale.length})`, () =>
       classify(
@@ -92,8 +95,11 @@ export async function analyze(window: Message[], baselineSample: Message[], stat
         Object.entries(state.reported).map(([key, r]) => ({ key, title: r.title })),
       ),
     );
-    const replyCount = new Map(stale.map((m) => [m.ts, m.replyCount]));
-    for (const c of fresh) state.classified[c.ts] = { replyCount: replyCount.get(c.ts) ?? 0, c };
+    const messages = new Map(stale.map((message) => [message.ts, message]));
+    for (const c of fresh) {
+      const message = messages.get(c.ts)!;
+      state.classified[c.ts] = { replyCount: message.replyCount, signature: JSON.stringify(message), c };
+    }
   }
 
   const classified = window.flatMap((msg) => {
@@ -160,12 +166,12 @@ export function buildDigest(args: {
   problems: Problem[];
   backlog: BacklogItem[];
   watch?: DigestWatch;
+  windowHours?: number;
 }): Digest {
   const problems = new Map(args.problems.map((p) => [p.id, p]));
   const matchByTs = new Map(args.matches.map((m) => [m.ts, m]));
-  const tag = args.date.slice(5).replace("-", "");
-  const item = (x: Idea, id: string): DigestItem => ({
-    id,
+  const item = (x: Idea): DigestItem => ({
+    id: `idea-${x.msg.ts}`,
     ts: x.msg.ts,
     ideaKey: x.ideaKey,
     permalink: permalink(CONFIG.channel.id, x.msg.ts),
@@ -192,16 +198,8 @@ export function buildDigest(args: {
       return [{ x, m, p, priority, score: rankScore(m.strength, x.leadership.score, x.traction) }];
     })
     .sort((a, b) => a.priority.localeCompare(b.priority) || b.score - a.score);
-  // Cap per problem so one popular theme (e.g. "cheaper model → agent cost") cannot fill the digest.
-  const perProblem = new Map<string, number>();
-  const chosen = matched.filter(({ p }) => {
-    const n = perProblem.get(p.id) ?? 0;
-    if (n >= CONFIG.maxPairingsPerProblem) return false;
-    perProblem.set(p.id, n + 1);
-    return true;
-  });
-  const pairings: Pairing[] = chosen.slice(0, CONFIG.maxPairings).map(({ x, m, p, priority, score }, i) => ({
-    ...item(x, `${tag}-${i + 1}`),
+  const pairings: Pairing[] = matched.map(({ x, m, p, priority, score }) => ({
+    ...item(x),
     problem: { id: p.id, title: p.title, kind: p.kind },
     priority,
     strength: m.strength,
@@ -210,7 +208,7 @@ export function buildDigest(args: {
     score,
   }));
 
-  // Everything else that qualified, ranked by promise (a near-miss fit counts); overflow pairings wait for tomorrow.
+  // Every qualified unpaired idea is retained too; advancing a source checkpoint must never strand overflow.
   const matchedTs = new Set(matched.map(({ x }) => x.msg.ts));
   const nearMiss = (x: Idea) => {
     const m = matchByTs.get(x.msg.ts);
@@ -220,23 +218,23 @@ export function buildDigest(args: {
     .filter((x) => !matchedTs.has(x.msg.ts))
     .map((x) => ({ x, score: rankScore(nearMiss(x), x.leadership.score, x.traction) }))
     .sort((a, b) => b.score - a.score);
-  const others = rest.slice(0, CONFIG.maxOthers).map(({ x }, i) => item(x, `${tag}-${pairings.length + i + 1}`));
+  const others = rest.map(({ x }) => item(x));
 
   return {
     date: args.date,
     generatedAt: new Date().toISOString(),
-    windowHours: CONFIG.lookbackHours,
+    windowHours: args.windowHours ?? 0,
     scanned: args.scanned,
     qualified: args.analysis.candidates.length,
     pairings,
     others,
-    othersHidden: rest.length - others.length,
+    othersHidden: 0,
     backlog: args.backlog,
     watch: args.watch ?? NO_WATCH,
   };
 }
 
-/** Record delivered items so they are not repeated and can receive feedback. */
+/** Record published items so novelty and feedback survive subsequent scans. */
 export function commitDigest(state: State, d: Digest): void {
   const items: (DigestItem & { problem?: Pairing["problem"] })[] = [...d.pairings, ...d.others];
   for (const it of items) {
@@ -250,10 +248,5 @@ export function commitDigest(state: State, d: Digest): void {
       permalink: it.permalink,
     };
   }
-  state.lastRunDate = d.date;
 }
 
-/** Cached verdicts older than the window can never be re-scored. */
-export function pruneClassified(state: State, oldestSec: number): void {
-  for (const ts of Object.keys(state.classified)) if (Number(ts) < oldestSec) delete state.classified[ts];
-}

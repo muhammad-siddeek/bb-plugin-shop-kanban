@@ -1,7 +1,7 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import type { TaskSpawn } from "./agents";
 import { hostClient, indexHostId } from "./hosts";
-import { radarDigestSchema, type RadarAction, type RadarDigest, type RadarItem, type RadarState } from "./radar-schema";
+import { radarDigestSchema, radarRankItemSchema, radarRankingSchema, type RadarAction, type RadarDigest, type RadarItem, type RadarState } from "./radar-schema";
 import { errorMessage } from "./text";
 
 type Spawn = (input: TaskSpawn, onCreated?: (threadId: string) => void) => Promise<unknown>;
@@ -33,9 +33,10 @@ export function createRadar(bb: BbPluginApi, spawn: Spawn): RadarService {
   bb.storage.migrate(db, [
     "CREATE TABLE IF NOT EXISTS radar_items (id TEXT PRIMARY KEY, kind TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'unread', thread_id TEXT)",
     "CREATE TABLE IF NOT EXISTS radar_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
+    "ALTER TABLE radar_items ADD COLUMN rank_order INTEGER",
   ]);
   const settings = bb.settings.define({
-    radarEnabled: { type: "boolean", label: "Radar daily scan", default: false },
+    radarEnabled: { type: "boolean", label: "Radar automatic scans", description: "Hourly refreshes 07:00–15:00 Monday–Friday, America/Toronto. No Slack delivery.", default: false },
     radarHostId: { type: "string", label: "Radar host", description: "Persistent host that owns Radar's caches and signed-in dev CLI.", default: "" },
   });
   const host = hostClient(bb);
@@ -74,7 +75,7 @@ export function createRadar(bb: BbPluginApi, spawn: Spawn): RadarService {
   }
 
   function view(): RadarState {
-    const rows = db.prepare("SELECT * FROM radar_items WHERE state != 'dismissed' ORDER BY created_at DESC, id").all() as Row[];
+    const rows = db.prepare("SELECT * FROM radar_items WHERE state != 'dismissed' ORDER BY rank_order IS NULL, rank_order, created_at DESC, id").all() as Row[];
     const items = rows.map((row): RadarItem => {
       const payload = JSON.parse(row.payload);
       return {
@@ -86,6 +87,24 @@ export function createRadar(bb: BbPluginApi, spawn: Spawn): RadarService {
       };
     });
     return { items, unread: items.filter((item) => !item.read).length, generatedAt: getMeta("generatedAt") ?? null, running: running !== null, error: snapshotError ?? error };
+  }
+
+  async function rankInbox() {
+    const rows = db.prepare("SELECT * FROM radar_items WHERE state != 'dismissed' ORDER BY id").all() as Row[];
+    const items = rows.map((row) => radarRankItemSchema.parse({
+      id: row.id, kind: row.kind, read: row.state === "read", threadId: row.thread_id,
+      createdAt: row.created_at, finding: JSON.parse(row.payload),
+    }));
+    if (items.length === 0) return;
+    const ranking = radarRankingSchema.parse(await host.call("radar_rank", { items }, { hostId: await target(), signal: controller.signal, timeoutMs: 30 * 60_000 }));
+    const expected = new Set(items.map((item) => item.id));
+    if (ranking.order.length !== expected.size || new Set(ranking.order).size !== expected.size || ranking.order.some((id) => !expected.has(id))) throw new Error("Radar ranker returned an incomplete ordering");
+    const update = db.prepare("UPDATE radar_items SET rank_order=? WHERE id=?");
+    db.transaction(() => {
+      ranking.order.forEach((id, index) => update.run(index, id));
+      setMeta("ranking", JSON.stringify(ranking));
+    })();
+    changed();
   }
 
   async function refreshSnapshot() {
@@ -105,7 +124,10 @@ export function createRadar(bb: BbPluginApi, spawn: Spawn): RadarService {
       try {
         const result = await host.call("radar_execute", input, { hostId: await target(), signal: controller.signal, timeoutMs: 30 * 60_000 });
         error = null;
-        if (result.digest && !input.dryRun) ingest(radarDigestSchema.parse(result.digest));
+        if (result.digest) {
+          ingest(radarDigestSchema.parse(result.digest));
+          await rankInbox();
+        }
         return { text: result.text };
       } catch (cause) { error = errorMessage(cause); throw cause; }
       finally { running = null; changed(); }
@@ -118,7 +140,7 @@ export function createRadar(bb: BbPluginApi, spawn: Spawn): RadarService {
     const selectedHost = hostId || await target();
     const result = await host.call("radar_import", { source }, { hostId: selectedHost, signal: controller.signal, timeoutMs: 120_000 });
     await settings.experimental_set({ radarHostId: selectedHost });
-    if (result.digest) ingest(result.digest);
+    if (result.digest) { ingest(result.digest); await rankInbox(); }
     return { dataDir: result.dataDir };
   }
 
@@ -165,16 +187,20 @@ export function createRadar(bb: BbPluginApi, spawn: Spawn): RadarService {
     return { ok: true };
   }
 
-  // A short tick preserves Toronto's 08:00 across DST and catches up after a sleeping/offline host.
+  // A short tick follows Toronto's clock across DST and catches up within the current hour.
+  const scheduleClock = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Toronto", year: "numeric", month: "2-digit", day: "2-digit", weekday: "short", hour: "2-digit", hourCycle: "h23" });
   bb.background.schedule("radar-daily", "*/5 * * * *", async () => {
     if (!(await settings.get()).radarEnabled || running) return;
-    const now = new Date();
-    const date = now.toLocaleDateString("en-CA", { timeZone: "America/Toronto" });
-    const hour = Number(new Intl.DateTimeFormat("en-US", { timeZone: "America/Toronto", hour: "2-digit", hourCycle: "h23" }).format(now));
-    if (hour < 8 || getMeta("dailyDate") === date) return;
-    await execute({ action: "run" });
-    setMeta("dailyDate", date);
+    const parts = Object.fromEntries(scheduleClock.formatToParts(new Date()).map(({ type, value }) => [type, value]));
+    const date = `${parts.year}-${parts.month}-${parts.day}`;
+    const hour = Number(parts.hour);
+    const workHour = parts.weekday !== "Sat" && parts.weekday !== "Sun" && hour >= 7 && hour <= 15;
+    const slot = `${date}T${parts.hour}`;
+    if (workHour && getMeta("scanHour") !== slot) {
+      await execute({ action: "scan" });
+      setMeta("scanHour", slot);
+    }
   });
   bb.onDispose(() => controller.abort());
-  return { list: async () => { if (Date.now() - lastRead > 60_000) await refreshSnapshot(); return view(); }, draft, submit, dismiss, execute, importData };
+  return { list: async () => { if (!running && Date.now() - lastRead > 60_000) await refreshSnapshot(); return view(); }, draft, submit, dismiss, execute, importData };
 }

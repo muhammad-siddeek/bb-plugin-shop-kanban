@@ -67,22 +67,31 @@ environment and model, moves the opportunity to Read, and opens Queue. The norma
 working limit still controls when its thread starts. Dismiss removes a recommendation.
 Techniques open their originating Slack message and leave Radar immediately.
 
-Refresh scans the sources again and appends only unseen opportunity/technique keys.
-Daily scans append too; existing cards keep their content, order, read state and
-thread link. Dismissed/opened techniques never return for the same key. This uses
-the existing inbox primary key (`INSERT … ON CONFLICT DO NOTHING`), not another
-history store. Manual scans do not resend Slack delivery or reset the daily schedule.
+Refresh scans the sources again and appends unseen opportunity/technique keys.
+Existing cards keep their content, read state and thread link; dismissed/opened
+techniques never return for the same key. After discovery, three ranker/reviewer
+rounds compare the complete visible inbox by demonstrated impact and availability
+to own the work. The final reviewed order is persisted across reloads and used for
+both opportunities and techniques. Ranking never drops recommendations.
+Opening Radar reads the saved snapshot without invoking ranking.
+
+All scans use one watch list: 13 Slack channels, four repositories' PR
+titles/descriptions, and ExP/Optimization Vault projects and issues. Discovery
+resumes durable per-source checkpoints without a rolling lookback or catch-up
+cap. Sources without incremental APIs are compared against saved snapshots.
 
 The complete discovery engine lives in this plugin (`host/radar`): Slack/Vault/
 GitHub discovery, leadership context, scoring, opportunity watch, resiliency
-backlog, feedback, backfill, Slack canvas and DM/webhook delivery. It uses the
+backlog, feedback and backfill. There is no Slack delivery. It uses the
 selected persistent host's signed-in `dev` CLI; `RADAR_DEV_BIN` can select its
 absolute path. Tokens remain in the host process and are never stored in the inbox.
 Engine configuration lives in `host/radar/config.ts`.
 
-`radarHostId` pins the data owner. `radarEnabled` enables the daily 08:00
-America/Toronto scan (disabled until configured); a five-minute tick catches up
-after sleep and tracks DST. Engine caches and snapshots live under the plugin's
+`radarHostId` pins the data owner. `radarEnabled` enables hourly refreshes from
+07:00 through 15:00 inclusive, Monday–Friday, America/Toronto (disabled until
+configured). A five-minute tick catches up within the current work hour after
+sleep and tracks DST; missed hours are not replayed, but source checkpoints
+preserve unread history. Completed hours survive reloads. Engine caches and snapshots live under the plugin's
 persistent host data directory, inbox resolution state in its server database.
 Neither requires the old Radar checkout after importing its data:
 
@@ -90,17 +99,13 @@ Neither requires the old Radar checkout after importing its data:
 bb shop-kanban radar import /absolute/path/to/old/data
 bb shop-kanban radar list --json
 bb shop-kanban radar scan # discover new recommendations without Slack delivery
-bb shop-kanban radar run [--force] [--dry-run]
 bb shop-kanban radar refresh
 bb shop-kanban radar backfill --days 90
 bb shop-kanban radar feedback --id <message-id> --vote up [--note "reason"]
-bb shop-kanban radar webhook --url <https-url>
 ```
 
-Import copies missing files without overwriting plugin-owned state. Existing
-automations pointing at the old checkout must be retired before enabling the
-plugin schedule, to avoid duplicate delivery. Webhook configuration retains the
-existing macOS Keychain identity; do not put webhook URLs in committed files.
+Import copies missing files without overwriting plugin-owned state. Retire
+automations pointing at the old checkout before enabling the plugin schedule.
 
 ## Working limit
 

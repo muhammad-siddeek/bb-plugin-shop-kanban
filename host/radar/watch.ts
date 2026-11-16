@@ -1,14 +1,14 @@
-// Opportunity watch, folded into the daily digest: sweeps the due WATCH groups (Slack threads, GitHub PRs, Vault) for
+// Opportunity watch: sweeps all configured sources (Slack threads, GitHub PRs, Vault) for
 // unowned ExP problems, has the LLM rate each ask and propose three ranked solutions, and keeps only big asks with
 // a big solution the team could plausibly accept.
-import { CONFIG, PATHS, WATCH, WATCH_LIMITS, radarDate, type WatchGroup } from "./config";
+import { CONFIG, PATHS, WATCH, WATCH_LIMITS, type WatchSources } from "./config";
 import { lit, runCode } from "./gateway";
 import type { Leaders } from "./leaders";
 import { inBatches, structured } from "./llm";
 import { timed } from "./log";
 import type { Problem } from "./registry";
 import { safeMessage, throwIfAborted } from "./runtime";
-import { fetchMessages, fetchThreads, permalink, type Message, type Reply, type UserInfo } from "./slack";
+import { permalink, scanChannel, type SlackChannelState, type UserInfo } from "./slack";
 import { readJson, writeJson } from "./store";
 
 /** One unit of new activity the judge sees: a Slack thread, a PR, or a Vault snapshot. */
@@ -56,28 +56,29 @@ export interface WatchState {
   /** Unix seconds each source was last swept up to, by source key. */
   cursors: Record<string, number>;
   reported: Record<string, ReportedOpportunity>;
+  channels?: Record<string, SlackChannelState>;
+  /** Last completely read Vault/PR content. Inclusive PR boundary reads and unchanged snapshots are not re-judged. */
+  snapshots?: Record<string, string>;
 }
 
 export interface Sweep {
   at: number;
-  groups: string[];
   scanned: number;
   found: Opportunity[];
   /** Source labels that failed (e.g. rate-limited); their cursors stay put so the next run retries them. */
   failed: { key: string; label: string }[];
+  channels?: Record<string, SlackChannelState>;
+  snapshots?: Record<string, string>;
 }
 
 export const loadWatchState = (): WatchState => ({ cursors: {}, reported: {}, ...readJson<Partial<WatchState>>(PATHS.watchState, {}) });
 
-const sourceKeys = (g: WatchGroup) => [...g.channels.map((c) => `slack:${c.id}`), ...g.repos.map((r) => `github:${r}`)];
-
-/** Groups with a source last swept at least `everyDays` ago (less a grace period for schedule jitter). */
-export function dueGroups(groups: WatchGroup[], cursors: WatchState["cursors"], now: number): WatchGroup[] {
-  return groups.filter((g) => {
-    const cadence = g.everyDays * 86_400 - WATCH_LIMITS.dueGraceHours * 3600;
-    return sourceKeys(g).some((k) => now - (cursors[k] ?? 0) >= cadence);
-  });
-}
+const SOURCE_KEYS = [
+  ...WATCH.channels.map((c) => `slack:${c.id}`),
+  ...WATCH.repos.map((r) => `github:${r}`),
+  ...WATCH.vault.projectTeams.map((team) => `vault:projects:${team}`),
+  ...WATCH.vault.issueTeams.map((team) => `vault:issues:${team}`),
+];
 
 // ---- gathering -------------------------------------------------------------------------------------------------
 
@@ -93,44 +94,29 @@ function who(id: string, fallback: string, users: Record<string, UserInfo>): str
   return u.title ? `${u.name} (${u.title})` : u.name;
 }
 
-/** Threads in the channel that started or got replies after `since`; new threads come with their first replies. */
+/** Durable thread indexes make replies to arbitrarily old parents discoverable without a rolling history window. */
 async function channelActivity(
-  ch: WatchGroup["channels"][number],
+  ch: WatchSources["channels"][number],
   since: number,
   now: number,
-  windowDays: number,
   users: Record<string, UserInfo>,
-): Promise<Activity[]> {
-  const msgs = await fetchMessages(ch.id, Math.floor(now - windowDays * 86_400), { includeBots: ch.includeBots });
-  const fresh = msgs.filter((m) => Number(m.ts) > since);
-  // Slack rate-limits thread reads, so only the most recently active threads are opened; a revived thread that
-  // isn't opened has nothing new to show and is left for the next sweep.
-  const active = (m: Message) => Number(m.latestReply ?? 0);
-  const open = new Set(
-    msgs
-      .filter((m) => active(m) > since)
-      .sort((a, b) => active(b) - active(a))
-      .slice(0, WATCH_LIMITS.maxThreadsPerChannel)
-      .map((m) => m.ts),
-  );
-  const revived = msgs.filter((m) => Number(m.ts) <= since && open.has(m.ts));
-  const limit = WATCH_LIMITS.maxRepliesPerThread;
-  const freshReplies = await fetchThreads(ch.id, fresh.filter((m) => open.has(m.ts)).map((m) => m.ts), { limit });
-  const newReplies = await fetchThreads(ch.id, revived.map((m) => m.ts), { limit, oldest: since.toFixed(6) });
-  const replies = { ...freshReplies, ...newReplies };
-  const render = (m: Message, isNew: boolean): Activity => {
-    const thread: Reply[] = replies[m.ts] ?? [];
-    // Bot posts (alerts) only need their headline; people's posts keep their substance.
-    const body = m.text.slice(0, m.user.startsWith("B") ? 400 : 1500);
-    const extra = [...m.attachments, ...m.files].join(" | ").slice(0, 400);
-    const lines = [
-      `${isNew ? "New thread" : "Earlier thread with new replies"} started ${day(Number(m.ts))} by ${who(m.user, m.userName, users)}: ${body}${extra ? ` [${extra}]` : ""}`,
-      ...(isNew ? [] : [`(${m.replyCount - thread.length} earlier replies not shown)`]),
-      ...thread.map((r) => `- ${who(r.user, r.userName, users)} (${day(Number(r.ts))}): ${r.text}`),
-    ];
-    return { ref: `${ch.name}/${m.ts}`, url: permalink(ch.id, m.ts), text: `#${ch.name}\n${lines.join("\n")}` };
+  previous?: SlackChannelState,
+): Promise<{ activity: Activity[]; state: SlackChannelState }> {
+  const scanned = await scanChannel(ch.id, since, now, previous, { includeBots: ch.includeBots });
+  return {
+    state: scanned.state,
+    activity: scanned.messages.map((message) => {
+      const isNew = Number(message.ts) > since;
+      const replies = scanned.updates[message.ts] ?? [];
+      const extra = [...message.attachments, ...message.files].join(" | ");
+      const lines = [
+        `${isNew ? "New thread" : replies.length ? "Earlier thread with new replies" : "Updated earlier thread"} started ${day(Number(message.ts))} by ${who(message.user, message.userName, users)}: ${message.text}${extra ? ` [${extra}]` : ""}`,
+        ...(isNew ? [] : [`(${Math.max(0, message.replyCount - replies.length)} earlier replies retained in the thread index)`]),
+        ...replies.map((reply) => `- ${who(reply.user, reply.userName, users)} (${day(Number(reply.ts))}): ${reply.text}`),
+      ];
+      return { ref: `${ch.name}/${message.ts}`, url: permalink(ch.id, message.ts), text: `#${ch.name}\n${lines.join("\n")}` };
+    }),
   };
-  return [...fresh.map((m) => render(m, true)), ...revived.map((m) => render(m, false))];
 }
 
 interface Pr {
@@ -140,89 +126,133 @@ interface Pr {
   url: string;
   author: string;
   createdAt: string;
+  updatedAt: string;
   state: string;
   body: string;
 }
 
-/** PRs opened after `since` in each repo, with the start of their descriptions. */
-async function repoActivity(repos: string[], since: number): Promise<Activity[]> {
-  if (repos.length === 0) return [];
+/** Read every updated PR. GitHub's 1,000-result search ceiling is handled by subdividing the checkpoint range. */
+async function repoActivity(repo: string, since: number, now: number): Promise<Activity[]> {
   const prs = await runCode<Pr[]>(`
-interface RawPr { number: number; title: string; html_url: string; user?: { login?: string }; created_at: string; state: string; draft?: boolean; body?: string | null }
-const out: { repo: string; number: number; title: string; url: string; author: string; createdAt: string; state: string; body: string }[] = [];
-for (const full of ${lit(repos)} as string[]) {
-  const [owner, repo] = full.split('/');
-  const r = (await github.search_pull_requests(${lit(`created:>=${day(since)}`)}, { owner, repo, perPage: ${WATCH_LIMITS.maxPrsPerRepo}, sort: 'created', order: 'desc' })) as unknown as { items?: RawPr[] };
-  for (const p of r.items ?? []) out.push({
-    repo: full, number: p.number, title: p.title, url: p.html_url, author: p.user?.login ?? '', createdAt: p.created_at,
-    state: p.draft ? 'draft' : p.state, body: String(p.body ?? '').slice(0, 1500),
-  });
-}
-return out;`);
+interface RawPr { number: number; title: string; html_url: string; user?: { login?: string }; created_at: string; updated_at?: string; state: string; draft?: boolean; body?: string | null }
+interface SearchPage { items?: RawPr[]; total_count?: number; incomplete_results?: boolean }
+const [owner, repo] = ${lit(repo)}.split('/');
+const out = new Map<number, RawPr>();
+const read = async (from: number, to: number): Promise<void> => {
+  const range = 'updated:' + new Date(from * 1000).toISOString() + '..' + new Date(to * 1000).toISOString();
+  let count: number | undefined;
+  let received = 0;
+  for (let page = 1; ; page++) {
+    const result = (await github.search_pull_requests(range, { owner, repo, perPage: 100, page, sort: 'updated', order: 'asc' })) as unknown as SearchPage;
+    if (!Array.isArray(result.items) || result.incomplete_results) throw new Error('GitHub returned an incomplete PR search for ' + ${lit(repo)});
+    if (page === 1) {
+      count = result.total_count;
+      if (count !== undefined && count > 1000) {
+        const mid = Math.floor((from + to) / 2);
+        if (mid <= from || mid >= to) throw new Error('GitHub PR search exceeds 1000 results at one timestamp for ' + ${lit(repo)});
+        await read(from, mid);
+        await read(mid, to);
+        return;
+      }
+    }
+    for (const pr of result.items) out.set(pr.number, pr);
+    received += result.items.length;
+    if (count !== undefined && received >= count) return;
+    if (result.items.length < 100) {
+      if (count !== undefined && received < count) throw new Error('GitHub PR pagination ended early for ' + ${lit(repo)});
+      return;
+    }
+    if (page >= 10) throw new Error('GitHub PR pagination did not finish for ' + ${lit(repo)});
+  }
+};
+await read(${lit(Math.floor(since))}, ${lit(now)});
+return [...out.values()].map((pr) => ({
+  repo: ${lit(repo)}, number: pr.number, title: pr.title, url: pr.html_url, author: pr.user?.login ?? '',
+  createdAt: pr.created_at, updatedAt: pr.updated_at ?? pr.created_at,
+  state: pr.draft ? 'draft' : pr.state, body: String(pr.body ?? ''),
+}));`);
   return prs
-    .filter((p) => Date.parse(p.createdAt) / 1000 > since)
-    .map((p) => ({
-      ref: `${p.repo}#${p.number}`,
-      url: p.url,
-      text: `PR ${p.repo}#${p.number} (${p.state}) by ${p.author}, opened ${p.createdAt.slice(0, 10)}: ${p.title}\n${p.body}`,
+    .filter((pr) => Date.parse(pr.updatedAt) / 1000 >= Math.floor(since) && Date.parse(pr.updatedAt) / 1000 <= now)
+    .map((pr) => ({
+      ref: `${pr.repo}#${pr.number}`,
+      url: pr.url,
+      text: `PR ${pr.repo}#${pr.number} (${pr.state}) by ${pr.author}, updated ${pr.updatedAt}: ${pr.title}\n${pr.body}`,
     }));
 }
 
-/** Active GSD projects and open issues for the configured Vault teams, as a snapshot. */
-async function vaultActivity({ projectTeams, issueTeams }: WatchGroup["vault"]): Promise<Activity[]> {
-  if (projectTeams.length + issueTeams.length === 0) return [];
-  const snaps = await runCode<{ team: string; kind: "projects" | "issues"; text: string }[]>(`
-const str = (x: unknown) => (typeof x === 'string' ? x : JSON.stringify(x));
-return await Promise.all([
-  ...(${lit(projectTeams)} as string[]).map(async (team) => ({
-    team, kind: 'projects', text: str(await vault.get_projects({ team_id: team, status: 'active', limit: 50 })).slice(0, 15000),
-  })),
-  ...(${lit(issueTeams)} as string[]).map(async (team) => ({
-    team, kind: 'issues', text: str(await vault.get_issues({ team_id: team, status: 'open', limit: 200 })).slice(0, 40000),
-  })),
-]);`);
-  return snaps.map((s) => ({
-    ref: `vault/${s.team}/${s.kind}`,
-    url: `https://vault.shopify.io/teams/${s.team}${s.kind === "issues" ? "/issues" : ""}`,
-    text: `Vault team ${s.team}: ${s.kind === "issues" ? "open issues (includes subteams)" : "active GSD projects"}\n${s.text}`,
-  }));
+/** Vault has no list-pagination parameter: reject truncated responses rather than checkpointing missing content. */
+async function vaultActivity(team: string, kind: "projects" | "issues"): Promise<Activity> {
+  const text = await runCode<string>(`
+const value = await vault.${kind === "projects" ? "get_projects" : "get_issues"}(${lit({ team_id: team, status: kind === "projects" ? "active" : "open", limit: kind === "projects" ? 100 : 200 })});
+const text = typeof value === 'string' ? value : JSON.stringify(value);
+if (/Results limited to|\\btruncated\\b/i.test(text) || [...text.matchAll(/^\\|\\s*\\d+\\s*\\|/gm)].length >= ${kind === "projects" ? 100 : 200}) {
+  throw new Error('Vault returned a truncated ${kind} snapshot for ' + ${lit(team)});
+}
+return text;`);
+  return {
+    ref: `vault/${team}/${kind}`,
+    url: `https://vault.shopify.io/teams/${team}${kind === "issues" ? "/issues" : ""}`,
+    text: `Vault team ${team}: ${kind === "issues" ? "open issues (includes subteams)" : "active GSD projects"}\n${text}`,
+  };
 }
 
 /**
- * New activity from one group's sources: channels one at a time (parallel sweeps trip Slack's thread-read limit).
+ * New activity from every source: channels one at a time (parallel sweeps trip Slack's thread-read limit).
  * A source that fails after the gateway's retries is skipped and reported in `failed`, so one rate-limited channel
  * doesn't cost the rest of the sweep.
  */
-async function groupActivity(
-  g: WatchGroup,
-  cursors: WatchState["cursors"],
+async function collectActivity(
+  state: WatchState,
   now: number,
   users: Record<string, UserInfo>,
   failed: Sweep["failed"],
-): Promise<Activity[]> {
-  const since = (key: string) => Math.max(cursors[key] ?? 0, now - g.maxLookbackHours * 3600);
-  const out: Activity[] = [];
-  const attempt = async (keys: string[], label: string, fn: () => Promise<Activity[]>) => {
+): Promise<{ activity: Activity[]; channels: Record<string, SlackChannelState>; snapshots: Record<string, string> }> {
+  const channels = { ...state.channels };
+  const snapshots = { ...state.snapshots };
+  const activity: Activity[] = [];
+  const attempt = async (key: string, label: string, fn: () => Promise<Activity[]>) => {
     throwIfAborted();
     try {
-      out.push(...(await fn()));
+      activity.push(...(await fn()));
     } catch (err) {
       throwIfAborted();
       console.error(`watch: skipped ${label}: ${safeMessage(err).split("\n").pop()}`);
-      failed.push(...keys.map((key) => ({ key, label })));
+      failed.push({ key, label });
     }
   };
-  for (const c of g.channels) {
-    const key = `slack:${c.id}`;
-    await attempt([key], `#${c.name}`, () => channelActivity(c, since(key), now, g.threadWindowDays, users));
+  for (const channel of WATCH.channels) {
+    const key = `slack:${channel.id}`;
+    await attempt(key, `#${channel.name}`, async () => {
+      const scanned = await channelActivity(channel, state.cursors[key] ?? 0, now, users, channels[key]);
+      channels[key] = scanned.state;
+      return scanned.activity;
+    });
   }
-  // One shared cutoff for the group's repos: the oldest repo cursor (they are searched together).
-  if (g.repos.length) {
-    const keys = g.repos.map((r) => `github:${r}`);
-    await attempt(keys, "GitHub PRs", () => repoActivity(g.repos, Math.min(...keys.map(since))));
+  for (const repo of WATCH.repos) {
+    const key = `github:${repo}`;
+    await attempt(key, repo, async () => {
+      const found = await repoActivity(repo, state.cursors[key] ?? 0, now);
+      return found.filter((activity) => {
+        const snapshotKey = `github:${activity.ref}`;
+        if (snapshots[snapshotKey] === activity.text) return false;
+        snapshots[snapshotKey] = activity.text;
+        return true;
+      });
+    });
   }
-  await attempt([], "Vault", () => vaultActivity(g.vault));
-  return out;
+  for (const kind of ["projects", "issues"] as const) {
+    const teams = kind === "projects" ? WATCH.vault.projectTeams : WATCH.vault.issueTeams;
+    for (const team of teams) {
+      const key = `vault:${kind}:${team}`;
+      await attempt(key, `Vault ${team} ${kind}`, async () => {
+        const snapshot = await vaultActivity(team, kind);
+        if (snapshots[key] === snapshot.text) return [];
+        snapshots[key] = snapshot.text;
+        return [snapshot];
+      });
+    }
+  }
+  return { activity, channels, snapshots };
 }
 
 // ---- judging ---------------------------------------------------------------------------------------------------
@@ -356,32 +386,37 @@ async function judge(activity: Activity[], header: string): Promise<Opportunity[
 
 // ---- sweep + selection -----------------------------------------------------------------------------------------
 
-/** Sweep every due group and judge the new activity together. Commit with `commitSweep` once delivered. */
-export async function sweep(state: WatchState, problems: Problem[], leaders: Leaders, now: number, allGroups = false): Promise<Sweep> {
+/** Sweep every source and judge all new activity. Commit checkpoints only after the findings are published. */
+export async function sweep(state: WatchState, problems: Problem[], leaders: Leaders, now: number): Promise<Sweep> {
   throwIfAborted();
-  const due = allGroups ? WATCH : dueGroups(WATCH, state.cursors, now);
   const users: Record<string, UserInfo> = {
     ...readJson<Record<string, UserInfo>>(PATHS.users, {}),
     ...Object.fromEntries(leaders.chain.filter((c) => c.slackId).map((c) => [c.slackId, { name: c.name, title: c.title, at: leaders.refreshedAt }])),
   };
-  const activity: Activity[] = [];
   const failed: Sweep["failed"] = [];
-  for (const g of due) activity.push(...(await timed(`watch ${g.name}`, () => groupActivity(g, state.cursors, now, users, failed))));
-  const since = Math.min(now, ...due.flatMap(sourceKeys).map((k) => state.cursors[k] ?? 0));
+  const { activity, channels, snapshots } = await timed("watch sources", () => collectActivity(state, now, users, failed));
+  const since = Math.min(now, ...SOURCE_KEYS.map((k) => state.cursors[k] ?? 0));
   const found = activity.length
     ? await timed(`watch judge (${activity.length})`, () => judge(activity, context(since, problems, leaders, state.reported)))
     : [];
-  return { at: now, groups: due.map((g) => g.name), scanned: activity.length, found, failed };
+  return { at: now, scanned: activity.length, found, failed, channels, snapshots };
 }
 
 /** Ambition of the biggest solution the team could plausibly accept; 0 when none is credible. */
-const bigCredible = (o: Opportunity) =>
-  Math.max(0, ...o.solutions.filter((s) => s.fit >= WATCH_LIMITS.minCredible && s.buyIn >= WATCH_LIMITS.minCredible).map((s) => s.ambition));
+const bigCredible = (o: Opportunity): number => {
+  let ambition = 0;
+  for (const solution of o.solutions) {
+    if (solution.fit >= WATCH_LIMITS.minCredible && solution.buyIn >= WATCH_LIMITS.minCredible) {
+      ambition = Math.max(ambition, solution.ambition);
+    }
+  }
+  return ambition;
+};
 
 /**
  * Merge a sweep's opportunities by key and keep the big ones: ask ≥ minAsk and a credible solution (fit and buy-in
- * ≥ minCredible) with ambition ≥ minAmbition. Each is delivered once, again only after its evidence grows by CONFIG.resurfaceFactor.
- * Returns the picks (biggest first, capped) and the updated ledger.
+ * ≥ minCredible) with ambition ≥ minAmbition. Each is reported once, again only after its evidence grows by CONFIG.resurfaceFactor.
+ * Returns every qualifying pick (biggest first) and the updated ledger.
  */
 export function selectOpportunities(
   found: Opportunity[],
@@ -406,9 +441,7 @@ export function selectOpportunities(
     next[o.key] = { ...prev, seen };
     if (seen >= prev.atReport * CONFIG.resurfaceFactor) candidates.push({ ...o, resurfaced: true });
   }
-  const picked = candidates
-    .sort((a, b) => b.ask - a.ask || bigCredible(b) - bigCredible(a))
-    .slice(0, WATCH_LIMITS.maxItems);
+  const picked = candidates.sort((a, b) => b.ask - a.ask || bigCredible(b) - bigCredible(a));
   for (const o of picked) {
     const seen = next[o.key]?.seen ?? o.evidence.length;
     next[o.key] = { title: o.title, date, seen, atReport: seen };
@@ -416,16 +449,9 @@ export function selectOpportunities(
   return { picked, reported: next };
 }
 
-/** Forget today's Toronto cursors for an in-memory redo/preview; commit them only after successful delivery. */
-export function rewindToday(state: WatchState): void {
-  const today = radarDate();
-  for (const [key, at] of Object.entries(state.cursors)) if (radarDate(new Date(at * 1000)) >= today) delete state.cursors[key];
-}
-
-/** Advance the swept groups' cursors and store the ledger. */
+/** Advance successful sources' cursors and store the ledger. */
 export function commitSweep(state: WatchState, s: Sweep, reported: WatchState["reported"]): void {
-  const swept = WATCH.filter((g) => s.groups.includes(g.name));
   const failed = new Set(s.failed.map((f) => f.key));
-  for (const key of swept.flatMap(sourceKeys)) if (!failed.has(key)) state.cursors[key] = s.at;
-  writeJson(PATHS.watchState, { ...state, reported });
+  for (const key of SOURCE_KEYS) if (!failed.has(key)) state.cursors[key] = Math.max(state.cursors[key] ?? 0, s.at);
+  writeJson(PATHS.watchState, { ...state, reported, channels: s.channels ?? state.channels ?? {}, snapshots: s.snapshots ?? state.snapshots ?? {} });
 }

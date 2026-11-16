@@ -1,4 +1,4 @@
-// Calibration: classify + score + match the last N days (no cache, no state changes) into a report.
+// Explicit calibration: classify + score + match the requested days without changing discovery checkpoints or ledgers.
 import { join } from "node:path";
 import { CONFIG, KEEP_CATEGORIES, PATHS } from "./config";
 import { loadLeaders } from "./leaders";
@@ -14,7 +14,7 @@ const cell = (s: string) => s.replace(/\|/g, "\\|").replace(/\s+/g, " ").trim();
 const day = (ts: string) => new Date(Number(ts) * 1000).toLocaleDateString("en-CA");
 
 export async function backfill(days: number): Promise<string> {
-  const [registry, leaders] = await Promise.all([loadRegistry(), loadLeaders()]);
+  const [registry, leaders] = await Promise.all([loadRegistry({ persist: false }), loadLeaders({ persist: false })]);
   const msgs = await timed("fetch", () => fetchMessages(CONFIG.channel.id, Math.floor(Date.now() / 1000 - days * 86_400)));
   // Fresh classification cache: calibration exists to re-judge with the current prompt.
   const scratch: State = { ...loadState(), classified: {} };

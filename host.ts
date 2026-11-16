@@ -11,6 +11,7 @@ import { ompSpend, piSpend } from "./host/spend";
 import { executeRadar } from "./host/radar/index";
 import { importRadarData, radarDataDir, radarSnapshot } from "./host/radar-data";
 import { radarDigestSchema } from "./server/radar-schema";
+import { rankRadar } from "./host/radar-rank";
 
 const LABELER_FLAGS = [
   "-p",
@@ -71,6 +72,7 @@ export default experimental_defineHostEntry({
       const result = await executeRadar(input, { dataDir: radarDataDir(context.experimental_paths.dataDir), signal: context.signal });
       return { ...result, digest: result.digest ? radarDigestSchema.parse(result.digest) : null };
     },
+    radar_rank: ({ items }, context) => rankRadar(items, { dataDir: radarDataDir(context.experimental_paths.dataDir), signal: context.signal }),
     complete: async ({ command, system, prompt, models, timeoutMs }, context) => {
       let lastError: string | null = null;
       for (const model of models) {

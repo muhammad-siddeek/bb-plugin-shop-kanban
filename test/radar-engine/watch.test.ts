@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { CONFIG, WATCH, WATCH_LIMITS } from "../../host/radar/config";
-import { dueGroups, selectOpportunities, type Opportunity, type Solution } from "../../host/radar/watch";
+import { CONFIG, WATCH_LIMITS } from "../../host/radar/config";
+import { selectOpportunities, type Opportunity, type Solution } from "../../host/radar/watch";
 
 const sol = (ambition: number, fit = 4, buyIn = 4): Solution => ({ idea: `idea-${ambition}`, fit, buyIn, ambition });
 
@@ -52,32 +52,15 @@ test("an opportunity is delivered once, then again only after its evidence grows
   assert.equal(third.reported["srm-silent"].atReport, 2 * CONFIG.resurfaceFactor);
 });
 
-test("picks rank by ask, then by their biggest credible solution, capped; cut ones stay eligible", () => {
+test("picks rank by ask and biggest credible solution without losing qualifying overflow", () => {
   const found = [
     opp("ask4", { ask: 4 }),
     opp("ask5-amb4", { solutions: [sol(4)] }),
     opp("ask5-amb5"),
-    ...Array.from({ length: WATCH_LIMITS.maxItems }, (_, i) => opp(`filler-${i}`, { ask: 4, solutions: [sol(4)] })),
+    ...Array.from({ length: 12 }, (_, i) => opp(`filler-${i}`, { ask: 4, solutions: [sol(4)] })),
   ];
   const { picked, reported } = selectOpportunities(found, {}, "2026-11-16");
-  assert.equal(picked.length, WATCH_LIMITS.maxItems);
+  assert.equal(picked.length, found.length);
   assert.deepEqual(picked.slice(0, 2).map((o) => o.key), ["ask5-amb5", "ask5-amb4"]);
-  assert.equal(Object.keys(reported).length, WATCH_LIMITS.maxItems);
-});
-
-test("the weekly group is swept a week after its last sweep, the daily group every day", () => {
-  const daily = WATCH.find((g) => g.name === "daily")!;
-  const weekly = WATCH.find((g) => g.name === "weekly")!;
-  const sweptAt = (g: typeof daily, at: number) =>
-    Object.fromEntries([...g.channels.map((c) => `slack:${c.id}`), ...g.repos.map((r) => `github:${r}`)].map((k) => [k, at]));
-  const monday8am = Date.parse("2026-11-16T13:00:00Z") / 1000;
-  const cursors = { ...sweptAt(daily, monday8am), ...sweptAt(weekly, monday8am) };
-  const names = (now: number) => dueGroups(WATCH, cursors, now).map((g) => g.name);
-
-  assert.deepEqual(names(Date.parse("2026-11-16T15:00:00Z") / 1000), []);
-  // Tuesday's run a few minutes earlier than Monday's still sweeps the daily group.
-  assert.deepEqual(names(Date.parse("2026-11-17T12:55:00Z") / 1000), ["daily"]);
-  assert.deepEqual(names(Date.parse("2026-11-23T13:00:00Z") / 1000), ["daily", "weekly"]);
-  // Never swept: everything is due.
-  assert.deepEqual(dueGroups(WATCH, {}, monday8am).map((g) => g.name), ["daily", "weekly"]);
+  assert.equal(Object.keys(reported).length, found.length);
 });

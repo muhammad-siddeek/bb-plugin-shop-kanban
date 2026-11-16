@@ -319,9 +319,8 @@ export function RadarPanel({ api, onQueued }: { api: RadarApi; onQueued: () => v
     hide(item.id);
   };
   const items = state?.items.filter((item) => !hidden.has(item.id)) ?? [];
-  const opportunities = items.filter((item) => item.kind === "opportunity" && !isRead(item));
-  const techniques = items.filter((item) => item.kind === "technique" && !isRead(item));
-  const read = items.filter((item) => item.kind === "opportunity" && isRead(item));
+  const unread = items.filter((item) => !isRead(item));
+  const read = items.filter((item) => isRead(item));
   const problems = [api.error, state?.error !== api.error ? state?.error : null].filter((message): message is string => Boolean(message));
   const generated = state?.generatedAt ? Date.parse(state.generatedAt) : NaN;
   const generatedAge = Number.isFinite(generated) ? formatShortAge(generated, now) : null;
@@ -347,15 +346,11 @@ export function RadarPanel({ api, onQueued }: { api: RadarApi; onQueued: () => v
       </details>)}
       {state ? (
         <>
-          <section aria-label="Unread opportunities" className="space-y-1">
-            <GroupHeader title="Opportunities" count={opportunities.length} />
-            {opportunities.length === 0 ? <p className={`px-[9px] py-2 ${TYPE.meta} text-muted-foreground/60`}>No new opportunities. Refresh to look again.</p> : opportunities.map((item) => (
+          <section aria-label="Ranked recommendations" className="space-y-1">
+            <GroupHeader title="Recommendations" count={unread.length} />
+            {unread.length === 0 ? <p className={`px-[9px] py-2 ${TYPE.meta} text-muted-foreground/60`}>No new recommendations. Refresh to look again.</p> : unread.map((item) => item.kind === "opportunity" ? (
               <OpportunityRow key={item.id} item={item} now={now} onDraft={loadDraft} onDismiss={dismiss} onThread={(threadId) => navigate.toThread(threadId)} />
-            ))}
-          </section>
-          <section aria-label="Unread techniques" className="space-y-1">
-            <GroupHeader title="Techniques" count={techniques.length} />
-            {techniques.length === 0 ? <p className={`px-[9px] py-2 ${TYPE.meta} text-muted-foreground/60`}>You're caught up on techniques.</p> : techniques.map((item) => <TechniqueRow key={item.id} item={item} now={now} onOpen={openTechnique} />)}
+            ) : <TechniqueRow key={item.id} item={item} now={now} onOpen={openTechnique} />)}
           </section>
           {read.length > 0 ? (
             <details aria-label="Read opportunities" className="border-t border-border/50 pt-2">

@@ -1,8 +1,9 @@
-// Weekly ExP problem registry: what the team owns and struggles with, distilled into problem cards.
+// Durable ExP context: fold changed Vault snapshots and new Slack activity into the prior problem registry.
 import { CONFIG, PATHS } from "./config";
 import { lit, runCode } from "./gateway";
 import { structured } from "./llm";
-import { ageDays, readJson, writeJson } from "./store";
+import { permalink, scanChannel, type SlackChannelState } from "./slack";
+import { readJson, writeJson } from "./store";
 
 export const PROBLEM_KINDS = [
   "project",
@@ -27,57 +28,86 @@ export interface Problem {
 export interface Registry {
   refreshedAt: string;
   problems: Problem[];
+  cursors?: Record<string, number>;
+  channels?: Record<string, SlackChannelState>;
+  snapshots?: Record<string, string>;
 }
 
 interface Sources {
-  team: string;
-  projects: string[];
-  issues: string;
-  channels: { name: string; text: string }[];
+  changes: string[];
+  cursors: Record<string, number>;
+  channels: Record<string, SlackChannelState>;
+  snapshots: Record<string, string>;
 }
 
-async function gatherSources(): Promise<Sources> {
-  const oldest = String(Math.floor(Date.now() / 1000) - 30 * 86_400);
-  return runCode<Sources>(`
-await slack.who_am_i();
-const str = (x: unknown) => (typeof x === 'string' ? x : JSON.stringify(x));
-const team = str(await vault.get_team(${lit(CONFIG.team.vaultId)}));
-const list = str(await vault.get_projects({ team_id: ${lit(CONFIG.team.vaultId)}, status: 'active', limit: 30 }));
-const ids = [...list.matchAll(/\\|\\s*(\\d+)\\s*\\|\\s*\\[/g)].map((m) => m[1]);
-const projects = await Promise.all(ids.map(async (id) =>
-  str(await vault.get_project(id, { include_activity: true, activity_weeks: 4 })).slice(0, 7000)));
-const issues = str(await vault.get_issues({ team_id: ${lit(CONFIG.team.issuesUrl)}, status: 'open', limit: 50 })).slice(0, 8000);
-const channels = await Promise.all(${lit(CONFIG.team.channels)}.map(async (c: { id: string; name: string }) => {
-  const r: unknown = await slack.read_channel(c.id, { limit: 100, oldest: ${lit(oldest)}, response_format: 'concise' });
-  const text = typeof r === 'object' && r !== null && 'messages' in r ? str(r.messages) : str(r);
-  return { name: c.name, text: text.slice(0, 25000) };
-}));
-return { team: team.slice(0, 4000), projects, issues, channels };`);
+async function gatherSources(cached: Registry | null, now: number): Promise<Sources> {
+  const snapshots = await runCode<Record<string, string>>(`
+const str = (value: unknown) => typeof value === 'string' ? value : JSON.stringify(value);
+const complete = (text: string, limit?: number) => {
+  if (/Results limited to|\\btruncated\\b/i.test(text) || (limit !== undefined && [...text.matchAll(/^\\|\\s*\\d+\\s*\\|/gm)].length >= limit)) {
+    throw new Error('Vault returned truncated registry context');
+  }
+  return text;
+};
+const team = complete(str(await vault.get_team(${lit(CONFIG.team.vaultId)})));
+const list = complete(str(await vault.get_projects({ team_id: ${lit(CONFIG.team.vaultId)}, status: 'active', limit: 100 })), 100);
+const ids = [...list.matchAll(/^\\|\\s*(\\d+)\\s*\\|/gm)].map((match) => match[1]);
+const projects = await Promise.all(ids.map(async (id) => [id, complete(str(await vault.get_project(id)))] as const));
+const issues = complete(str(await vault.get_issues({ team_id: ${lit(CONFIG.team.issuesUrl)}, status: 'open', limit: 200 })), 200);
+return {
+  ${lit(`vault:team:${CONFIG.team.vaultId}`)}: team,
+  ${lit(`vault:projects:${CONFIG.team.vaultId}`)}: list,
+  ${lit(`vault:issues:${CONFIG.team.issuesUrl}`)}: issues,
+  ...Object.fromEntries(projects.map(([id, text]) => ['vault:project:' + id, text])),
+};`);
+  const changes = Object.entries(snapshots)
+    .filter(([key, text]) => cached?.snapshots?.[key] !== text)
+    .map(([key, text]) => `# ${key}\n${text}`);
+  for (const key of Object.keys(cached?.snapshots ?? {})) {
+    if (!(key in snapshots)) changes.push(`# ${key}\nThis source is no longer in the active project list.`);
+  }
+  const cursors = { ...cached?.cursors };
+  const channels = { ...cached?.channels };
+  for (const key of Object.keys(snapshots)) cursors[key] = Math.max(cursors[key] ?? 0, now);
+  for (const channel of CONFIG.team.channels) {
+    const key = `slack:${channel.id}`;
+    const scanned = await scanChannel(channel.id, cursors[key] ?? 0, now, channels[key]);
+    if (scanned.messages.length) changes.push(
+      `# New #${channel.name} activity\n${scanned.messages.map((message) =>
+        `${permalink(channel.id, message.ts)}\n${JSON.stringify(scanned.state.threads[message.ts])}`).join("\n\n")}`,
+    );
+    channels[key] = scanned.state;
+    cursors[key] = Math.max(cursors[key] ?? 0, now);
+  }
+  return { changes, cursors, channels, snapshots };
 }
 
 const SYSTEM = `You maintain a problem registry for ExP (Shopify's Experiments Platform team).
 The registry is used to match new AI tools, findings and leadership initiatives against what the team owns.
-Produce 8-15 problem cards covering, where the sources support it:
+Update the prior registry using every changed source below. Retain all supported problem cards, covering:
 - open problems inside each active GSD project (the hard parts, risks, blockers — not just the project title)
 - recurring support asks and confusions in #help-exp (cluster repeated questions into one card)
 - maintenance, toil, performance, reliability and security work (open issues, on-call pain, migrations)
 Rules:
-- Only use facts present in the sources. Do not invent problems.
+- Preserve prior problems and stable ids unless new evidence explicitly resolves, replaces or contradicts them.
+- No age-based expiry, arbitrary card limit, or top-N selection: retain every supported problem.
+- Only use facts present in the prior registry and sources. Do not invent problems.
 - summary: what hurts and why, <= 50 words, concrete (systems, workflows, numbers when given).
 - whatWouldHelp: the kinds of technology/approaches that could move it, <= 40 words.
 - refs: URLs copied verbatim from the sources (Vault project/issue links, Slack permalinks if present). Empty if none.
 - id: short kebab-case, stable across refreshes (derive from the problem, not the date).`;
 
-export async function loadRegistry(force = false): Promise<Registry> {
+export async function loadRegistry({ persist = true }: { persist?: boolean } = {}): Promise<Registry> {
   const cached = readJson<Registry | null>(PATHS.registry, null);
-  if (cached && !force && ageDays(cached.refreshedAt) < CONFIG.registryMaxAgeDays) return cached;
-
-  const s = await gatherSources();
+  const sources = await gatherSources(cached, Date.now() / 1000);
+  if (cached && sources.changes.length === 0) {
+    const registry = { ...cached, cursors: sources.cursors, channels: sources.channels, snapshots: sources.snapshots };
+    if (persist) writeJson(PATHS.registry, registry);
+    return registry;
+  }
   const user = [
-    `# Team\n${s.team}`,
-    ...s.projects.map((p, i) => `# GSD project ${i + 1}\n${p}`),
-    `# Open issues\n${s.issues}`,
-    ...s.channels.map((c) => `# #${c.name} (last 30 days)\n${c.text}`),
+    `# Prior problem registry\n${JSON.stringify(cached?.problems ?? [])}`,
+    ...sources.changes,
   ].join("\n\n");
 
   const out = await structured<{ problems: Problem[] }>({
@@ -112,7 +142,14 @@ export async function loadRegistry(force = false): Promise<Registry> {
       },
     },
   });
-  const registry: Registry = { refreshedAt: new Date().toISOString(), problems: out.problems };
-  writeJson(PATHS.registry, registry);
+  const registry: Registry = {
+    ...cached,
+    refreshedAt: new Date().toISOString(),
+    problems: out.problems,
+    cursors: sources.cursors,
+    channels: sources.channels,
+    snapshots: sources.snapshots,
+  };
+  if (persist) writeJson(PATHS.registry, registry);
   return registry;
 }

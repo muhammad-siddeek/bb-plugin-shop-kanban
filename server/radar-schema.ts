@@ -26,8 +26,18 @@ export const radarStateSchema = z.object({
 });
 export type RadarState = z.infer<typeof radarStateSchema>;
 export const radarActionSchema = z.object({
-  action: z.enum(["run", "scan", "refresh", "backfill", "feedback", "webhook"]), force: z.boolean().optional(), dryRun: z.boolean().optional(),
+  action: z.enum(["scan", "refresh", "backfill", "feedback"]),
   days: z.number().int().min(1).max(365).optional(), id: z.string().max(300).optional(), vote: z.enum(["up", "down"]).optional(),
-  note: z.string().max(4000).optional(), url: z.string().url().optional(),
+  note: z.string().max(4000).optional(),
 }).strict();
 export type RadarAction = z.infer<typeof radarActionSchema>;
+
+export const radarRankItemSchema = z.object({
+  id: z.string(), kind: z.enum(["opportunity", "technique"]), read: z.boolean(),
+  threadId: z.string().nullable(), createdAt: z.string(),
+  finding: z.union([radarOpportunitySchema, ideaSchema]),
+}).strict();
+export const radarRankingSchema = z.object({
+  order: z.array(z.string()), rationale: z.string(),
+  rounds: z.array(z.object({ ranking: z.array(z.string()), review: z.string() }).strict()).length(3),
+}).strict();

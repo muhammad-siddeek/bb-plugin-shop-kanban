@@ -28,11 +28,18 @@ thread and marks it read. Dismiss removes it; techniques archive when their
 Slack source opens. Do not implement discoveries without the user's submission.
 
 `bb shop-kanban radar list --json` reads the inbox. `scan` (also the Radar refresh
-button) looks for new recommendations without Slack delivery. Results append by
-stable key; existing/read/dismissed items never reset or duplicate. Other engine
-commands are `run` (`--force`, `--dry-run`), `refresh` (context only), `backfill
---days N`, `feedback --id ID --vote up|down [--note TEXT]`, and `webhook --url URL`. `import /absolute/data/path`
-copies existing Radar caches to plugin-owned host storage without overwriting.
+button) discovers recommendations, then runs three ranker/reviewer rounds over
+the complete visible inbox, prioritizing demonstrated impact and availability to
+own the work. The reviewed order persists; ranking never drops items. Results
+append by stable key; existing/read/dismissed items never reset or duplicate.
+Other commands are `refresh` (context only), `backfill --days N`, and
+`feedback --id ID --vote up|down [--note TEXT]`. `import /absolute/data/path`
+copies existing caches to plugin-owned host storage without overwriting.
+Every scan checks the same Slack channels, repository PRs and Vault teams.
+Durable per-source checkpoints have no rolling lookback/catch-up cap; sources
+without incremental APIs use saved snapshots. PR discovery reads titles and
+descriptions, not full codebases. No Slack delivery or daily digest remains.
 Settings `radarHostId` and `radarEnabled` select the persistent data host and
-enable daily 08:00 America/Toronto discovery. Retire old scheduled invocations
-before enabling it. No old checkout is needed after import.
+enable hourly refreshes 07:00–15:00 inclusive, Monday–Friday, America/Toronto.
+Retire old scheduled invocations before enabling it. No old checkout is needed
+after import.

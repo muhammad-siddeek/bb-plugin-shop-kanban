@@ -1,4 +1,4 @@
-// Digest model + renderers (markdown file, Slack mrkdwn draft, plain-text workflow message, notification line).
+// Inbox-compatible discovery snapshot and its local markdown rendering.
 import type { BacklogItem } from "./backlog";
 import type { Category } from "./classify";
 import { CONFIG } from "./config";
@@ -37,6 +37,7 @@ export interface Pairing extends DigestItem {
 export interface Digest {
   date: string;
   generatedAt: string;
+  /** Elapsed time covered by this incremental scan; not a discovery lookback limit. */
   windowHours: number;
   scanned: number;
   qualified: number;
@@ -44,7 +45,7 @@ export interface Digest {
   pairings: Pairing[];
   /** Less relevant: unpaired ideas, most promising first. */
   others: DigestItem[];
-  /** Unpaired ideas that qualified but were not listed. */
+  /** Retained for imported snapshots; new scans keep every qualified idea and report zero hidden. */
   othersHidden: number;
   /** Resiliency backlog: my open issues and anyone's issues about to breach their fix-due SLA, most urgent first. */
   backlog: BacklogItem[];
@@ -53,7 +54,6 @@ export interface Digest {
 }
 
 export interface DigestWatch {
-  groups: string[];
   scanned: number;
   opportunities: Picked[];
   /** Sources that failed this sweep; the next run retries them. */
@@ -61,7 +61,7 @@ export interface DigestWatch {
   error?: string;
 }
 
-export const NO_WATCH: DigestWatch = { groups: [], scanned: 0, opportunities: [], skipped: [] };
+export const NO_WATCH: DigestWatch = { scanned: 0, opportunities: [], skipped: [] };
 
 const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
 
@@ -104,7 +104,7 @@ function ideaBullets(d: Digest, f: Format): string[] {
     ...d.others.map((o) => join([ideaLabel(o, "P2", f), signals(o), f.code(o.id)])),
   ];
   if (d.othersHidden) out.push(`+${count(d.othersHidden, "more idea")}`);
-  if (!out.length) out.push("Nothing cleared the bar today.");
+  if (!out.length) out.push("No new ideas cleared the bar.");
   return out;
 }
 
@@ -139,11 +139,7 @@ function opportunityBullet(o: Picked, f: Format): string {
   ].join("\n");
 }
 
-/**
- * Lines in importance order (the webhook drops the tail when too long): the resiliency backlog first, since it
- * carries deadlines, then big opportunities, then the ideas. Empty backlog/opportunity sections are left out. Each
- * all-caps heading is set off by blank lines, except above the first one, which opens the message.
- */
+/** Render the complete backlog, opportunities and ideas without delivery-specific limits. */
 function lines(d: Digest, f: Format): string[] {
   const section = (title: string, bullets: string[]) => ["", f.heading(title.toUpperCase()), "", ...bullets.map((b) => `${f.bullet}${b}`)];
   const watch = d.watch.error
@@ -170,80 +166,3 @@ export function renderMarkdown(d: Digest): string {
   return out.join("\n") + "\n";
 }
 
-/** Slack mrkdwn, for the self-DM draft. */
-export function renderSlack(d: Digest): string {
-  return lines(d, {
-    link: (url, text) => `<${url}|${text}>`,
-    bold: (s) => `*${s}*`,
-    code: (s) => `\`${s}\``,
-    heading: (s) => `*${s}*`,
-    bullet: "• ",
-  }).join("\n");
-}
-
-/**
- * Plain text, for the workflow webhook: Workflow Builder inserts variables verbatim, so mrkdwn would show as
- * literal `<url|title>`, `*`, and backticks. Slack links the bare URLs itself.
- */
-export function renderPlain(d: Digest): string {
-  return lines(d, {
-    link: (url, text) => `${text} ${url}`,
-    bold: (s) => s,
-    code: (s) => s,
-    heading: (s) => s,
-    bullet: "• ",
-  }).join("\n");
-}
-
-/** One canvas entry: a timestamped heading (reruns on one day stay distinguishable), then the markdown digest. */
-export function renderCanvas(d: Digest): string {
-  const at = new Date(d.generatedAt).toLocaleString("en-US", {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
-  return `## ${at}\n\n${renderMarkdown(d)}`;
-}
-
-/** The DM when the digest went to the canvas: counts, the top opportunity, and the canvas link. */
-export function renderSummary(d: Digest, canvasUrl: string): string {
-  const o = d.watch.opportunities;
-  const ideas = d.pairings.length + d.others.length;
-  const parts = [
-    o.length ? `${o.length} opportunit${o.length === 1 ? "y" : "ies"} (top: ${o[0].title})` : d.watch.error ? "watch sweep failed" : "",
-    d.backlog.length ? count(d.backlog.length, "backlog issue") : "",
-    count(ideas, "idea"),
-  ];
-  return `Radar ${shortDate(d.date)}: ${parts.filter(Boolean).join(" · ")}\n${canvasUrl}`;
-}
-
-/**
- * Split `text` into parts of at most `max` chars without dropping anything. Parts break only between blocks: a bullet
- * ("• ") with its indented lines, with any heading and blank lines above it. A single block longer than `max` stays
- * whole.
- */
-export function splitLines(text: string, max: number): string[] {
-  const blocks: string[][] = [];
-  let lead: string[] = [];
-  for (const line of text.split("\n")) {
-    if (/^\s+\S/.test(line) && blocks.length && !lead.length) blocks[blocks.length - 1].push(line);
-    else if (line.startsWith("• ")) {
-      blocks.push([...lead, line]);
-      lead = [];
-    } else lead.push(line);
-  }
-  if (lead.length) blocks.push(lead);
-  const parts: string[] = [];
-  let cur = "";
-  for (const block of blocks) {
-    const s = block.join("\n");
-    if (cur && cur.length + 1 + s.length > max) {
-      parts.push(cur);
-      cur = s.replace(/^\n+/, "");
-    } else cur = cur ? `${cur}\n${s}` : s;
-  }
-  if (cur) parts.push(cur);
-  return parts;
-}

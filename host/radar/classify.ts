@@ -134,6 +134,10 @@ export async function classify(inputs: ClassifyInput[], priorities: Priority[], 
       schema: SCHEMA,
     });
     const wanted = new Set(batch.map((b) => b.msg.ts));
-    return res.items.filter((it) => wanted.has(it.ts));
+    const received = new Set(res.items.map((item) => item.ts));
+    if (res.items.length !== wanted.size || received.size !== wanted.size || [...wanted].some((ts) => !received.has(ts))) {
+      throw new Error("Classification omitted or duplicated messages; discovery checkpoint was not advanced");
+    }
+    return res.items;
   });
 }

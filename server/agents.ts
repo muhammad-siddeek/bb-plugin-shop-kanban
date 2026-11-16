@@ -113,7 +113,7 @@ export function registerCli(bb: BbPluginApi, { listBoard, spawnTask, removeTask,
     { name: "park", summary: "Park an idle thread for later", usage: `${cli} park <thread-id> [--json]` },
     { name: "unpark", summary: "Take a thread out of Parked", usage: `${cli} unpark <thread-id> [--json]` },
     { name: "remove", summary: "Archive/remove a thread from the board", usage: `${cli} remove <thread-id> [--json]` },
-    { name: "radar", summary: "Manage Radar discovery and inbox", usage: `${cli} radar [list|scan|run|refresh|backfill|feedback|webhook|import] [options] [--json]` },
+    { name: "radar", summary: "Manage Radar discovery and inbox", usage: `${cli} radar [list|scan|refresh|backfill|feedback|import] [options] [--json]` },
   ];
   const usage = ["Usage:", ...commands.map((command) => `  ${command.usage}`)].join("\n");
   bb.cli.register({
@@ -141,9 +141,7 @@ export function registerCli(bb: BbPluginApi, { listBoard, spawnTask, removeTask,
           const options: Record<string, unknown> = { action };
           for (let index = 2; index < args.length; index++) {
             const flag = args[index];
-            if (flag === "--force") options.force = true;
-            else if (flag === "--dry-run") options.dryRun = true;
-            else if (["--days", "--id", "--vote", "--note", "--url"].includes(flag) && args[index + 1]) {
+            if (["--days", "--id", "--vote", "--note"].includes(flag) && args[index + 1]) {
               options[flag.slice(2)] = flag === "--days" ? Number(args[++index]) : args[++index];
             } else return usageError;
           }
