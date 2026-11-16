@@ -3,7 +3,7 @@ import type { KeyboardEvent, PointerEvent } from "react";
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
 import { PLUGIN_NAME } from "../brand";
 import { ACCENT_TEXT, BOTTOM_BOARD_COLLAPSED_CLASS, BOTTOM_BOARD_HEIGHT_VAR, BOTTOM_BOARD_OPEN_CLASS, type BoardState, type BoardTask } from "./model";
-import { useBoard, useRemote, useReviews, useWork } from "./hooks";
+import { useBoard, useRemote, useReviews, useWork, useRadar } from "./hooks";
 import { IconButton, TYPE } from "./primitives";
 import { BoardView } from "./column";
 import { ThreadSearch } from "./search";
@@ -103,6 +103,7 @@ export function BottomBoardOverlay() {
   const reviews = useReviews();
   const work = useWork();
   const remote = useRemote();
+  const radar = useRadar();
   const { board } = api;
   const tasks = board?.tasks ?? [];
 
@@ -221,7 +222,7 @@ export function BottomBoardOverlay() {
       </div>
 
       <div className="min-h-0 flex-1">
-        <BoardView api={api} reviews={reviews} work={work} remote={remote} />
+        <BoardView api={api} reviews={reviews} work={work} remote={remote} radar={radar} />
       </div>
     </div>
   );

@@ -21,13 +21,13 @@ export function ThreadSearch({ maxListHeight }: { maxListHeight: number }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
-  // The last answer and the query it answers; while a newer query waits, its results stay up.
+  // Results belong only to the current query; never offer an old match while the next search is pending.
   const [answer, setAnswer] = useState<{ query: string; response: SearchResponse } | null>(null);
   // One search at a time: a slow qmd can't stack a request per pause in typing.
   const [inFlight, setInFlight] = useState(false);
   const [active, setActive] = useState(0);
   const trimmed = query.trim();
-  const response = trimmed ? answer?.response ?? null : null;
+  const response = trimmed && answer?.query === trimmed ? answer.response : null;
   const results = response?.results ?? [];
   const pending = trimmed !== "" && answer?.query !== trimmed;
 
@@ -85,7 +85,7 @@ export function ThreadSearch({ maxListHeight }: { maxListHeight: number }) {
       setActive((index) => (index + step + results.length) % results.length);
       return;
     }
-    if (event.key === "Enter") {
+    if (event.key === "Enter" && open) {
       const result = results[active] ?? results[0];
       if (!result) return;
       event.preventDefault();

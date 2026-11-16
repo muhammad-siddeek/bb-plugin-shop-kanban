@@ -8,6 +8,7 @@
 - The title-bar search finds any thread by what was said in it, archived threads included. Beside it, chips show CPU, memory, disk and battery, each with a popover of the heaviest apps, and, for Shopify accounts only, today's Shopify AI proxy spend, with a popover charting the last 7 days.
 - The bottom of Queue, below Parked, lists pull requests requested of you by name on Delta and GitHub (`reviewSearchesMe`), then issues assigned to you. Each review has a risk chip, a title that drafts a thread asking what changed and how risky it is, and links to open, approve (click twice), or request changes. Archive hides one for good; reviewed ones return as `re-review` when new commits land.
 - The Out tab lists your open pull requests and ones merged in the last 30 days, until you mark them Measured and Demoed.
+- Radar sits between Queue and Out. Its red badge counts unresolved opportunities and techniques. Opportunities draft an implementation in bb's full composer; only submission marks them read and creates a board thread. Techniques open their Slack source and archive. Discovery, scoring, watch, backlog, feedback, canvas/DM delivery and daily scheduling run inside the plugin on its selected persistent host; the old Radar checkout is not needed after importing its data.
 
 ## For agents
 
@@ -24,6 +25,7 @@ Titles, summaries, and the Blocked-or-Done call come from a small model. The plu
 - For thread search: [qmd](https://github.com/tobi/qmd) (`npm install -g @tobilu/qmd`) on a connected persistent host.
 - For the review queue and work lists: `dt` (Delta) and/or `gh` (GitHub), signed in, on that same host.
 - For Working's Remote section (Shopify only): `gcloud`, signed in with your Shopify account, on that same host.
+- For Radar discovery (Shopify only): the signed-in `dev` CLI on the selected persistent host; enable `radarEnabled` for the daily 08:00 America/Toronto scan.
 
 Each is optional: without a labeler threads keep heuristic titles, search shows how to install qmd, and review searches and the Remote section that can't run are skipped quietly.
 

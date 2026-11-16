@@ -3,6 +3,8 @@ import { z } from "zod";
 import { PLUGIN_SLUG, TOOL_PREFIX } from "../brand";
 import type { BoardTask } from "./schema";
 import { SHORT_NAME_MAX, errorMessage } from "./text";
+import type { RadarService } from "./radar";
+import { radarActionSchema } from "./radar-schema";
 
 export type TaskSpawn = {
   shortName: string;
@@ -103,7 +105,7 @@ export function registerAgentTools(bb: BbPluginApi, { spawnTask }: Pick<BoardApi
   bb.agents.configure(() => ({ tools: Object.values(TOOLS), skills: [PLUGIN_SLUG] }));
 }
 
-export function registerCli(bb: BbPluginApi, { listBoard, spawnTask, removeTask, parkTask }: BoardApi) {
+export function registerCli(bb: BbPluginApi, { listBoard, spawnTask, removeTask, parkTask }: BoardApi, radar: RadarService) {
   const cli = `bb ${PLUGIN_SLUG}`;
   const commands = [
     { name: "list", summary: "List threads on the Kanban board", usage: `${cli} list [--json]` },
@@ -111,6 +113,7 @@ export function registerCli(bb: BbPluginApi, { listBoard, spawnTask, removeTask,
     { name: "park", summary: "Park an idle thread for later", usage: `${cli} park <thread-id> [--json]` },
     { name: "unpark", summary: "Take a thread out of Parked", usage: `${cli} unpark <thread-id> [--json]` },
     { name: "remove", summary: "Archive/remove a thread from the board", usage: `${cli} remove <thread-id> [--json]` },
+    { name: "radar", summary: "Manage Radar discovery and inbox", usage: `${cli} radar [list|scan|run|refresh|backfill|feedback|webhook|import] [options] [--json]` },
   ];
   const usage = ["Usage:", ...commands.map((command) => `  ${command.usage}`)].join("\n");
   bb.cli.register({
@@ -124,6 +127,29 @@ export function registerCli(bb: BbPluginApi, { listBoard, spawnTask, removeTask,
       const reply = (value: unknown, text: string) => ({ exitCode: 0, stdout: json ? JSON.stringify(value) : text });
       const usageError = { exitCode: 1, stderr: usage };
       try {
+        if (command === "radar") {
+          const action = args[1] ?? "list";
+          if (action === "list") {
+            const state = await radar.list();
+            return reply(state, state.items.map((item) => `${item.id}\t${item.read ? "read" : "unread"}\t${item.title}`).join("\n") || "No Radar recommendations.");
+          }
+          if (action === "import") {
+            if (!args[2]) return usageError;
+            const result = await radar.importData(args[2]);
+            return reply(result, `Imported Radar data to ${result.dataDir}`);
+          }
+          const options: Record<string, unknown> = { action };
+          for (let index = 2; index < args.length; index++) {
+            const flag = args[index];
+            if (flag === "--force") options.force = true;
+            else if (flag === "--dry-run") options.dryRun = true;
+            else if (["--days", "--id", "--vote", "--note", "--url"].includes(flag) && args[index + 1]) {
+              options[flag.slice(2)] = flag === "--days" ? Number(args[++index]) : args[++index];
+            } else return usageError;
+          }
+          const result = await radar.execute(radarActionSchema.parse(options));
+          return reply(result, result.text);
+        }
         if (command === "list") {
           const board = await listBoard();
           const lines = board.tasks.map(

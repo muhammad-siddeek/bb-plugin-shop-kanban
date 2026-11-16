@@ -1,5 +1,40 @@
 # Changelog
 
+## Unreleased
+
+- The board's new-thread form opens on the project bb's New thread page last
+  used, so its model and other pickers show the same defaults as that page.
+
+## 0.24.0
+
+- Technique cards stay single-line, with a trailing discovery age and full-title tooltip.
+- Smoke-review fixes: search no longer opens stale or closed-dropdown matches;
+  recovered Radar host reads clear their own errors without hiding scan failures;
+  opportunity portals retain plugin styling. Mobile resource chips show icons
+  instead of figures to preserve space for thread search.
+- Radar's tab count uses the shared 16px badge and the board's existing red tone.
+- Radar design: filled technique bulbs, quieter card borders, clearer title/summary
+  hierarchy and explicit Explore actions. Read cards
+  collapse below unread ideas; scan status, Refresh and expandable errors share
+  a compact toolbar. The Radar tab remains text-only.
+- Radar refresh now scans for new recommendations. Manual and daily results append
+  by existing stable keys, preserving previous cards and resolved state without a
+  new state store. Manual scans do not repeat Slack delivery.
+- Radar opportunity cards use a short, single-line title, two-line problem/solution
+  description and one-line footer; full findings remain in the composer.
+- Radar now lives inside Shop Kanban: a Queue / Radar / Out header, red unresolved
+  badge, implementation composer and Read opportunities, dismissals, and Slack
+  technique links that archive on opening. Opening or canceling a draft never
+  resolves it; successful submission preserves bb's composer selections.
+- Integrated discovery, scoring, opportunity watch, backlog, feedback, backfill,
+  canvas/DM/webhook delivery, host-owned caches and snapshots, data import, and a
+  DST-aware daily schedule. The old Radar checkout is no longer a runtime dependency.
+- Done splits read results into **Read · Work** (Shopify work) and
+  **Read · Other**, classified by the existing labeler from the thread's
+  subject. Unread results stay together at the top; each read group keeps
+  newest-finish order. Existing labels refresh without changing titles,
+  and unclassified read cards sit in Other until their classification arrives.
+
 ## 0.23.0
 
 - Reviews and Assigned sit at the bottom of Queue, below Parked,

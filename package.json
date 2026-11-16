@@ -1,6 +1,6 @@
 {
   "name": "bb-plugin-shop-kanban",
-  "version": "0.23.0",
+  "version": "0.24.0",
   "description": "Kanban board of bb threads: live status columns, model-written titles, agent tools, and a review queue of pull requests.",
   "license": "MIT",
   "author": "Muhammad Siddeek (https://github.com/muhammad-siddeek)",
@@ -35,6 +35,7 @@
     "server.ts",
     "server",
     "host.ts",
+    "host",
     "contract.ts",
     "app.tsx",
     "ui",
@@ -50,10 +51,15 @@
     "zod": "^4.6.7"
   },
   "devDependencies": {
-    "@get-bb/plugin-sdk": "0.6.75",
+    "@get-bb/plugin-sdk": "0.6.94",
     "@types/cross-spawn": "^6.0.6",
     "@types/node": "^24.19.2",
     "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.2.0",
+    "better-sqlite3": "^13.0.3",
+    "cron-parser": "^5.10.5",
+    "hono": "^4.13.19",
+    "react-dom": "^19.2.0",
     "typescript": "^5.9.3"
   },
   "scripts": {

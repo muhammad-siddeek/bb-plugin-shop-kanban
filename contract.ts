@@ -1,5 +1,6 @@
 import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
+import { radarActionSchema, radarDigestSchema } from "./server/radar-schema";
 
 const commandInput = z.string().trim().min(1).max(200);
 const threadIdInput = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/);
@@ -100,6 +101,9 @@ export type RemoteSource = z.infer<typeof remoteSourceSchema>;
  * identity.
  */
 export const hostContract = defineRpcContract({
+  radar_snapshot: { input: z.object({}).strict(), output: z.object({ digest: radarDigestSchema.nullable(), dataDir: z.string() }) },
+  radar_import: { input: z.object({ source: z.string().min(1) }).strict(), output: z.object({ digest: radarDigestSchema.nullable(), dataDir: z.string() }) },
+  radar_execute: { input: radarActionSchema, output: z.object({ digest: radarDigestSchema.nullable(), text: z.string() }) },
   complete: {
     input: z
       .object({

@@ -11,10 +11,11 @@ thread (see Parked) and starting a waiting one (see Working limit).
 
 - **Queue**: the thread has not started yet (pending, queued, or no output).
   A thread that errored and then got a follow-up stays here while the
-  follow-up waits to send, not Blocked in Working. Queue's header has two
-  tabs, kept across reloads: **Queue** (these threads) and **Out** (your open
-  and recently merged pull requests). Out disappears when its settings are
-  empty. Incoming work sits at the bottom of Queue, below Parked, with
+  follow-up waits to send, not Blocked in Working. Queue's header has three
+  tabs, kept across reloads: **Queue** (these threads), **Radar** (discovered
+  opportunities and techniques), and **Out** (your open and recently merged
+  pull requests). Out disappears when its settings are empty.
+  Incoming work sits at the bottom of Queue, below Parked, with
   pull requests requested of you by name and issues assigned to you. Reviews
   and Assigned appear directly, without an In heading or combined badge.
 - **Working**: the thread or one of its descendants has a turn in progress,
@@ -36,10 +37,18 @@ thread (see Parked) and starting a waiting one (see Working limit).
 - **Done**: the thread is idle and its last reply reports completion. Cards
   are one line (status, tag, title, and what the thread's tree has spent, or
   its age while it has no cost). Unread ones come first with a solid
-  check, then a **Read** section, each newest finish first; the age is when
-  the thread finished, and reading or renaming a card doesn't move it. Read
-  state and finish time are bb's own (the sidebar's unread dot), and the
-  column's count is its unread cards.
+  check, then **Read · Work** (Shopify work) and **Read · Other**, each
+  newest finish first. The age is when the thread finished. Read state and
+  finish time are bb's own (the sidebar's unread dot), and the column's count
+  is its unread cards. The existing labeler classifies the thread's subject
+  from its user messages and the agent's reply, not its AI account or other
+  board titles: Shopify products, internal systems, company operations and
+  Shopify-owned repos are work, including Verdict SDK and ExP; personal
+  projects and unrelated tools are other. Without evidence of Shopify work
+  it chooses other. Until the first
+  classification arrives, read cards sit in Other; existing cards classify
+  in the background without retitling them. With the labeler off, cards keep
+  their last classification, or stay in Other if they have none.
 - **Parked** (grey): a section under the Queue tab, below the queued threads, one line per card. Idle threads you parked to come back to later, such as a
   finished thread whose suggested next steps can wait. Drag an idle card onto
   Parked (it outlines and shows "Drop to park" while you drag), or hover the
@@ -47,6 +56,51 @@ thread (see Parked) and starting a waiting one (see Working limit).
   there instead, so drag it. The return button on a parked card unparks it.
   Parked cards keep their status (Completed, Asked a question, ...) and leave
   Parked on their own when the thread starts working again.
+
+## Radar
+
+Radar's red badge counts unresolved recommendations, not opened drafts. An
+opportunity shows its best solution; opening it brings up bb's full new-thread
+composer with the findings, evidence and instruction to implement that solution.
+Cancel leaves it unread. Submit creates the thread using the selected project,
+environment and model, moves the opportunity to Read, and opens Queue. The normal
+working limit still controls when its thread starts. Dismiss removes a recommendation.
+Techniques open their originating Slack message and leave Radar immediately.
+
+Refresh scans the sources again and appends only unseen opportunity/technique keys.
+Daily scans append too; existing cards keep their content, order, read state and
+thread link. Dismissed/opened techniques never return for the same key. This uses
+the existing inbox primary key (`INSERT … ON CONFLICT DO NOTHING`), not another
+history store. Manual scans do not resend Slack delivery or reset the daily schedule.
+
+The complete discovery engine lives in this plugin (`host/radar`): Slack/Vault/
+GitHub discovery, leadership context, scoring, opportunity watch, resiliency
+backlog, feedback, backfill, Slack canvas and DM/webhook delivery. It uses the
+selected persistent host's signed-in `dev` CLI; `RADAR_DEV_BIN` can select its
+absolute path. Tokens remain in the host process and are never stored in the inbox.
+Engine configuration lives in `host/radar/config.ts`.
+
+`radarHostId` pins the data owner. `radarEnabled` enables the daily 08:00
+America/Toronto scan (disabled until configured); a five-minute tick catches up
+after sleep and tracks DST. Engine caches and snapshots live under the plugin's
+persistent host data directory, inbox resolution state in its server database.
+Neither requires the old Radar checkout after importing its data:
+
+```sh
+bb shop-kanban radar import /absolute/path/to/old/data
+bb shop-kanban radar list --json
+bb shop-kanban radar scan # discover new recommendations without Slack delivery
+bb shop-kanban radar run [--force] [--dry-run]
+bb shop-kanban radar refresh
+bb shop-kanban radar backfill --days 90
+bb shop-kanban radar feedback --id <message-id> --vote up [--note "reason"]
+bb shop-kanban radar webhook --url <https-url>
+```
+
+Import copies missing files without overwriting plugin-owned state. Existing
+automations pointing at the old checkout must be retired before enabling the
+plugin schedule, to avoid duplicate delivery. Webhook configuration retains the
+existing macOS Keychain identity; do not put webhook URLs in committed files.
 
 ## Working limit
 

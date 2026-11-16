@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
+import { useRealtime, useRpc, type NewThreadRequest } from "@get-bb/plugin-sdk/app";
 import type { rpcContract } from "../server/schema";
 import { errorMessage, type RemoteState, type WorkMark } from "./model";
+import type { RadarState } from "../server/radar-schema";
 
 const BOARD_REFRESH_MS = 1000;
 /** The review queue and work lists re-read on the server's change signal; this clock only backs it up. */
@@ -143,4 +144,33 @@ export function useRemote(): RemoteApi {
   const read = useCallback(() => rpc.call("remote_list", null), [rpc]);
   const { value: state, error } = usePolledRead(read, REVIEWS_POLL_MS, "remote-changed");
   return useMemo(() => ({ state, error }), [state, error]);
+}
+
+export function useRadar(): RadarApi {
+  const rpc = useRpc<typeof rpcContract>();
+  const read = useCallback(() => rpc.call("radar_list", null), [rpc]);
+  const { value: state, error, refetch } = usePolledRead(read, REVIEWS_POLL_MS, "radar-changed");
+  return useMemo(() => ({
+    state, error, refetch,
+    refresh: async () => { try { await rpc.call("radar_execute", { action: "scan" }); } finally { refetch(); } },
+    draft: (id: string) => rpc.call("radar_draft", { id }),
+    dismiss: async (id: string) => { await rpc.call("radar_dismiss", { id }); refetch(); },
+    openTechnique: async (id: string) => { await rpc.call("radar_open_technique", { id }); refetch(); },
+    submit: async (id: string, request: NewThreadRequest) => {
+      const result = await rpc.call("radar_submit", { id, composer: { ...request } });
+      refetch();
+      return result;
+    },
+  }), [rpc, state, error, refetch]);
+}
+
+export interface RadarApi {
+  state: RadarState | null;
+  error: string | null;
+  refetch: () => void;
+  refresh: () => Promise<void>;
+  draft: (id: string) => Promise<{ prompt: string }>;
+  dismiss: (id: string) => Promise<void>;
+  openTechnique: (id: string) => Promise<void>;
+  submit: (id: string, request: NewThreadRequest) => Promise<{ threadId: string }>;
 }

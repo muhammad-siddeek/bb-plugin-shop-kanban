@@ -120,7 +120,7 @@ export type ThreadDetails = {
   userPrompts: string[];
 };
 
-export type LabelView = { title: string | null; summary: string | null; needsInput: boolean | null };
+export type LabelView = { title: string | null; summary: string | null; needsInput: boolean | null; workstream: "shopify" | "other" | null };
 
 type Derived = { status: Status; reason: string; description: string | null; runningChildren: number };
 

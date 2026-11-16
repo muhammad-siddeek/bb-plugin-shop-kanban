@@ -3,13 +3,14 @@ import type { DragEvent, ReactElement, ReactNode } from "react";
 import { experimental_Icon as Icon, experimental_NewThreadComposer as NewThreadComposer, experimental_useProviders, experimental_useSidebarThreads, useBbContext, useBbNavigate, type NewThreadRequest } from "@get-bb/plugin-sdk/app";
 import { PLUGIN_SLUG } from "../brand";
 import { CLOCK_TICK_MS, STATUS_META, THREAD_DRAG_TYPE, groupTasksByColumn, shortNameFromPrompt, type BoardColumn, type BoardState, type BoardTask } from "./model";
-import { useNow, type BoardApi, type RemoteApi, type ReviewsApi, type WorkApi } from "./hooks";
+import { useNow, type BoardApi, type RemoteApi, type ReviewsApi, type WorkApi, type RadarApi } from "./hooks";
 import { TaskCard } from "./card";
 import { RemoteSection } from "./remote";
 import { ReviewGroup } from "./reviews";
 import { WipLimitControl } from "./wip-limit";
 import { WorkGroup, useWorkItems } from "./work";
 import { CountBadge, DASHED_SLOT, EMPTY_NOTE, GroupHeader, TYPE } from "./primitives";
+import { RadarPanel } from "./radar";
 
 const SCROLL_TO_LATEST_SELECTOR = 'button[aria-label="Scroll to latest event"]';
 /** Where bb's new-thread composer keeps the board's draft, so closing the form, a reload or a crash doesn't lose it. */
@@ -18,9 +19,10 @@ const DRAFT_KEY = `${PLUGIN_SLUG}:new-thread-draft`;
 const QUEUE_TAB_KEY = `${PLUGIN_SLUG}:queue-tab`;
 
 /** The Queue column's tabs: queued threads (with Parked and incoming work below them), and work going out from the user. */
-type QueueTab = "queue" | "outgoing";
+type QueueTab = "queue" | "radar" | "outgoing";
 const QUEUE_TABS: { id: QueueTab; label: string }[] = [
   { id: "queue", label: "Queue" },
+  { id: "radar", label: "Radar" },
   { id: "outgoing", label: "Out" },
 ];
 
@@ -169,7 +171,7 @@ function QueueTabs({ tabs, active, onSelect }: {
             }`}
           >
             <span>{tab.label}</span>
-            <CountBadge count={tab.count} tone={selected ? meta.badge : STATUS_META.parked.badge} />
+            <CountBadge count={tab.count} tone={tab.id === "radar" ? STATUS_META.blocked.badge : selected ? meta.badge : STATUS_META.parked.badge} />
             {selected ? <span aria-hidden className={`pointer-events-none absolute inset-x-0 bottom-0 h-[2px] rounded-full ${meta.accent}`} /> : null}
           </button>
         );
@@ -290,14 +292,36 @@ function ParkedSection({ tasks, dragging, onDrop, renderCard }: {
   );
 }
 
-function BoardColumnView({ column, title, tasks, count, unreadFirst, renderCard, dragging, drop, onStartAdding, headerControl, tabs, body, addForm, incoming, parked, remote }: {
+/** Unread results stay together; only read cards split by their subject, each keeping completion order. */
+function DoneTasks({ tasks, renderCard }: { tasks: BoardTask[]; renderCard: (task: BoardTask) => ReactElement }) {
+  const unread: BoardTask[] = [];
+  const work: BoardTask[] = [];
+  const other: BoardTask[] = [];
+  for (const task of tasks) {
+    (task.unread ? unread : task.workstream === "shopify" ? work : other).push(task);
+  }
+  return (
+    <>
+      {unread.map(renderCard)}
+      {[
+        { title: "Read · Work", tasks: work },
+        { title: "Read · Other", tasks: other },
+      ].map((group) => group.tasks.length > 0 ? (
+        <div key={group.title} role="group" aria-label={group.title} className="space-y-1 pt-1">
+          <GroupHeader title={group.title} count={group.tasks.length} />
+          {group.tasks.map(renderCard)}
+        </div>
+      ) : null)}
+    </>
+  );
+}
+
+function BoardColumnView({ column, title, tasks, count, renderCard, dragging, drop, onStartAdding, headerControl, tabs, body, addForm, incoming, parked, remote }: {
   column: BoardColumn;
   title: string;
   tasks: BoardTask[];
   /** The header's count; null draws none (Working, whose limit control counts instead). */
   count: number | null;
-  /** Done: how many leading cards are unread; a rule separates them from the read ones after. */
-  unreadFirst: number;
   renderCard: (task: BoardTask) => ReactElement;
   /** A card is being dragged. */
   dragging: boolean;
@@ -365,13 +389,7 @@ function BoardColumnView({ column, title, tasks, count, unreadFirst, renderCard,
             ) : tasks.length === 0 && !adding && !awaitingDrop ? (
               <EmptySlot>No threads</EmptySlot>
             ) : null}
-            {tasks.slice(0, unreadFirst).map(renderCard)}
-            {unreadFirst > 0 && unreadFirst < tasks.length ? (
-              <div className="pt-1">
-                <GroupHeader title="Read" count={tasks.length - unreadFirst} />
-              </div>
-            ) : null}
-            {tasks.slice(unreadFirst).map(renderCard)}
+            {column === "done" ? <DoneTasks tasks={tasks} renderCard={renderCard} /> : tasks.map(renderCard)}
             {parked ? <ParkedSection tasks={parked.tasks} dragging={dragging} onDrop={parked.onDrop} renderCard={renderCard} /> : null}
             {remote}
             {incoming}
@@ -382,7 +400,7 @@ function BoardColumnView({ column, title, tasks, count, unreadFirst, renderCard,
   );
 }
 
-export function BoardView({ api, reviews, work, remote }: { api: BoardApi; reviews: ReviewsApi; work: WorkApi; remote: RemoteApi }) {
+export function BoardView({ api, reviews, work, remote, radar }: { api: BoardApi; reviews: ReviewsApi; work: WorkApi; remote: RemoteApi; radar: RadarApi }) {
   const context = useBbContext();
   const selectedThreadId = context.threadId;
   // Same roster and lookup as bb's sidebar: a thread's harness icon is its agent provider's artwork.
@@ -491,10 +509,11 @@ export function BoardView({ api, reviews, work, remote }: { api: BoardApi; revie
   const outgoingShown = !workItems.state || workItems.lists.includes("open") || workItems.lists.includes("shipped");
   const tabCounts: Record<QueueTab, number> = {
     queue: tasksIn("queue").length,
+    radar: radar.state?.unread ?? 0,
     outgoing: workItems.byList.open.length + workItems.byList.shipped.length,
   };
-  const tabs = QUEUE_TABS.map((tab) => ({ ...tab, count: tabCounts[tab.id] }));
-  const queueTab = outgoingShown ? chosenTab : "queue";
+  const tabs = QUEUE_TABS.filter((tab) => tab.id !== "outgoing" || outgoingShown).map((tab) => ({ ...tab, count: tabCounts[tab.id] }));
+  const queueTab = chosenTab === "outgoing" && !outgoingShown ? "queue" : chosenTab;
   // Incoming shows while its lists load, and once Reviews or Assigned has a search configured.
   const incomingShown = !reviews.state || !workItems.state || reviews.state.scopes.includes("me") || workItems.lists.includes("assigned");
   const incomingSection = incomingShown ? (
@@ -508,7 +527,7 @@ export function BoardView({ api, reviews, work, remote }: { api: BoardApi; revie
       <WorkGroup list="open" work={workItems} now={now} />
       <WorkGroup list="shipped" work={workItems} now={now} />
     </div>
-  ) : null;
+  ) : queueTab === "radar" ? <RadarPanel api={radar} onQueued={() => { selectTab("queue"); refetch(); }} /> : null;
 
   const renderCard = (task: BoardTask) => (
     <TaskCard
@@ -539,7 +558,6 @@ export function BoardView({ api, reviews, work, remote }: { api: BoardApi; revie
       title={column.title}
       tasks={tasksIn(column.id)}
       count={column.id === "wip" ? null : column.id === "done" ? unreadDone : tasksIn(column.id).length}
-      unreadFirst={column.id === "done" ? unreadDone : 0}
       renderCard={renderCard}
       dragging={draggingId !== null}
       drop={column.id === "wip" && draggingStartable ? { label: "Drop to start now", icon: "Play", onDrop: startTask } : null}
@@ -554,7 +572,7 @@ export function BoardView({ api, reviews, work, remote }: { api: BoardApi; revie
           />
         ) : null
       }
-      tabs={column.id === "queue" && outgoingShown ? <QueueTabs tabs={tabs} active={queueTab} onSelect={selectTab} /> : null}
+      tabs={column.id === "queue" ? <QueueTabs tabs={tabs} active={queueTab} onSelect={selectTab} /> : null}
       body={column.id === "queue" ? queueBody : null}
       incoming={column.id === "queue" ? incomingSection : null}
       parked={column.id === "queue" ? { tasks: tasksIn("parked"), onDrop: dropPark } : null}

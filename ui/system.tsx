@@ -257,7 +257,7 @@ function StripChip({ glyph, label, level, okBackground = "", dim = false }: { gl
       } ${dim ? "opacity-60" : ""}`}
     >
       {glyph}
-      {label}
+      <span className="max-sm:hidden">{label}</span>
     </span>
   );
 }

@@ -19,3 +19,20 @@ Give each thread a short name (2-5 words, at most 40 characters) for the whole t
 ## CLI
 
 `bb shop-kanban list [--json]` shows every thread on the board with its column and why. `add` spawns a thread, `park` and `unpark` move an idle thread in and out of Parked, and `remove` archives one; `bb shop-kanban --help` prints their usage.
+
+## Radar
+
+The Radar tab holds discovered Shopify opportunities and AI techniques. Opening
+an opportunity only drafts an implementation request; submission creates its
+thread and marks it read. Dismiss removes it; techniques archive when their
+Slack source opens. Do not implement discoveries without the user's submission.
+
+`bb shop-kanban radar list --json` reads the inbox. `scan` (also the Radar refresh
+button) looks for new recommendations without Slack delivery. Results append by
+stable key; existing/read/dismissed items never reset or duplicate. Other engine
+commands are `run` (`--force`, `--dry-run`), `refresh` (context only), `backfill
+--days N`, `feedback --id ID --vote up|down [--note TEXT]`, and `webhook --url URL`. `import /absolute/data/path`
+copies existing Radar caches to plugin-owned host storage without overwriting.
+Settings `radarHostId` and `radarEnabled` select the persistent data host and
+enable daily 08:00 America/Toronto discovery. Retire old scheduled invocations
+before enabling it. No old checkout is needed after import.

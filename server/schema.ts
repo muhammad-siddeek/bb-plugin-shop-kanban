@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { forgeInput, remoteItemSchema, remoteSourceSchema } from "../contract";
+import { radarActionSchema, radarStateSchema } from "./radar-schema";
 
 /**
  * A card's state. Blocked cards (waiting on the user or errored) sit in the Working column, marked red; Parked holds idle
@@ -92,6 +93,8 @@ const boardTaskSchema = z.object({
   /** bb's unread state: new activity since the user last opened the thread. */
   unread: z.boolean(),
   createdAt: z.string(),
+  /** Subject classification from the labeler; null until classified (shown under Read · Other). */
+  workstream: z.enum(["shopify", "other"]).nullable(),
   updatedAt: z.string(),
   lastUserInputAt: z.string().nullable(),
   /** When the thread last finished a turn (bb's latest attention time); null before its first. Done sorts by it. */
@@ -365,6 +368,13 @@ const reviewRefSchema = z.object({ id: z.string().min(1).max(300) });
 const okSchema = z.object({ ok: z.boolean() });
 
 export const rpcContract = {
+  radar_list: { input: z.null(), output: radarStateSchema },
+  radar_draft: { input: z.object({ id: z.string().min(1).max(300) }), output: z.object({ prompt: z.string() }) },
+  radar_dismiss: { input: z.object({ id: z.string().min(1).max(300) }), output: okSchema },
+  radar_open_technique: { input: z.object({ id: z.string().min(1).max(300) }), output: okSchema },
+  radar_submit: { input: z.object({ id: z.string().min(1).max(300), composer: z.looseObject({ projectId: z.string(), input: z.array(z.unknown()).min(1) }) }), output: z.object({ threadId: z.string() }) },
+  radar_execute: { input: radarActionSchema, output: z.object({ text: z.string() }) },
+  radar_import: { input: z.object({ source: z.string().min(1), hostId: z.string().optional() }), output: z.object({ dataDir: z.string() }) },
   board_list: { input: z.null(), output: boardStateSchema },
   board_spawn_task: {
     input: z.object({

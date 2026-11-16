@@ -28,6 +28,7 @@ import { createWipLimit } from "./server/wip-limit";
 import { createWorkLists } from "./server/work";
 import { createSystemMonitor } from "./server/system";
 import { createAiUsage } from "./server/ai-usage";
+import { createRadar } from "./server/radar";
 
 type ThreadSpawnArgs = Parameters<BbPluginApi["sdk"]["threads"]["spawn"]>[0];
 
@@ -88,6 +89,7 @@ export default async function plugin(bb: BbPluginApi) {
   const wip = createWipLimit(bb, reader, publishBoardChanged);
   const system = createSystemMonitor(bb);
   const aiUsage = createAiUsage(bb);
+  const radar = createRadar(bb, spawnTask);
   const logOnce = throttledLog(bb, LOG_REPEAT_MS);
 
   function publishBoardChanged() {
@@ -187,6 +189,7 @@ export default async function plugin(bb: BbPluginApi) {
       statusReason: derived.status === "queue" && wip.isWaiting(thread.id) ? "Waiting to start" : derived.reason,
       startable: derived.status === "queue" && thread.queuedWork === "waiting",
       unread: thread.latestAttentionAt !== null && (thread.lastReadAt === null || thread.latestAttentionAt > thread.lastReadAt),
+      workstream: label.workstream,
       createdAt: stored?.createdAt ?? iso(thread.createdAt),
       updatedAt: iso(Math.max(thread.updatedAt ?? 0, stored ? Date.parse(stored.updatedAt) || 0 : 0) || null),
       lastUserInputAt: details.lastUserInputAt === null ? null : iso(details.lastUserInputAt),
@@ -315,7 +318,7 @@ export default async function plugin(bb: BbPluginApi) {
     );
   }
 
-  async function spawnTask(input: TaskSpawn): Promise<BoardTask> {
+  async function spawnTask(input: TaskSpawn, onCreated?: (threadId: string) => void): Promise<BoardTask> {
     const shortName = categorizedTitle(input.shortName, input.prompt);
     const parent = await reader.titleChainForParent(input.parentThreadId);
     const titleChain = parent.titleChain ? `${parent.titleChain} > ${shortName}` : shortName;
@@ -335,6 +338,7 @@ export default async function plugin(bb: BbPluginApi) {
       ...(input.parentThreadId ? { parentThreadId: input.parentThreadId } : {}),
       pluginMetadata: { boardTask: true, ...common },
     } as ThreadSpawnArgs);
+    onCreated?.(thread.id);
     const task: StoredTask = {
       threadId: thread.id,
       ...common,
@@ -378,8 +382,15 @@ export default async function plugin(bb: BbPluginApi) {
   }
 
   bb.rpc.register(rpcContract, {
+    radar_list: () => radar.list(),
+    radar_draft: ({ id }) => radar.draft(id),
+    radar_dismiss: ({ id }) => radar.dismiss(id),
+    radar_open_technique: ({ id }) => radar.dismiss(id, true),
+    radar_submit: ({ id, composer }) => radar.submit(id, composer),
+    radar_execute: (input) => radar.execute(input),
+    radar_import: ({ source, hostId }) => radar.importData(source, hostId),
     board_list: listBoard,
-    board_spawn_task: spawnTask,
+    board_spawn_task: (input) => spawnTask(input),
     board_remove_task: async ({ threadId }) => ({ removed: await removeTask(threadId, true) }),
     board_park_task: ({ threadId, parked }) => parkTask(threadId, parked),
     board_start_task: ({ threadId }) => startTask(threadId),
@@ -402,7 +413,7 @@ export default async function plugin(bb: BbPluginApi) {
 
   const boardApi = { listBoard, spawnTask, removeTask, parkTask };
   registerAgentTools(bb, boardApi);
-  registerCli(bb, boardApi);
+  registerCli(bb, boardApi, radar);
 
   /** No caller awaits an event handler: a failure (e.g. a KV write) is logged, at most once per interval. */
   function on<E extends PluginThreadEventName>(event: E, handler: (payload: PluginThreadEventPayloads[E]) => Promise<void>) {
