@@ -1,16 +1,14 @@
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
 import { ACCENT_TEXT, CARD_EDGE, CARD_SURFACE, STATUS_META, THREAD_DRAG_TYPE, taskActivityTime, taskCardTitle, type BoardStatus, type BoardTask } from "./model";
 import { Age, CHIP, MARK_FRAME, ONE_LINE_AGE, ONE_LINE_PAD, RowActions, Spinner, TYPE } from "./primitives";
-import { CardTooltip, ContextPie, SessionCost, type AgentProvider } from "./session";
+import { ContextPie, SessionCost } from "./session";
 
 const CARD_ACTION =
   "inline-flex size-5 items-center justify-center rounded-md text-muted-foreground/70 transition-[color,background-color] duration-150 hover:bg-accent hover:text-foreground focus-visible:bg-accent focus-visible:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:pointer-events-none pointer-coarse:size-7";
 const BLOCKED_STRIPE =
   "before:absolute before:inset-y-1.5 before:-left-px before:w-[3px] before:rounded-r-full before:bg-rose-500/70 before:content-['']";
 
-/** Resting on a card this long opens its tooltip; quick passes across the board don't. */
-const TOOLTIP_DELAY_MS = 350;
 /** A full card's cost and age: 18px lines at the ends of its two rows. */
 const META_LINE = `flex h-[18px] shrink-0 items-center whitespace-nowrap ${TYPE.meta} tabular-nums text-muted-foreground/80`;
 
@@ -147,7 +145,7 @@ export function TaskStatusMark({ status, unread }: { status: BoardStatus; unread
   );
 }
 
-export function TaskCard({ task, now, unread, selected, dragging, starting, provider, onArchive, onPark, onMarkUnread, onStart, onDragChange, onOpen }: {
+export function TaskCard({ task, now, unread, selected, dragging, starting, onArchive, onPark, onMarkUnread, onStart, onDragChange, onOpen }: {
   task: BoardTask;
   now: number;
   /** Done and not yet read: the title goes from semibold to bold and the check fills. */
@@ -158,8 +156,6 @@ export function TaskCard({ task, now, unread, selected, dragging, starting, prov
   dragging: boolean;
   /** Its start is on its way to the server: the start button waits. */
   starting: boolean;
-  /** The harness the card's thread runs on; null when bb's roster doesn't list it. */
-  provider: AgentProvider | null;
   onArchive: (threadId: string) => void;
   /** Park an idle card, or unpark a parked one. */
   onPark: (threadId: string, parked: boolean) => void;
@@ -213,40 +209,11 @@ export function TaskCard({ task, now, unread, selected, dragging, starting, prov
     onOpen(task.threadId);
     scheduleReveal(true);
   };
-  const tooltipId = useId();
-  const [tooltipOpen, setTooltipOpen] = useState(false);
-  const tooltipTimer = useRef(0);
-  // Every card has a tooltip: it carries the session details and what the card's lines hide (how it was left or why
-  // it waits, and the summary past its truncation).
-  const hasSession = provider !== null || task.session !== null;
-  const showTooltip = () => {
-    if (hasSession || compactHint) setTooltipOpen(true);
-  };
-  const hideTooltip = () => {
-    window.clearTimeout(tooltipTimer.current);
-    setTooltipOpen(false);
-  };
-  useEffect(() => () => window.clearTimeout(tooltipTimer.current), []);
   const dragFrame = useRef(0);
   useEffect(() => () => cancelAnimationFrame(dragFrame.current), []);
-  // Chrome sends the drag's source card a pointerenter when the drag ends, wherever the pointer is; the tooltip
-  // ignores it until the pointer next leaves the card.
-  const dragEnded = useRef(false);
-  // Scrolling the board moves the card out from under the fixed tooltip: close rather than chase it.
-  // Other scrollers (a streaming thread timeline) don't contain the card and are ignored.
-  useEffect(() => {
-    const card = ref.current;
-    if (!tooltipOpen || !card) return;
-    const close = (event: Event) => {
-      if (event.target instanceof Node && event.target.contains(card)) setTooltipOpen(false);
-    };
-    window.addEventListener("scroll", close, true);
-    return () => window.removeEventListener("scroll", close, true);
-  }, [tooltipOpen]);
   const { category, intent } = taskCardTitle(task);
   const parked = task.status === "parked";
-  // Done and Parked cards are finished or set aside: one line (mark, tag, title, and cost, else age), the rest in the
-  // tooltip.
+  // Done and Parked cards are finished or set aside: one line (mark, tag, title, and cost, else age).
   const compact = parked || task.status === "done";
   // Tag and title on one line: a full card's first line, or a one-line card's only one.
   const titleText = (
@@ -268,16 +235,12 @@ export function TaskCard({ task, now, unread, selected, dragging, starting, prov
   const meta = STATUS_META[task.status];
   const activity = taskActivityTime(task);
   const canOpen = !task.missingThread;
-  // Done cards don't repeat "Completed"; parked ones say how they were left, so they do.
-  const reason = task.statusReason && task.status !== "done" && task.statusReason !== "Working" ? task.statusReason : null;
-  const compactHint = [reason, task.note].filter(Boolean).join(" — ");
   const age = activity !== null ? <Age at={activity} now={now} className={META_LINE} /> : null;
   const titleButton = canOpen ? (
     <button
       type="button"
       data-card-open=""
       onClick={open}
-      aria-describedby={tooltipOpen ? tooltipId : undefined}
       className="group/open block min-w-0 flex-1 truncate rounded-sm text-left focus-visible:outline-none"
     >
       {titleText}
@@ -307,7 +270,6 @@ export function TaskCard({ task, now, unread, selected, dragging, starting, prov
       draggable={canDrag}
       onDragStart={(event) => {
         if (!canDrag) return;
-        hideTooltip();
         event.dataTransfer.setData(THREAD_DRAG_TYPE, task.threadId);
         event.dataTransfer.effectAllowed = "move";
         // Next frame: restyling the card now would also restyle the drag image the browser is about to capture.
@@ -316,7 +278,6 @@ export function TaskCard({ task, now, unread, selected, dragging, starting, prov
       onDragEnd={() => {
         if (!canDrag) return;
         cancelAnimationFrame(dragFrame.current);
-        dragEnded.current = true;
         onDragChange(null);
       }}
       aria-current={selected ? "true" : undefined}
@@ -324,25 +285,6 @@ export function TaskCard({ task, now, unread, selected, dragging, starting, prov
       onClick={(event) => {
         if (!canOpen || (event.target as HTMLElement).closest("button, a, [role='button']")) return;
         open();
-      }}
-      onPointerEnter={(event) => {
-        // Mouse only: touch has no hover, and a tap opens the thread.
-        if (event.pointerType !== "mouse" || dragEnded.current) return;
-        window.clearTimeout(tooltipTimer.current);
-        tooltipTimer.current = window.setTimeout(showTooltip, TOOLTIP_DELAY_MS);
-      }}
-      onPointerLeave={() => {
-        dragEnded.current = false;
-        hideTooltip();
-      }}
-      onFocus={(event) => {
-        if (event.target.matches(":focus-visible")) showTooltip();
-      }}
-      onBlur={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget)) hideTooltip();
-      }}
-      onKeyDown={(event) => {
-        if (event.key === "Escape") hideTooltip();
       }}
       className={`group relative ${CARD_SURFACE} ${compact ? ONE_LINE_PAD : "px-2 py-1.5"} has-[[data-card-open]:focus-visible]:ring-2 has-[[data-card-open]:focus-visible]:ring-ring/60 ${
         canOpen ? "cursor-pointer" : ""
@@ -361,7 +303,7 @@ export function TaskCard({ task, now, unread, selected, dragging, starting, prov
           ) : null}
         </div>
       ) : (
-        // Two lines: status, tag and title, cost; context fill, summary, age. The status reason is in the tooltip.
+        // Two lines: status, tag and title, cost; context fill, summary, age.
         <>
           <div className="flex h-[18px] items-center gap-2">
             <span className="flex w-4 shrink-0 justify-center">
@@ -418,10 +360,6 @@ export function TaskCard({ task, now, unread, selected, dragging, starting, prov
           </button>
         ) : null}
       </RowActions>
-
-      {tooltipOpen ? (
-        <CardTooltip id={tooltipId} anchor={ref} provider={provider} session={task.session} summary={compactHint} />
-      ) : null}
     </article>
   );
 }

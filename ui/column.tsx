@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { DragEvent, ReactElement, ReactNode } from "react";
-import { experimental_Icon as Icon, experimental_NewThreadComposer as NewThreadComposer, experimental_useProviders, experimental_useSidebarThreads, useBbContext, useBbNavigate, type NewThreadRequest } from "@get-bb/plugin-sdk/app";
+import { experimental_Icon as Icon, experimental_NewThreadComposer as NewThreadComposer, experimental_useSidebarThreads, useBbContext, useBbNavigate, type NewThreadRequest } from "@get-bb/plugin-sdk/app";
 import { PLUGIN_SLUG } from "../brand";
 import { CLOCK_TICK_MS, STATUS_META, THREAD_DRAG_TYPE, groupTasksByColumn, shortNameFromPrompt, type BoardColumn, type BoardState, type BoardTask } from "./model";
 import { useNow, type BoardApi, type RemoteApi, type ReviewsApi, type WorkApi, type RadarApi } from "./hooks";
@@ -15,6 +15,11 @@ import { RadarPanel } from "./radar";
 const SCROLL_TO_LATEST_SELECTOR = 'button[aria-label="Scroll to latest event"]';
 /** Where bb's new-thread composer keeps the board's draft, so closing the form, a reload or a crash doesn't lose it. */
 const DRAFT_KEY = `${PLUGIN_SLUG}:new-thread-draft`;
+/**
+ * bb's own New thread page keeps its last-used project here (raw id, no JSON). Seeding the board's composer with it
+ * makes the pickers match that page: the composer loads that project's remembered provider/model/reasoning/mode.
+ */
+const BB_NEW_THREAD_PROJECT_KEY = "bb.root-compose.project-id";
 /** The Queue column's open tab, kept across reloads. */
 const QUEUE_TAB_KEY = `${PLUGIN_SLUG}:queue-tab`;
 
@@ -403,9 +408,6 @@ function BoardColumnView({ column, title, tasks, count, renderCard, dragging, dr
 export function BoardView({ api, reviews, work, remote, radar }: { api: BoardApi; reviews: ReviewsApi; work: WorkApi; remote: RemoteApi; radar: RadarApi }) {
   const context = useBbContext();
   const selectedThreadId = context.threadId;
-  // Same roster and lookup as bb's sidebar: a thread's harness icon is its agent provider's artwork.
-  const { providers } = experimental_useProviders();
-  const providersById = useMemo(() => new Map(providers.map((provider) => [provider.id, provider])), [providers]);
   const navigate = useBbNavigate();
   const { rpc, board, error, report, refetch } = api;
   // Read state and completion time come from bb's own live thread view, the one its sidebar draws, so a card goes
@@ -538,7 +540,6 @@ export function BoardView({ api, reviews, work, remote, radar }: { api: BoardApi
       selected={task.threadId === selectedThreadId}
       dragging={task.threadId === draggingId}
       starting={startingIds.has(task.threadId)}
-      provider={task.thread?.providerId ? providersById.get(task.thread.providerId) ?? null : null}
       onArchive={archiveTask}
       onPark={parkTask}
       onMarkUnread={markUnreadTask}
@@ -579,7 +580,7 @@ export function BoardView({ api, reviews, work, remote, radar }: { api: BoardApi
       remote={column.id === "wip" ? <RemoteSection remote={remote} now={now} /> : null}
       addForm={
         column.id === "queue" && adding ? (
-          <AddTaskForm defaultProjectId={context.projectId ?? undefined} onAdd={addTask} onClose={() => setAdding(false)} onError={report} />
+          <AddTaskForm defaultProjectId={readStored(BB_NEW_THREAD_PROJECT_KEY) || undefined} onAdd={addTask} onClose={() => setAdding(false)} onError={report} />
         ) : null
       }
     />

@@ -147,18 +147,12 @@ reloads.
   the thread's whole tree has spent; the second has a pie with how full its
   context window is (dim grey, amber at 70%, red at 90%), a one-line summary
   of the latest exchange, and how long ago it was updated (`5m`, `3h`, `2d`).
-  Costs show cents under $10 (`$4.30`, `$53`); the tooltip is exact. Working
+  Costs show cents under $10 (`$4.30`, `$53`). Working
   threads refresh these every 5 seconds, idle threads every minute.
-- Resting the pointer anywhere on a card, or tabbing to it, opens a tooltip
-  beside the card (never over it) with the harness session: harness, model
-  and thinking level, token counts and cost, access mode, service tier and
-  model id, led by why the thread waits or how it was left (`Asked a
-  question`, `1 child thread working`) and its summary. Threads with no
-  session or note have none. A tap on a touch screen
-  opens the thread.
+- Cards open no popup on hover or focus. A tap on a touch screen opens the
+  thread.
 - The cost adds up the thread, every descendant thread (hidden and archived
-  ones included) and their harness subagents; the tooltip says how many
-  threads it spans. omp and Pi threads are read from their transcripts on
+  ones included) and their harness subagents. omp and Pi threads are read from their transcripts on
   the thread's host (omp's sessions dir, `~/.omp/agent/sessions` unless
   `PI_CODING_AGENT_DIR` or `XDG_DATA_HOME` moves it, and bb's Pi bridge
   sessions in `~/.bb/pi-bridge-sessions` unless `BB_PI_BRIDGE_SESSION_DIR`
@@ -168,8 +162,7 @@ reloads.
   Other harnesses count what they report to bb, and so do threads on a
   disconnected host. A fork doesn't count the entries it copied from its
   source while the source's transcript is still there.
-- A `~` in front of the cost means part of it is estimated; the tooltip says
-  how much. Replies a harness saved with tokens but no price are priced at
+- A `~` in front of the cost means part of it is estimated. Replies a harness saved with tokens but no price are priced at
   the average rate, per token bucket, that the same provider and model
   charged across the host's other transcripts. Since omp 18.13 every Shopify
   Auto (`shopify/auto`) reply is saved at $0 without the model that served

@@ -42,20 +42,12 @@ const threadSummarySchema = z.object({
   titleFallback: z.string().nullable(),
   status: z.string().nullable(),
   runtimeStatus: z.string().nullable(),
-  providerId: z.string().nullable(),
   updatedAt: z.number().nullable(),
   archivedAt: z.number().nullable(),
 });
 
-/** The card thread's harness session: current execution options (display labels), context usage, and the tree's spend. */
+/** The card thread's harness session: context usage and the tree's spend. */
 const boardSessionSchema = z.object({
-  modelId: z.string().nullable(),
-  /** Catalog display name; the raw model id until the provider's catalog has loaded. */
-  model: z.string().nullable(),
-  reasoning: z.string().nullable(),
-  /** Null for the provider's default tier. */
-  serviceTier: z.string().nullable(),
-  access: z.string().nullable(),
   /**
    * Spent by the thread, its harness subagents and every descendant thread, archived ones included; null while
    * it is first read, or when no harness in the tree reports cost.

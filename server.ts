@@ -201,7 +201,6 @@ export default async function plugin(bb: BbPluginApi) {
         titleFallback: thread.titleFallback,
         status: thread.status,
         runtimeStatus: thread.displayStatus,
-        providerId: thread.providerId,
         updatedAt: thread.updatedAt,
         archivedAt: thread.archivedAt,
       },

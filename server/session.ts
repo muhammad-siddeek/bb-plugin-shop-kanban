@@ -6,8 +6,7 @@ import { isRunningSelf, type LiveThread } from "./status";
 import { safe } from "./text";
 import type { ProviderSessions, ThreadReader } from "./threads";
 
-// Per-card session facts for the harness popover: the thread's current model, thinking level,
-// service tier and access, how full its context window is, and what the card's whole tree has spent.
+// Per-card session facts: how full the thread's context window is, and what the card's whole tree has spent.
 //
 // The tree is the thread, every descendant bb thread (hidden and archived ones included), and each
 // thread's harness subagents. omp reports only its own replies plus its direct `task` children, and Pi
@@ -17,9 +16,6 @@ import type { ProviderSessions, ThreadReader } from "./threads";
 /** Refresh cadence: working threads spend tokens mid-turn without bumping `updatedAt`. */
 const RUNNING_REFRESH_MS = 5_000;
 const IDLE_REFRESH_MS = 60_000;
-/** Model catalogs barely change; a cold provider can answer with no models, so retry those sooner. */
-const CATALOG_TTL_MS = 10 * 60_000;
-const CATALOG_RETRY_MS = 15_000;
 
 type SpendMethod = "omp_spend" | "pi_spend";
 type Spender = { method: SpendMethod; sessionId: typeof sessionIdInput };
@@ -36,18 +32,8 @@ const SESSIONS_PAGE = 500;
  */
 const SPEND_CALL_TIMEOUT_MS = 15_000;
 
-const ACCESS_LABELS: Record<string, string> = { full: "Full access", auto: "Auto", "accept-edits": "Accept edits" };
-
-type Options = { model: string; reasoningLevel: string; serviceTier: string; permissionMode: string };
 type Cost = { amount: number; currency: string };
 type Usage = { usedTokens: number; contextWindow: number; estimated: boolean };
-type Raw = { options: Options | null; usage: Usage | null };
-
-type Catalog = {
-  models: Map<string, { name: string; efforts: Map<string, string> }>;
-  reasoningLevels: Map<string, string>;
-  serviceTiers: Map<string, string>;
-};
 
 type Entry<T> = { key: unknown; at: number; value: T | null; pending: Promise<T | null> | null };
 /**
@@ -64,13 +50,8 @@ type SessionSpend = { amount: number; estimated: number };
 type ThreadSpend = { key: number | null | undefined; reported: Cost | null; sessions: ProviderSessions | null };
 type TreeThread = { thread: LiveThread; spender: Spender | null; spend: ThreadSpend };
 
-function labelMap(list: ReadonlyArray<{ id: string; label?: string }> | null | undefined): Map<string, string> {
-  return new Map((list ?? []).filter((entry) => entry.label).map((entry) => [entry.id, entry.label!]));
-}
-
 export function createSessionInfo(bb: BbPluginApi, reader: ThreadReader) {
-  const threads = new Map<string, Entry<Raw>>();
-  const catalogs = new Map<string, Entry<Catalog>>();
+  const threads = new Map<string, Entry<Usage>>();
   const trees = new Map<string, Entry<TreeCost>>();
   /** Thread ids in each card's tree, as last listed; keeps `spends` of archived descendants across board refreshes. */
   const treeIds = new Map<string, string[]>();
@@ -106,46 +87,9 @@ export function createSessionInfo(bb: BbPluginApi, reader: ThreadReader) {
     return entry.at === 0 && entry.pending && wait ? entry.pending : entry.value;
   }
 
-  async function fetchRaw(threadId: string): Promise<Raw> {
-    const [options, context] = await Promise.all([
-      safe(() => bb.sdk.threads.defaultExecutionOptions({ threadId })),
-      safe(() => bb.sdk.threads.context({ threadId })),
-    ]);
-    const usage = context?.usage ?? null;
-    return {
-      options: options
-        ? { model: options.model, reasoningLevel: options.reasoningLevel, serviceTier: options.serviceTier, permissionMode: options.permissionMode }
-        : null,
-      usage: usage ? { usedTokens: usage.usedTokens, contextWindow: usage.modelContextWindow, estimated: usage.estimated } : null,
-    };
-  }
-
-  async function fetchCatalog(providerId: string, hostId: string | null): Promise<Catalog | null> {
-    const result = await safe(() => bb.sdk.providers.models(hostId ? { providerId, hostId } : { providerId }));
-    if (!result || result.models.length === 0) return null;
-    const provider = result.providers.find((entry) => entry.id === providerId);
-    return {
-      models: new Map(
-        result.models.map((model) => [
-          model.model,
-          {
-            name: model.displayName,
-            efforts: labelMap(model.supportedReasoningEfforts.map((effort) => ({ id: effort.reasoningEffort, label: effort.label }))),
-          },
-        ]),
-      ),
-      reasoningLevels: labelMap(provider?.reasoningLevels),
-      serviceTiers: labelMap(provider?.serviceTiers),
-    };
-  }
-
-  async function catalogFor(providerId: string, hostId: string | null): Promise<Catalog | null> {
-    const id = `${providerId}:${hostId ?? ""}`;
-    const entry = catalogs.get(id);
-    // A catalog that never loaded is retried on the shorter cadence.
-    const maxAge = entry && entry.at > 0 && entry.value === null ? CATALOG_RETRY_MS : CATALOG_TTL_MS;
-    // Never block the board on a catalog load: it can spawn the provider. Labels fill in on a later poll.
-    return cached(catalogs, id, null, maxAge, () => fetchCatalog(providerId, hostId), false);
+  async function fetchUsage(threadId: string): Promise<Usage | null> {
+    const usage = (await safe(() => bb.sdk.threads.context({ threadId })))?.usage;
+    return usage ? { usedTokens: usage.usedTokens, contextWindow: usage.modelContextWindow, estimated: usage.estimated } : null;
   }
 
   async function threadSpend(thread: LiveThread, spender: Spender | null): Promise<ThreadSpend> {
@@ -236,31 +180,20 @@ export function createSessionInfo(bb: BbPluginApi, reader: ThreadReader) {
   }
 
   /**
-   * Session facts for a card, or null when bb has recorded neither options nor usage yet and the tree has spent
-   * nothing. `descendants` are the live ones on the board, for the refresh cadence; the tree cost reads archived
+   * Session facts for a card, or null when bb has recorded no usage yet and the tree has spent nothing.
+   * `descendants` are the live ones on the board, for the refresh cadence; the tree cost reads archived
    * ones too. The tree cost never holds up the board: it shows up on a later poll.
    */
   async function sessionFor(thread: LiveThread, descendants: readonly LiveThread[]): Promise<BoardSession | null> {
     const running = isRunningSelf(thread);
     const treeRunning = running || descendants.some(isRunningSelf);
     const treeKey = Math.max(thread.updatedAt ?? 0, ...descendants.map((entry) => entry.updatedAt ?? 0));
-    const [raw, catalog, tree] = await Promise.all([
-      cached(threads, thread.id, thread.updatedAt, running ? RUNNING_REFRESH_MS : IDLE_REFRESH_MS, () => fetchRaw(thread.id), true),
-      thread.providerId ? catalogFor(thread.providerId, thread.hostId) : null,
+    const [usage, tree] = await Promise.all([
+      cached(threads, thread.id, thread.updatedAt, running ? RUNNING_REFRESH_MS : IDLE_REFRESH_MS, () => fetchUsage(thread.id), true),
       cached(trees, thread.id, treeKey, treeRunning ? RUNNING_REFRESH_MS : IDLE_REFRESH_MS, () => fetchTreeCost(thread), false),
     ]);
-    if (!raw?.options && !raw?.usage && !tree?.cost) return null;
-    const options = raw?.options ?? null;
-    const usage = raw?.usage ?? null;
-    const model = options ? catalog?.models.get(options.model) : undefined;
-    const level = options?.reasoningLevel ?? null;
-    const tier = options?.serviceTier ?? null;
+    if (!usage && !tree?.cost) return null;
     return {
-      modelId: options?.model ?? null,
-      model: model?.name ?? options?.model ?? null,
-      reasoning: level === null ? null : model?.efforts.get(level) ?? catalog?.reasoningLevels.get(level) ?? level,
-      serviceTier: tier === null || tier === "default" ? null : catalog?.serviceTiers.get(tier) ?? tier,
-      access: options ? ACCESS_LABELS[options.permissionMode] ?? options.permissionMode : null,
       cost: tree?.cost ?? null,
       costEstimated: tree?.estimated ?? 0,
       costThreads: tree?.threads ?? 0,

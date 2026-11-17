@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.26.0
+
+- The board's new-thread form opens on the project bb's New thread page last
+  used, so its model and other pickers show the same defaults as that page.
+- Cards no longer open popups on hover: the thread cards' session tooltip and
+  the Radar cards' browser title tooltips are gone. The board no longer reads
+  each thread's model, thinking level, service tier or access mode, nor the
+  providers' model catalogs, which only that tooltip showed.
+
 ## 0.25.0
 
 - Simplify Radar scoring and reuse ranking schemas without changing selection
@@ -14,8 +23,6 @@
 - Three ranker/reviewer rounds order the complete Radar inbox by impact and
   availability to own the work. Opportunities and techniques share the saved
   reviewed order; read/dismissed state and linked threads are preserved.
-- The board's new-thread form opens on the project bb's New thread page last
-  used, so its model and other pickers show the same defaults as that page.
 
 ## 0.24.0
 

@@ -52,14 +52,13 @@ function OpportunityRow({ item, now, onDraft, onDismiss, onThread }: {
             <button
               type="button"
               aria-haspopup={read ? undefined : "dialog"}
-              title={item.title}
               onClick={open}
               className={`${titleClass} decoration-muted-foreground/40 underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60`}
             >
               {item.title}
             </button>
           )}
-          {item.summary ? <p title={item.summary} className={`mt-0.5 line-clamp-2 ${TYPE.body} leading-[16px] text-muted-foreground/80`}>{item.summary}</p> : null}
+          {item.summary ? <p className={`mt-0.5 line-clamp-2 ${TYPE.body} leading-[16px] text-muted-foreground/80`}>{item.summary}</p> : null}
           <div className={TWO_LINE_META_ROW}>
             <span className={TWO_LINE_META}>
               {Number.isFinite(created) ? <><Age at={created} now={now} className="" /> · </> : null}
@@ -74,7 +73,6 @@ function OpportunityRow({ item, now, onDraft, onDismiss, onThread }: {
             <button
               type="button"
               aria-label="Dismiss opportunity"
-              title="Dismiss opportunity"
               disabled={dismissing}
               onClick={() => void dismiss()}
               className={`${ROW_ICON_ACTION} opacity-50 hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100`}
@@ -114,7 +112,6 @@ function TechniqueRow({ item, now, onOpen }: { item: RadarItem; now: number; onO
             type="button"
             disabled={opening}
             onClick={() => void open()}
-            title={item.title}
             className={`flex w-full min-w-0 items-start gap-2 rounded-sm text-left ${TYPE.title} font-medium leading-[18px] text-foreground/90 decoration-muted-foreground/40 underline-offset-2 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:pointer-events-none disabled:opacity-60`}
           >
             <span className="min-w-0 flex-1 truncate">{item.title}</span>
