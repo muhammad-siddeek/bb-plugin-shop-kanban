@@ -1,8 +1,19 @@
 # Shop Kanban
 
-A Kanban board for [bb](https://getbb.app) threads. It opens as an overlay at
-the bottom of the bb app and shows every non-archived top-level thread. Child
+A Kanban board for [bb](https://getbb.app) threads. It opens as a drawer along
+the top of the bb app and shows every non-archived top-level thread. Child
 threads roll up into their parent thread.
+
+The drawer starts beside bb's sidebar and, in the macOS app, under the
+window's title-bar row, so the traffic lights, back and forward and the
+sidebar toggle stay bb's. The columns come first and the board's title bar
+(thread counts, search, machine resources) runs along its bottom, next to
+bb's page, which starts at the drawer's lower edge; drag that edge, or focus
+it and use the arrow keys, Page Up/Down, Home and End, to resize. The chevron
+at the right end of the title bar hides the columns: the same title bar, with
+every control still there, moves to the top of the window, and the chevron
+shows the columns again. The title bar's dropdowns open up over the columns,
+or down over bb's page while the board is hidden.
 
 ## Columns
 
@@ -21,9 +32,10 @@ thread (see Parked) and starting a waiting one (see Working limit).
 - **Working**: the thread or one of its descendants has a turn in progress,
   background work included. Blocked threads sit at the top of Working as red cards: the
   thread is idle and needs you (a pending interaction, an error, or a last
-  reply that asks a question). The title bar, and the pill when the board is
-  hidden, show the Working limit's meter (below) with one red dot per blocked
-  thread ahead of it; waiting messages show only in Working's header.
+  reply that asks a question). The title bar shows two count badges, the
+  number of working threads in amber and of blocked threads in red, each gone
+  at zero. The Working limit's meter and waiting messages show only in
+  Working's header.
 - **Remote** (a section at the bottom of Working): Shopify River sessions and
   Torrent tickets you're part of that are live, one line each. River sessions
   are those you have spoken in this week (yours or someone else's thread) with
@@ -155,9 +167,8 @@ reloads.
   Working cards skip the age, so their summary runs to the end of the line.
   Costs show cents under $10 (`$4.30`, `$53`). Working
   threads refresh these every 5 seconds, idle threads every minute.
-- Every card has a thin rail on its left edge in its state's color: sky
-  queued, amber working, red blocked, green done, grey parked. Work, review,
-  remote and Radar cards use their mark's color, grey once read.
+- Cards have no colored edge; the status mark carries the state, and the
+  content starts 6px in from the card's left border (8px on the right).
 - Anything unread is a solid circle with a white mark: a Done thread's check,
   a new review request's pull-request icon, a Radar recommendation's bolt or
   bulb. Unread counts (the Done column, the Radar tab, Recommendations, and
@@ -166,8 +177,8 @@ reloads.
   meaning (sky queued or new, amber working or warning, red blocked, errors
   or removing, green done or approving), and bb's theme greys for the rest.
   Each hue and grey use one alpha step per job: a 15% tint for fills and
-  washes, 50% for lines, 70% for lines that carry a state (rails, the free
-  working slot, edges under the pointer), solid for marks and unread pills.
+  washes, 50% for lines, 70% for lines that carry a state (the free working
+  slot, edges under the pointer), solid for marks and unread pills.
   Errors are red text in the board's readable shade in both themes.
 - Cards open no popup on hover or focus. A tap on a touch screen opens the
   thread.
@@ -201,10 +212,11 @@ reloads.
 
 Below 640px wide, each column takes the width of the screen with the next
 one peeking in, and a swipe snaps to the next column. The title bar gives its
-room to search, whose results span the bar. The hidden board is a bottom bar
-that reserves its own strip, so it doesn't sit on bb's composer controls. On
-touch screens, buttons and toggles are larger and text fields use 16px text,
-so iOS doesn't zoom into them.
+room to search, whose results span the bar. The column headers, or the title
+bar while the board is hidden, start after bb's floating sidebar toggle. While
+bb's sidebar drawer is open the board steps aside, and
+comes back when it closes. On touch screens, buttons and toggles are larger
+and text fields use 16px text, so iOS doesn't zoom into them.
 
 ### omp icon
 
@@ -269,8 +281,8 @@ Click it for advice on what to stop or clear, each gauge's exact figures (GB
 available, swap activity, GB free, time left), and the heaviest apps by CPU or
 memory, helper processes counted with their app, each with a grey bar.
 
-The plugin server samples every 2 seconds while a board is open, and stops
-30 seconds after the last board closes or is hidden.
+The plugin server samples every 2 seconds while a board's title bar is on
+screen, open or hidden, and stops 30 seconds after the last one goes away.
 
 ## Thread search
 
@@ -446,7 +458,7 @@ bb shop-kanban remove <thread-id> [--json]   # archives the thread; exits 1 if n
 From the bb plugin store, or from this repository:
 
 ```sh
-bb plugin install git:https://github.com/muhammad-siddeek/bb-plugin-shop-kanban.git@^0.27.0
+bb plugin install git:https://github.com/muhammad-siddeek/bb-plugin-shop-kanban.git@^0.28.0
 ```
 
 ## Development

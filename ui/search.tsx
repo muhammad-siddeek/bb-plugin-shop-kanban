@@ -5,7 +5,7 @@ import type { rpcContract } from "../server/schema";
 import { CLOCK_TICK_MS, errorMessage, type SearchResponse } from "./model";
 import { useNow } from "./hooks";
 import { Age, Spinner, useOutsideClose } from "./primitives";
-import { ACCENT_TEXT, CHIP, ICON_ACTION, POPOVER, TYPE } from "./styles";
+import { ACCENT_TEXT, CHIP, ICON_ACTION, POPOVER, POPOVER_SIDE, TYPE, type Dropdown } from "./styles";
 
 const SEARCH_DEBOUNCE_MS = 200;
 
@@ -13,7 +13,7 @@ const SEARCH_DEBOUNCE_MS = 200;
  * Title-bar search over every thread qmd has indexed, archived included. Picking a result only opens
  * the thread in bb: it never reads, moves, adds or unarchives anything on the board.
  */
-export function ThreadSearch({ maxListHeight }: { maxListHeight: number }) {
+export function ThreadSearch({ dropdown }: { dropdown: Dropdown }) {
   const rpc = useRpc<typeof rpcContract>();
   const navigate = useBbNavigate();
   const now = useNow(CLOCK_TICK_MS);
@@ -139,8 +139,8 @@ export function ThreadSearch({ maxListHeight }: { maxListHeight: number }) {
 
       {open && trimmed ? (
         <div
-          className={`${POPOVER} left-0 w-[min(30rem,calc(100vw-2rem))]`}
-          style={{ maxHeight: `${Math.max(maxListHeight, 120)}px` }}
+          className={`${POPOVER} ${POPOVER_SIDE[dropdown.side]} left-0 w-[min(30rem,calc(100vw-2rem))]`}
+          style={{ maxHeight: `${Math.max(dropdown.maxHeight, 120)}px` }}
         >
           {results.length > 0 ? (
             <ul id={listId} role="listbox" aria-label="Matching threads" className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-1 [scrollbar-width:thin]">

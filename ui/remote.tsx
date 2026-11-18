@@ -2,7 +2,7 @@ import { TaskStatusMark } from "./card";
 import type { RemoteApi } from "./hooks";
 import { formatMoney, type RemoteItem } from "./model";
 import { Age, GroupHeader, listProblems, useBbLinks } from "./primitives";
-import { ACCENT_TEXT, CHIP, ONE_LINE_AGE, ONE_LINE_PAD, STATUS_META, TYPE, cardFrame, cardTitle } from "./styles";
+import { ACCENT_TEXT, CHIP, ONE_LINE_AGE, ONE_LINE_PAD, TYPE, cardFrame, cardTitle } from "./styles";
 
 // The Working column's Remote section: River sessions and Torrent tickets the user is part of that are live, one line
 // each, with the board's own working and blocked marks. A row opens the ticket on Torrent or the session's Slack
@@ -14,7 +14,7 @@ const SOURCE_NAME: Record<RemoteItem["source"], string> = { torrent: "Torrent", 
 function RemoteRow({ item, now }: { item: RemoteItem; now: number }) {
   const links = useBbLinks();
   return (
-    <article className={`group relative ${cardFrame(STATUS_META[item.status].rail)} ${ONE_LINE_PAD}`}>
+    <article className={`group relative ${cardFrame()} ${ONE_LINE_PAD}`}>
       <div className="flex h-5 items-center gap-2">
         <TaskStatusMark status={item.status} unread={false} />
         <button

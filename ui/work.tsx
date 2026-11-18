@@ -16,7 +16,6 @@ import {
   TYPE,
   cardFrame,
   cardTitle,
-  type CardRail,
 } from "./styles";
 
 // Work lists in the Queue column: Open and Shipped in the Out tab (one line each), Assigned at the bottom of the Queue
@@ -24,14 +23,13 @@ import {
 // The title opens a new-thread draft that takes the item further (land it, measure and demo it, or work the
 // issue); the forge link opens it on its forge, and on shipped pull requests the toggles mark it measured or demoed.
 
-const LIST_META: Record<WorkList, { title: string; hint: string; empty: string; mark: string; tone: string; rail: CardRail }> = {
+const LIST_META: Record<WorkList, { title: string; hint: string; empty: string; mark: string; tone: string }> = {
   open: {
     title: "Open",
     hint: "Your open pull requests, drafts included",
     empty: "No open pull requests.",
     mark: "GitPullRequest",
     tone: ACCENT_TEXT.sky,
-    rail: "sky",
   },
   shipped: {
     title: "Shipped",
@@ -39,7 +37,6 @@ const LIST_META: Record<WorkList, { title: string; hint: string; empty: string; 
     empty: "Everything merged is measured and demoed.",
     mark: "GitMerge",
     tone: ACCENT_TEXT.emerald,
-    rail: "emerald",
   },
   assigned: {
     title: "Assigned",
@@ -47,7 +44,6 @@ const LIST_META: Record<WorkList, { title: string; hint: string; empty: string; 
     empty: "No issues assigned to you.",
     mark: "CircleDot",
     tone: ACCENT_TEXT.amber,
-    rail: "amber",
   },
 };
 const FOLLOW_UPS: { mark: "measured" | "demoed"; label: string }[] = [
@@ -120,7 +116,7 @@ function WorkRow({ item, now, onMark }: {
   if (item.list !== "assigned") {
     const done = item.list === "shipped" ? FOLLOW_UPS.filter((followUp) => item[followUp.mark]) : [];
     return (
-      <article className={`group relative ${cardFrame(meta.rail)} ${ONE_LINE_PAD}`}>
+      <article className={`group relative ${cardFrame()} ${ONE_LINE_PAD}`}>
         <div className="flex h-5 items-center gap-2">
           {mark}
           <div className="min-w-0 flex-1">{titleButton}</div>
@@ -147,7 +143,7 @@ function WorkRow({ item, now, onMark }: {
   }
 
   return (
-    <article className={`group relative ${cardFrame(meta.rail)} ${TWO_LINE_PAD}`}>
+    <article className={`group relative ${cardFrame()} ${TWO_LINE_PAD}`}>
       <div className="flex items-start gap-2">
         {mark}
         <div className="min-w-0 flex-1">

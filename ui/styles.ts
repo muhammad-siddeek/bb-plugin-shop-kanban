@@ -33,10 +33,10 @@ export const TYPE = {
  * - Spacing: 2, 4, 6, 8, 12, 16, 20. Cards and rows sit 4px apart, groups in a column 8px, a popover's content
  *   12px in from its edge, a dialog's 20px (12px on phones).
  * - Heights: 16 chips and marks, 20 a row's line and actions, 24 group headers and fields, 28 one-line cards and
- *   title-bar controls, 32 column headers and dashed slots, 36 the title bar and the board pill. Touch screens take
+ *   title-bar controls, 32 column headers and dashed slots, 36 the title bar. Touch screens take
  *   28 inside columns, 36 in the title bar and for form fields.
- * - Icons: 10 on a disc or in a chip, 12 beside meta text, 14 for marks and row actions, 16 in banners and dialogs,
- *   20 for the board pill's mark. Dots: 6 for a verdict, 8 in the working meter.
+ * - Icons: 10 on a disc or in a chip, 12 beside meta text, 14 for marks and row actions, 16 in banners, dialogs and
+ *   the title bar's mark. Dots: 6 for a verdict, 8 in the working meter.
  * - Radii: 4 (chips, small controls, focus outlines), 6 (cards, buttons, fields, slots), 12 (popovers, the dialog),
  *   full (pills, discs, dots). Strokes: 1 hairlines, 1.5 small rings and the spinner, 2 focus rings, 3 selection.
  * Offsets that line one thing up with another (CARD_INSET, COLUMN_INSET, a one-line card's 3px pad, the row
@@ -59,9 +59,9 @@ export function cardTitle(unread = false): string {
  * Every hue and the grey climb one alpha ladder, each step with one job:
  * - /15 tint: badge and chip fills, hover and pressed washes, a drop target's highlight.
  * - /50 line: borders, an unread card's edge, chart thresholds, a drop target still waiting.
- * - /70 edge: lines that carry a state (rails, the queued ring, a free slot) and edges under the pointer or focus.
+ * - /70 edge: lines that carry a state (the queued ring, a free slot) and edges under the pointer or focus.
  * - solid -500: marks, unread pills, meter dots; -600 under the pointer on a solid button.
- * Grey reads about a step heavier than a hue at the same alpha (a grey /50 rail measures like the hues' /70 ones), so
+ * Grey reads about a step heavier than a hue at the same alpha (a grey /50 line measures like the hues' /70 ones), so
  * grey marks and data bars take the line step. Neutral lines: `border-border` for edges, `/60` for dividers inside a
  * surface, and the cards' hairline.
  *
@@ -105,32 +105,18 @@ export const UNREAD_BADGE = {
   emerald: "bg-emerald-500 text-white",
 } as const;
 
-/**
- * A card's state rail colors (see `cardFrame`): a hue's edge step. Read and parked cards have no state to show, so
- * theirs is the grey line, which measures about as strong.
- */
-const RAIL = {
-  sky: "before:bg-sky-500/70",
-  amber: "before:bg-amber-500/70",
-  rose: "before:bg-rose-500/70",
-  emerald: "before:bg-emerald-500/70",
-  muted: "before:bg-muted-foreground/50",
-} as const;
-export type CardRail = keyof typeof RAIL;
-
 /** Colors per card state; each column takes those of the state it is named after. Parked is grey. */
 export const STATUS_META: Record<BoardStatus, {
   title: string;
   accent: string;
   badge: string;
   outline: string;
-  rail: CardRail;
 }> = {
-  queue: { title: ACCENT_TEXT.sky, accent: "bg-sky-500", badge: ACCENT_BADGE.sky, outline: "outline-sky-500", rail: "sky" },
-  wip: { title: ACCENT_TEXT.amber, accent: "bg-amber-500", badge: ACCENT_BADGE.amber, outline: "outline-amber-500", rail: "amber" },
-  blocked: { title: ACCENT_TEXT.rose, accent: "bg-rose-500", badge: ACCENT_BADGE.rose, outline: "outline-rose-500", rail: "rose" },
-  done: { title: ACCENT_TEXT.emerald, accent: "bg-emerald-500", badge: ACCENT_BADGE.emerald, outline: "outline-emerald-500", rail: "emerald" },
-  parked: { title: "text-muted-foreground", accent: "bg-muted-foreground", badge: "bg-muted-foreground/15 text-muted-foreground", outline: "outline-muted-foreground", rail: "muted" },
+  queue: { title: ACCENT_TEXT.sky, accent: "bg-sky-500", badge: ACCENT_BADGE.sky, outline: "outline-sky-500" },
+  wip: { title: ACCENT_TEXT.amber, accent: "bg-amber-500", badge: ACCENT_BADGE.amber, outline: "outline-amber-500" },
+  blocked: { title: ACCENT_TEXT.rose, accent: "bg-rose-500", badge: ACCENT_BADGE.rose, outline: "outline-rose-500" },
+  done: { title: ACCENT_TEXT.emerald, accent: "bg-emerald-500", badge: ACCENT_BADGE.emerald, outline: "outline-emerald-500" },
+  parked: { title: "text-muted-foreground", accent: "bg-muted-foreground", badge: "bg-muted-foreground/15 text-muted-foreground", outline: "outline-muted-foreground" },
 };
 
 /** Shadows, by how high a thing sits. Tailwind needs whole literals, so the variants that use them repeat them. */
@@ -139,10 +125,8 @@ export const ELEVATION = {
   rest: "shadow-[0_1px_1px_0_rgb(0_0_0/0.05),0_1px_3px_-1px_rgb(0_0_0/0.08)]",
   /** A hovered or selected card. */
   raised: "shadow-[0_1px_2px_0_rgb(0_0_0/0.08),0_2px_6px_-2px_rgb(0_0_0/0.12)]",
-  /** What floats over the board or the page: dropdowns and the hidden board's pill. */
+  /** What floats over the board or the page: dropdowns and the board itself, docked under bb's top edge. */
   float: "shadow-[0_2px_6px_-2px_rgb(0_0_0/0.15),0_12px_32px_-12px_rgb(0_0_0/0.35)]",
-  /** The same, cast upward by what docks on the bottom edge: the open board and the phone's bar. */
-  floatUp: "shadow-[0_-12px_32px_-12px_rgb(0_0_0/0.35)]",
   /** The Radar dialog. */
   modal: "shadow-[0_24px_80px_-16px_rgb(0_0_0/0.5)]",
 } as const;
@@ -152,9 +136,6 @@ export const ELEVATION = {
  * than spacing to separate them. Raised under the pointer.
  */
 const CARD_SURFACE = `rounded-md border bg-card ${ELEVATION.rest} transition-[border-color,box-shadow,background-color,opacity] duration-150 hover:shadow-[0_1px_2px_0_rgb(0_0_0/0.08),0_2px_6px_-2px_rgb(0_0_0/0.12)]`;
-/** A card's state rail: an inset stripe on its left edge, no width or height cost. */
-const CARD_RAIL =
-  "before:pointer-events-none before:absolute before:inset-y-1.5 before:-left-px before:w-[3px] before:rounded-r-full before:content-['']";
 /**
  * The cards' hairline, drawn from the foreground so it reads in both themes and in the selected card's inverted
  * scope. Dark cards sit darker than their column, so it goes a step brighter there to keep a drawn edge.
@@ -169,15 +150,22 @@ const CARD_BORDER = {
   none: "border-transparent",
 } as const;
 
-/** Every card's frame: the surface, a state rail in `rail`'s color, and a `border`. The card sets `relative`. */
-export function cardFrame(rail: CardRail, border: keyof typeof CARD_BORDER = "rest"): string {
-  return `${CARD_SURFACE} ${CARD_RAIL} ${RAIL[rail]} ${CARD_BORDER[border]}`;
+/** Every card's frame: the surface and a `border`. The card sets `relative`. */
+export function cardFrame(border: keyof typeof CARD_BORDER = "rest"): string {
+  return `${CARD_SURFACE} ${CARD_BORDER[border]}`;
 }
 
-/** A heading inside a column lines up with the cards' content: their 1px border plus `px-2`. */
-export const CARD_INSET = "px-[9px]";
+/**
+ * A heading inside a column lines up with the cards' content: their 1px border plus the cards' 6px start and 8px end
+ * padding (CARD_PAD_X).
+ */
+export const CARD_INSET = "pl-[7px] pr-[9px]";
 /** The column header and the title bar start on the cards' content edge: the column's 6px padding plus CARD_INSET. */
-export const COLUMN_INSET = "pl-[15px]";
+export const COLUMN_INSET = "pl-[13px]";
+export const LEAD_INSET = "pl-[max(13px,calc(var(--board-lead,0px)_+_8px))]";
+export const COLUMN_HEADER_INSET = `${COLUMN_INSET} max-sm:pl-[max(13px,calc(var(--board-lead,0px)_+_8px))] [section:first-child>&]:pl-[max(13px,calc(var(--board-lead,0px)_+_8px))]`;
+/** Every card's side padding: 6px at the start, where the mark's circle sits as far in as from the top, 8px at the end. */
+export const CARD_PAD_X = "pl-1.5 pr-2";
 /** Every small chip (a card's category, review risk, Archived, a follow-up already set): 16px, square-ish corners. */
 export const CHIP = `inline-flex h-4 shrink-0 items-center rounded-sm px-1 ${TYPE.chip} leading-none`;
 /** A row's 20px action (28px on touch screens); `ICON_ACTION` holds its square icon-only forms. */
@@ -195,9 +183,9 @@ export const DASHED_SLOT = `flex min-h-8 shrink-0 items-center justify-center ga
 /** A list that has nothing to show, or nothing yet: the cards' hairline, dashed. */
 export const EMPTY_NOTE = `${DASHED_SLOT} ${HAIRLINE} text-muted-foreground`;
 /** One-line cards and rows (Done, Parked, Out): 28px tall, the 20px line inside a 3px pad and the border. */
-export const ONE_LINE_PAD = "px-2 py-[3px]";
+export const ONE_LINE_PAD = `${CARD_PAD_X} py-[3px]`;
 /** Two-line rows (Reviews, Assigned): the title line, then a meta line of age, reference and the row's actions. */
-export const TWO_LINE_PAD = "px-2 pb-1 pt-1.5";
+export const TWO_LINE_PAD = `${CARD_PAD_X} pb-1 pt-1.5`;
 /** A two-line row's second line; its actions end flush with the archive button above. */
 export const TWO_LINE_META_ROW = "-mr-[3px] mt-0.5 flex h-5 items-center gap-0.5 pointer-coarse:h-7";
 /** The second line's text, truncated before the actions. */
@@ -208,7 +196,12 @@ export const TWO_LINE_META = `mr-1 min-w-0 flex-1 truncate ${TYPE.meta} tabular-
  */
 export const ONE_LINE_AGE = `shrink-0 whitespace-nowrap ${TYPE.meta} tabular-nums text-muted-foreground/80 [@media(hover:none)]:hidden`;
 
-/** The title bar's dropdowns (search results, a resource's popover), hanging below their trigger; full width on phones. */
-export const POPOVER = `absolute top-full z-30 mt-1.5 flex flex-col overflow-hidden rounded-xl border border-border bg-popover text-popover-foreground ${ELEVATION.float} max-sm:inset-x-2 max-sm:w-auto`;
+/** The title bar's dropdowns (search results, a resource's popover); full width on phones. */
+export const POPOVER = `absolute z-30 flex flex-col overflow-hidden rounded-xl border border-border bg-popover text-popover-foreground ${ELEVATION.float} max-sm:inset-x-2 max-sm:w-auto`;
+export const POPOVER_SIDE = { above: "bottom-full mb-1.5", below: "top-full mt-1.5" } as const;
+export interface Dropdown {
+  side: keyof typeof POPOVER_SIDE;
+  maxHeight: number;
+}
 /** An error across the top of a panel (the board, the Radar dialog): a rose tint with a rose line under it. */
 export const ALERT_BANNER = `border-b border-rose-500/50 ${ACCENT_BADGE.rose}`;

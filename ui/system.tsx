@@ -5,7 +5,7 @@ import type { rpcContract } from "../server/schema";
 import { usePoll } from "./hooks";
 import { formatMoney, type AiUsage, type SystemProcesses, type SystemStats } from "./model";
 import { useOutsideClose } from "./primitives";
-import { ACCENT_BADGE, ACCENT_TEXT, POPOVER, TYPE } from "./styles";
+import { ACCENT_BADGE, ACCENT_TEXT, POPOVER, POPOVER_SIDE, TYPE, type Dropdown } from "./styles";
 
 const STATS_POLL_MS = 2_000;
 const PROCESSES_POLL_MS = 3_000;
@@ -283,7 +283,7 @@ const PANEL_LABEL: Record<PanelKey, string> = {
  * trouble), plus today's AI spend. Hovering or clicking a chip opens a popover about that resource alone; a click
  * pins it open until clicking again, outside, or Escape.
  */
-export function SystemMonitor({ maxPanelHeight }: { maxPanelHeight: number }) {
+export function SystemMonitor({ dropdown }: { dropdown: Dropdown }) {
   const rpc = useRpc<typeof rpcContract>();
   const readStats = useMemo(() => () => rpc.call("system_stats", null), [rpc]);
   const { value: stats, error } = useMonitorPoll(readStats, STATS_POLL_MS);
@@ -397,8 +397,8 @@ export function SystemMonitor({ maxPanelHeight }: { maxPanelHeight: number }) {
           id={panelId}
           role="dialog"
           aria-label={PANEL_LABEL[open]}
-          className={`${POPOVER} right-0 w-[min(19rem,calc(100vw-1rem))]`}
-          style={{ maxHeight: `${Math.max(maxPanelHeight, 160)}px` }}
+          className={`${POPOVER} ${POPOVER_SIDE[dropdown.side]} right-0 w-[min(19rem,calc(100vw-1rem))]`}
+          style={{ maxHeight: `${Math.max(dropdown.maxHeight, 160)}px` }}
         >
           <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-width:thin]">
             {open === "ai" ? (

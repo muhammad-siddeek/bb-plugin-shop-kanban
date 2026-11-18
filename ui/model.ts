@@ -31,10 +31,9 @@ export type BoardStatus = Status;
 export type BoardState = z.infer<(typeof rpcContract)["board_list"]["output"]>;
 
 export const CLOCK_TICK_MS = 15_000;
-export const BOTTOM_BOARD_OPEN_CLASS = `${PLUGIN_SLUG}-bottom-open`;
-export const BOTTOM_BOARD_HEIGHT_VAR = `--${PLUGIN_SLUG}-bottom-height`;
-/** Set while the board is hidden; on phones the hidden board is a bottom bar that keeps its own strip of the page. */
-export const BOTTOM_BOARD_COLLAPSED_CLASS = `${PLUGIN_SLUG}-bottom-collapsed`;
+export const TOP_BOARD_CLASS = `${PLUGIN_SLUG}-top-docked`;
+export const TOP_BOARD_INSET_VAR = `--${PLUGIN_SLUG}-top-inset`;
+export const TOP_BOARD_ATTR = `data-${PLUGIN_SLUG}-board`;
 /** dataTransfer type of a dragged card, carrying its thread id; only the Parked column accepts it. */
 export const THREAD_DRAG_TYPE = `application/x-${PLUGIN_SLUG}-thread`;
 const COLUMNS: BoardColumn[] = ["queue", "wip", "done", "parked"];

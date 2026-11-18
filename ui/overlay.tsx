@@ -1,17 +1,14 @@
-import { useEffect, useRef, useState } from "react";
-import type { KeyboardEvent, PointerEvent } from "react";
-import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import type { CSSProperties, KeyboardEvent, PointerEvent } from "react";
 import { PLUGIN_NAME } from "../brand";
-import { BOTTOM_BOARD_COLLAPSED_CLASS, BOTTOM_BOARD_HEIGHT_VAR, BOTTOM_BOARD_OPEN_CLASS, type BoardState, type BoardTask } from "./model";
+import { TOP_BOARD_ATTR, TOP_BOARD_CLASS, TOP_BOARD_INSET_VAR, type BoardTask } from "./model";
 import { useBoard, useRemote, useReviews, useWork, useRadar } from "./hooks";
-import { IconButton } from "./primitives";
-import { ACCENT_TEXT, COLUMN_INSET, ELEVATION, TYPE } from "./styles";
+import { CountBadge, IconButton } from "./primitives";
+import { COLUMN_INSET, ELEVATION, LEAD_INSET, STATUS_META, type Dropdown } from "./styles";
 import { BoardView } from "./column";
 import { ThreadSearch } from "./search";
 import { SystemMonitor } from "./system";
-import { WorkingMeter } from "./wip-limit";
 
-/** Shopify's bag (Simple Icons' `shopify` path), in white: the board's only mark in its title bar and pill. */
 const SHOPIFY_BAG =
   "M15.337 23.979l7.216-1.561s-2.604-17.613-2.625-17.73c-.018-.116-.114-.192-.211-.192s-1.929-.136-1.929-.136-1.275-1.274-1.439-1.411c-.045-.037-.075-.057-.121-.074l-.914 21.104h.023zM11.71 11.305s-.81-.424-1.774-.424c-1.447 0-1.504.906-1.504 1.141 0 1.232 3.24 1.715 3.24 4.629 0 2.295-1.44 3.76-3.406 3.76-2.354 0-3.54-1.465-3.54-1.465l.646-2.086s1.245 1.066 2.28 1.066c.675 0 .975-.545.975-.932 0-1.619-2.654-1.694-2.654-4.359-.034-2.237 1.571-4.416 4.827-4.416 1.257 0 1.875.361 1.875.361l-.945 2.715-.02.01zM11.17.83c.136 0 .271.038.405.135-.984.465-2.064 1.639-2.508 3.992-.656.213-1.293.405-1.889.578C7.697 3.75 8.951.84 11.17.84V.83zm1.235 2.949v.135c-.754.232-1.583.484-2.394.736.466-1.777 1.333-2.645 2.085-2.971.193.501.309 1.176.309 2.1zm.539-2.234c.694.074 1.141.867 1.429 1.755-.349.114-.735.231-1.158.366v-.252c0-.752-.096-1.371-.271-1.871v.002zm2.992 1.289c-.02 0-.06.021-.078.021s-.289.075-.714.21c-.423-1.233-1.176-2.37-2.508-2.37h-.115C12.135.209 11.669 0 11.265 0 8.159 0 6.675 3.877 6.21 5.846c-1.194.365-2.063.636-2.16.674-.675.213-.694.232-.772.87-.075.462-1.83 14.063-1.83 14.063L15.009 24l.927-21.166z";
 
@@ -25,15 +22,19 @@ function ShopifyMark({ className }: { className: string }) {
 
 const DEFAULT_PANEL_MIN_HEIGHT = 320;
 const PANEL_MIN_HEIGHT = 240;
-/** Resize-handle keys and how far each moves the panel edge; Home/End jump to the limits. */
 const KEY_STEPS: Partial<Record<string, number>> = {
-  ArrowUp: 24,
-  ArrowDown: -24,
-  PageUp: 96,
-  PageDown: -96,
+  ArrowDown: 24,
+  ArrowUp: -24,
+  PageDown: 96,
+  PageUp: -96,
   Home: -Infinity,
   End: Infinity,
 };
+const BAR_ROW = "relative flex h-9 shrink-0 items-center gap-2 pr-1.5 pointer-coarse:h-12 pointer-coarse:pr-1 max-sm:gap-1.5 max-sm:pr-1";
+const BAR_ROOM = 56;
+// Under bb's floating sidebar toggle (z-44) and bb's menus and dialogs (z-50).
+const BOARD_LAYER = "z-[43]";
+const BOARD_MARK = { [TOP_BOARD_ATTR]: "" };
 
 function maxPanelHeight(): number {
   return Math.max(PANEL_MIN_HEIGHT, Math.round(window.innerHeight * 0.9));
@@ -43,70 +44,101 @@ function clampPanelHeight(value: number): number {
   return Math.min(Math.max(value, PANEL_MIN_HEIGHT), maxPanelHeight());
 }
 
-/**
- * Right edge of bb's left sidebar, in px (0 when it is collapsed or hidden, e.g. on phones). The board is a
- * fixed bottom panel; starting it here instead of at the window's left edge keeps the sidebar's footer
- * (settings, etc.) reachable. bb's in-flow `[data-sidebar="gap"]` spacer always tracks the sidebar's width,
- * through collapse, rail mode, resizing and their animations.
- */
-function useSidebarInset(): number {
-  const [inset, setInset] = useState(0);
+interface BbChrome {
+  left: number;
+  top: number;
+  lead: number;
+}
+
+const CHROME_SELECTORS = {
+  gap: '[data-sidebar="gap"]',
+  titleBar: '[data-testid="app-window-title-bar"]',
+  toggle: '[data-testid="app-sidebar-trigger-overlay"], [data-testid="app-desktop-sidebar-trigger"]',
+} as const;
+
+function useBbChrome(): BbChrome {
+  const [chrome, setChrome] = useState<BbChrome>({ left: 0, top: 0, lead: 0 });
   useEffect(() => {
-    let gap: Element | null = null;
-    const observer = new ResizeObserver(() => measure());
+    const found: Record<keyof typeof CHROME_SELECTORS, Element | null> = { gap: null, titleBar: null, toggle: null };
+    const keys = Object.keys(CHROME_SELECTORS) as (keyof typeof CHROME_SELECTORS)[];
     const measure = () => {
-      if (!gap?.isConnected) {
-        if (gap) observer.unobserve(gap);
-        gap = document.querySelector('[data-sidebar="gap"]');
-        if (gap) observer.observe(gap);
-      }
-      setInset(gap ? Math.max(0, Math.round(gap.getBoundingClientRect().right)) : 0);
+      const gap = found.gap?.getBoundingClientRect();
+      const titleBar = found.titleBar?.getBoundingClientRect();
+      const toggle = found.toggle?.getBoundingClientRect();
+      const left = gap ? Math.max(0, Math.round(gap.right)) : 0;
+      const top = titleBar ? Math.max(0, Math.round(titleBar.bottom)) : 0;
+      const lead = toggle && toggle.width > 0 && toggle.bottom > top ? Math.max(0, Math.round(toggle.right) - left) : 0;
+      setChrome((prev) => (prev.left === left && prev.top === top && prev.lead === lead ? prev : { left, top, lead }));
     };
-    // The sidebar can mount after this overlay or be replaced; re-find it when ours has left the page.
+    const observer = new ResizeObserver(measure);
+    const refind = (): boolean => {
+      let changed = false;
+      for (const key of keys) {
+        const current = found[key];
+        if (current?.isConnected) continue;
+        const next = document.querySelector(CHROME_SELECTORS[key]);
+        if (next === current) continue;
+        if (current) observer.unobserve(current);
+        if (next) observer.observe(next);
+        found[key] = next;
+        changed = true;
+      }
+      return changed;
+    };
+    // At most once a frame: bb's page mutates on every streamed token.
+    let frame = 0;
     const mutations = new MutationObserver(() => {
-      if (!gap?.isConnected) measure();
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        if (refind()) measure();
+      });
     });
     mutations.observe(document.body, { childList: true, subtree: true });
     window.addEventListener("resize", measure);
+    refind();
     measure();
     return () => {
+      cancelAnimationFrame(frame);
       observer.disconnect();
       mutations.disconnect();
       window.removeEventListener("resize", measure);
     };
   }, []);
-  return inset;
+  return chrome;
 }
 
-/**
- * The Working column's meter with blocked threads ahead of it, in the title bar and the pill; nothing while it'd be empty.
- * Waiting messages stay in the Working column's header only.
- */
-function BoardStatus({ tasks, wipLimit }: { tasks: readonly BoardTask[]; wipLimit: BoardState["wipLimit"] | undefined }) {
-  const blocked = tasks.filter((task) => task.status === "blocked").length;
+function BoardStatus({ tasks }: { tasks: readonly BoardTask[] }) {
   const working = tasks.filter((task) => task.status === "wip").length;
-  if (blocked + working === 0) return null;
+  const blocked = tasks.filter((task) => task.status === "blocked").length;
+  if (working + blocked === 0) return null;
+  const label = `${working} working, ${blocked} blocked`;
   return (
-    <span className={`inline-flex shrink-0 items-center ${TYPE.badge} leading-none ${ACCENT_TEXT.amber}`}>
-      <WorkingMeter limit={wipLimit?.limit ?? null} working={working} waiting={0} blocked={blocked} />
+    <span title={label} className="inline-flex shrink-0">
+      <span aria-hidden className="inline-flex items-center gap-1">
+        <CountBadge count={working} tone={STATUS_META.wip.badge} />
+        <CountBadge count={blocked} tone={STATUS_META.blocked.badge} />
+      </span>
+      <span className="sr-only">{label}</span>
     </span>
   );
 }
 
-export function BottomBoardOverlay() {
+export function TopBoardOverlay() {
   const [open, setOpen] = useState(true);
   const [panelHeight, setPanelHeight] = useState(() =>
     clampPanelHeight(Math.max(DEFAULT_PANEL_MIN_HEIGHT, Math.round(window.innerHeight * 0.48))),
   );
+  const [viewportHeight, setViewportHeight] = useState(() => window.innerHeight);
+  const [root, setRoot] = useState<HTMLElement | null>(null);
   const resizeCleanupRef = useRef<() => void>(() => {});
-  const sidebarInset = useSidebarInset();
+  const chrome = useBbChrome();
   const api = useBoard();
   const reviews = useReviews();
   const work = useWork();
   const remote = useRemote();
   const radar = useRadar();
-  const { board } = api;
-  const tasks = board?.tasks ?? [];
+  const tasks = api.board?.tasks ?? [];
 
   const startResize = (event: PointerEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -121,7 +153,7 @@ export function BottomBoardOverlay() {
     document.body.style.userSelect = "none";
 
     const handlePointerMove = (moveEvent: globalThis.PointerEvent) => {
-      setPanelHeight(clampPanelHeight(startHeight + startY - moveEvent.clientY));
+      setPanelHeight(clampPanelHeight(startHeight + moveEvent.clientY - startY));
     };
     const stopResize = () => {
       window.removeEventListener("pointermove", handlePointerMove);
@@ -148,83 +180,79 @@ export function BottomBoardOverlay() {
   useEffect(() => () => resizeCleanupRef.current(), []);
 
   useEffect(() => {
-    const handleResize = () => setPanelHeight((height) => clampPanelHeight(height));
+    const handleResize = () => {
+      setViewportHeight(window.innerHeight);
+      setPanelHeight((height) => clampPanelHeight(height));
+    };
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
   }, []);
 
-  // Pads bb's page (see app.tsx) so the panel, or the phone's hidden-board bar, never covers its bottom.
-  useEffect(() => {
-    const root = document.documentElement;
-    if (!open) {
-      root.classList.add(BOTTOM_BOARD_COLLAPSED_CLASS);
-      return () => root.classList.remove(BOTTOM_BOARD_COLLAPSED_CLASS);
-    }
-    root.classList.add(BOTTOM_BOARD_OPEN_CLASS);
-    root.style.setProperty(BOTTOM_BOARD_HEIGHT_VAR, `${panelHeight}px`);
+  useLayoutEffect(() => {
+    if (!root) return;
+    const html = document.documentElement;
+    const pad = () => html.style.setProperty(TOP_BOARD_INSET_VAR, `${chrome.top + root.offsetHeight}px`);
+    const observer = new ResizeObserver(pad);
+    observer.observe(root);
+    pad();
+    html.classList.add(TOP_BOARD_CLASS);
     return () => {
-      root.classList.remove(BOTTOM_BOARD_OPEN_CLASS);
-      root.style.removeProperty(BOTTOM_BOARD_HEIGHT_VAR);
+      observer.disconnect();
+      html.classList.remove(TOP_BOARD_CLASS);
+      html.style.removeProperty(TOP_BOARD_INSET_VAR);
     };
-  }, [open, panelHeight]);
+  }, [root, chrome.top]);
 
-  if (!open) {
-    // A floating pill; on phones a full-width bottom bar instead, in a strip app.tsx reserves, so it never
-    // sits on bb's composer controls.
-    return (
-      <button
-        type="button"
-        className={`group fixed bottom-4 right-4 z-50 inline-flex h-9 cursor-pointer select-none items-center gap-2 rounded-full border border-border bg-card/90 pl-2 pr-3 ${TYPE.title} font-medium text-foreground ${ELEVATION.float} backdrop-blur-md transition-[transform,background-color] duration-150 ease-out hover:-translate-y-0.5 hover:bg-card active:translate-y-0 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 max-sm:inset-x-0 max-sm:bottom-0 max-sm:h-[calc(2.75rem+env(safe-area-inset-bottom))] max-sm:rounded-none max-sm:border-x-0 max-sm:border-b-0 max-sm:pb-[env(safe-area-inset-bottom)] max-sm:pl-4 max-sm:pr-4 max-sm:shadow-[0_-12px_32px_-12px_rgb(0_0_0/0.35)] max-sm:hover:translate-y-0 max-sm:active:scale-100`}
-        onClick={() => setOpen(true)}
-        aria-label={`Open ${PLUGIN_NAME} board`}
-      >
-        <ShopifyMark className="size-5" />
-        <BoardStatus tasks={tasks} wipLimit={board?.wipLimit} />
-        <Icon name="ChevronUp" className="size-3.5 text-muted-foreground transition-transform duration-150 group-hover:-translate-y-px group-hover:text-foreground max-sm:ml-auto max-sm:size-5" aria-hidden />
-      </button>
-    );
-  }
+  const frame = { top: `${chrome.top}px`, left: `${chrome.left}px`, "--board-lead": `${chrome.lead}px` } as CSSProperties;
+  const dropdown: Dropdown = open
+    ? { side: "above", maxHeight: panelHeight - BAR_ROOM }
+    : { side: "below", maxHeight: viewportHeight - chrome.top - BAR_ROOM };
 
   return (
     <div
-      className={`fixed right-0 bottom-0 z-50 flex flex-col border-t border-border bg-background/90 pb-[env(safe-area-inset-bottom)] ${ELEVATION.floatUp} backdrop-blur-md`}
-      style={{ height: `${panelHeight}px`, left: `${sidebarInset}px` }}
+      ref={setRoot}
+      {...BOARD_MARK}
+      className={`fixed right-0 ${BOARD_LAYER} flex flex-col border-b border-border bg-background/90 pt-[env(safe-area-inset-top)] ${ELEVATION.float} backdrop-blur-md`}
+      style={open ? { ...frame, height: `${panelHeight}px` } : frame}
     >
-      <div
-        role="separator"
-        aria-orientation="horizontal"
-        aria-label={`Resize ${PLUGIN_NAME} board panel`}
-        aria-valuemin={PANEL_MIN_HEIGHT}
-        aria-valuemax={maxPanelHeight()}
-        aria-valuenow={panelHeight}
-        tabIndex={0}
-        className="group absolute inset-x-0 -top-2 z-10 flex h-4 cursor-row-resize touch-none items-center justify-center focus:outline-none pointer-coarse:-top-3 pointer-coarse:h-6"
-        onPointerDown={startResize}
-        onKeyDown={handleResizeKeyDown}
-      >
-        <span aria-hidden className="pointer-events-none absolute inset-x-0 top-1/2 h-px -translate-y-1/2 transition-colors duration-150 group-hover:bg-muted-foreground/50 group-focus-visible:bg-muted-foreground/50" />
-        <span aria-hidden className="relative h-1 w-9 rounded-full bg-muted-foreground/50 transition-all duration-150 ease-out group-hover:w-14 group-hover:bg-muted-foreground group-active:w-16 group-focus-visible:w-14 group-focus-visible:bg-muted-foreground group-focus-visible:ring-2 group-focus-visible:ring-ring/60 group-focus-visible:ring-offset-1 group-focus-visible:ring-offset-background" />
-      </div>
+      {open ? (
+        <div className="min-h-0 flex-1">
+          <BoardView api={api} reviews={reviews} work={work} remote={remote} radar={radar} />
+        </div>
+      ) : null}
 
-      {/* `relative`: on phones the search dropdown spans this bar instead of hanging off the search box. */}
-      <div className={`relative flex h-9 shrink-0 items-center gap-2 border-b border-border ${COLUMN_INSET} pr-1.5 pointer-coarse:h-12 pointer-coarse:pr-1 max-sm:gap-1.5 max-sm:pr-1`}>
+      {/* Stays mounted while hidden, so a search in progress survives. */}
+      <div className={`${BAR_ROW} ${open ? `border-t border-border ${COLUMN_INSET}` : LEAD_INSET}`}>
         <ShopifyMark className="size-4" />
-        <BoardStatus tasks={tasks} wipLimit={board?.wipLimit} />
+        <BoardStatus tasks={tasks} />
         <div className="ml-1 min-w-0 max-lg:ml-0 max-lg:flex-1">
-          {/* Header (40px, 48px on touch) plus a little breathing room below the list. */}
-          <ThreadSearch maxListHeight={panelHeight - 56} />
+          <ThreadSearch dropdown={dropdown} />
         </div>
         <div className="ml-auto flex shrink-0 items-center gap-1.5">
-          <SystemMonitor maxPanelHeight={panelHeight - 56} />
-          <IconButton icon="ChevronDown" label="Hide board" onClick={() => setOpen(false)} />
+          <SystemMonitor dropdown={dropdown} />
+          <IconButton icon={open ? "ChevronUp" : "ChevronDown"} label={open ? "Hide board" : "Show board"} onClick={() => setOpen(!open)} />
         </div>
-        {/* As wide as the columns' scrollbar gutter (nothing with overlay scrollbars), so the bar ends where the cards do. */}
+        {/* Matches the columns' scrollbar gutter, so the bar ends where the cards do. */}
         <span aria-hidden className="-ml-2 box-content h-px shrink-0 overflow-y-hidden [scrollbar-gutter:stable] [scrollbar-width:thin] max-sm:-ml-1.5" />
       </div>
 
-      <div className="min-h-0 flex-1">
-        <BoardView api={api} reviews={reviews} work={work} remote={remote} radar={radar} />
-      </div>
+      {open ? (
+        <div
+          role="separator"
+          aria-orientation="horizontal"
+          aria-label={`Resize ${PLUGIN_NAME} board panel`}
+          aria-valuemin={PANEL_MIN_HEIGHT}
+          aria-valuemax={maxPanelHeight()}
+          aria-valuenow={panelHeight}
+          tabIndex={0}
+          className="group absolute inset-x-0 -bottom-2 z-10 flex h-4 cursor-row-resize touch-none items-center justify-center [app-region:no-drag] [-webkit-app-region:no-drag] focus:outline-none pointer-coarse:-bottom-3 pointer-coarse:h-6"
+          onPointerDown={startResize}
+          onKeyDown={handleResizeKeyDown}
+        >
+          <span aria-hidden className="pointer-events-none absolute inset-x-0 top-1/2 h-px -translate-y-1/2 transition-colors duration-150 group-hover:bg-muted-foreground/50 group-focus-visible:bg-muted-foreground/50" />
+          <span aria-hidden className="relative h-1 w-9 rounded-full bg-muted-foreground/50 transition-all duration-150 ease-out group-hover:w-14 group-hover:bg-muted-foreground group-active:w-16 group-focus-visible:w-14 group-focus-visible:bg-muted-foreground group-focus-visible:ring-2 group-focus-visible:ring-ring/60 group-focus-visible:ring-offset-1 group-focus-visible:ring-offset-background" />
+        </div>
+      ) : null}
     </div>
   );
 }

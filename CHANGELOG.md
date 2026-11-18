@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.28.0
+
+- The board is a drawer along the top of bb instead of a panel on the
+  bottom. It starts beside bb's sidebar and, in the macOS app, under the
+  title-bar row, and bb's page starts at its lower edge. The columns come
+  first and the title bar runs along the board's bottom, with the resize grip
+  on that lower edge (arrow keys and Page Up/Down now move it the way they
+  point); the title bar's dropdowns open upward over the columns. Hiding the
+  board now hides only the columns: the same title bar, search and machine
+  resources included, moves to the top of the window, where its dropdowns
+  open downward, instead of a bottom-right pill (a full-width bottom bar on
+  phones). The machine resources keep sampling while it is hidden. On phones
+  the column headers, or the hidden board's title bar, start after bb's
+  floating sidebar toggle, and the board steps aside while bb's sidebar
+  drawer is open. The board now layers under bb's menus, dialogs and toasts.
+- The title bar counts threads with two count badges, the board's usual
+  numbered circles: working threads in amber, blocked ones in red, each gone
+  at zero. They replace the Working limit's meter with red dots for blocked
+  threads, which stays in the Working column's header.
+- Cards no longer have a state-colored rail on their left edge. Their content
+  starts 2px further left (6px in from the border instead of 8), and the
+  column headers, the title bar and the group headings move with it.
+
 ## 0.27.0
 
 - Queue's Assigned section no longer shows a count badge beside its header.

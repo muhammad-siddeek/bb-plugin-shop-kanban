@@ -10,7 +10,7 @@ import { ReviewGroup } from "./reviews";
 import { WipLimitControl } from "./wip-limit";
 import { WorkGroup, useWorkItems } from "./work";
 import { CountBadge, GroupHeader, Spinner, keyForBox } from "./primitives";
-import { ACCENT_HOVER_TEXT, ALERT_BANNER, COLUMN_INSET, DASHED_SLOT, ELEVATION, EMPTY_NOTE, STATUS_META, TYPE, UNREAD_BADGE } from "./styles";
+import { ACCENT_HOVER_TEXT, ALERT_BANNER, COLUMN_HEADER_INSET, DASHED_SLOT, ELEVATION, EMPTY_NOTE, LEAD_INSET, STATUS_META, TYPE, UNREAD_BADGE } from "./styles";
 import { RadarPanel } from "./radar";
 
 const SCROLL_TO_LATEST_SELECTOR = 'button[aria-label="Scroll to latest event"]';
@@ -322,7 +322,7 @@ function BoardColumnView({ column, title, tasks, count, renderCard, dragging, dr
       <span className={`pointer-events-none absolute inset-x-0 top-0 h-[2px] ${meta.accent}`} aria-hidden />
       {/* Text starts on the cards' content edge (column padding + card border + padding), and the stable gutter
           mirrors the scroller's so the header's end lines up with the cards' right edge. */}
-      <header className={`flex h-8 shrink-0 items-center gap-1.5 overflow-hidden border-b border-border/60 ${COLUMN_INSET} pr-1.5 pt-0.5 [scrollbar-gutter:stable] [scrollbar-width:thin]`}>
+      <header className={`flex h-8 shrink-0 items-center gap-1.5 overflow-hidden border-b border-border/60 ${COLUMN_HEADER_INSET} pr-1.5 pt-0.5 [scrollbar-gutter:stable] [scrollbar-width:thin]`}>
         {tabs ?? (
           <>
             <h2 className={`truncate ${TYPE.heading} leading-none ${meta.title}`}>{title.toUpperCase()}</h2>
@@ -552,7 +552,7 @@ export function BoardView({ api, reviews, work, remote, radar }: { api: BoardApi
   return (
     <div className="flex h-full min-h-0 flex-col">
       {error ? (
-        <div role="alert" className={`flex shrink-0 items-center gap-2 ${COLUMN_INSET} pr-3 py-1.5 ${ALERT_BANNER} ${TYPE.body} leading-4`}>
+        <div role="alert" className={`flex shrink-0 items-center gap-2 ${LEAD_INSET} pr-3 py-1.5 ${ALERT_BANNER} ${TYPE.body} leading-4`}>
           <Icon name="AlertCircle" className="size-4 shrink-0" aria-hidden />
           <span className="min-w-0 flex-1 truncate">{error}</span>
         </div>

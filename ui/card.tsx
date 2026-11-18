@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef } from "react";
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
 import { THREAD_DRAG_TYPE, taskActivityTime, taskCardTitle, type BoardStatus, type BoardTask } from "./model";
 import { Age, IconMark, Mark, RowActions, Spinner } from "./primitives";
-import { ACCENT_TEXT, CHIP, ELEVATION, ICON_ACTION, ONE_LINE_AGE, ONE_LINE_PAD, STATUS_META, TYPE, UNREAD_BADGE, cardFrame, cardTitle } from "./styles";
+import { ACCENT_TEXT, CARD_PAD_X, CHIP, ELEVATION, ICON_ACTION, ONE_LINE_AGE, ONE_LINE_PAD, STATUS_META, TYPE, UNREAD_BADGE, cardFrame, cardTitle } from "./styles";
 import { ContextPie, SessionCost } from "./session";
 
 /** A full card's cost and age: 18px lines at the ends of its two rows. */
@@ -232,8 +232,8 @@ export function TaskCard({ task, now, unread, selected, dragging, starting, onAr
   // Idle cards outside Parked can also be dragged there; a startable Queue card can also be dropped on Working to start it.
   const canDrag = parkToggle && !parked;
 
-  // Selection wins over the column/unread border; the state rail and the parked dashes stay either way.
-  const frameClass = `${cardFrame(meta.rail, selected ? "none" : unread ? "emerald" : "rest")}${parked ? " border-dashed" : ""}`;
+  // Selection wins over the column/unread border; the parked dashes stay either way.
+  const frameClass = `${cardFrame(selected ? "none" : unread ? "emerald" : "rest")}${parked ? " border-dashed" : ""}`;
   // Selected: a thick outline in the column accent; 3px stays inside the column list's p-1.5 scroll padding.
   const surfaceClass = selected ? `${ELEVATION.raised} outline-3 outline-offset-0 ${meta.outline}` : "";
 
@@ -259,7 +259,7 @@ export function TaskCard({ task, now, unread, selected, dragging, starting, onAr
         if (!canOpen || (event.target as HTMLElement).closest("button, a, [role='button']")) return;
         open();
       }}
-      className={`group relative ${frameClass} ${compact ? ONE_LINE_PAD : "px-2 py-1.5"} has-[[data-card-open]:focus-visible]:ring-2 has-[[data-card-open]:focus-visible]:ring-ring/60 ${
+      className={`group relative ${frameClass} ${compact ? ONE_LINE_PAD : `${CARD_PAD_X} py-1.5`} has-[[data-card-open]:focus-visible]:ring-2 has-[[data-card-open]:focus-visible]:ring-ring/60 ${
         canOpen ? "cursor-pointer" : ""
       } ${dragging ? "opacity-50" : ""} ${surfaceClass}`}
     >

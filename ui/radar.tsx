@@ -34,7 +34,7 @@ function OpportunityRow({ item, now, onDraft, onDismiss, onThread }: {
   };
 
   return (
-    <article className={`group relative ${cardFrame(read ? "muted" : "sky")} ${TWO_LINE_PAD}`}>
+    <article className={`group relative ${cardFrame()} ${TWO_LINE_PAD}`}>
       <div className="flex items-start gap-2">
         <IconMark label={read ? "Read opportunity" : "Unread opportunity"} icon="Zap" filled disc={read ? undefined : UNREAD_BADGE.sky} tone="text-muted-foreground/50" />
         <div className="min-w-0 flex-1">
@@ -77,7 +77,7 @@ function TechniqueRow({ item, now, onOpen }: { item: RadarItem; now: number; onO
 
   // One line, like Done and Out rows: the bulb, the title, its age, and the link out.
   return (
-    <article className={`group relative ${cardFrame("sky")} ${ONE_LINE_PAD}`}>
+    <article className={`group relative ${cardFrame()} ${ONE_LINE_PAD}`}>
       <div className="flex h-5 items-center gap-2">
         <Mark label="Unread technique" disc={UNREAD_BADGE.sky}>
           <svg viewBox="0 0 24 24" className="size-2.5" aria-hidden="true">

@@ -76,7 +76,7 @@ function ReviewRow({ review, now, unread, actions }: { review: ReviewCard; now: 
 
   return (
     <article
-      className={`group relative ${unread ? cardFrame("sky", "sky") : cardFrame("muted")} ${TWO_LINE_PAD}`}
+      className={`group relative ${cardFrame(unread ? "sky" : "rest")} ${TWO_LINE_PAD}`}
     >
       <div className="flex items-start gap-2">
         <IconMark label={unread ? "Pull request, new" : "Pull request"} icon="GitPullRequest" disc={unread ? UNREAD_BADGE.sky : undefined} tone="text-muted-foreground/50" />

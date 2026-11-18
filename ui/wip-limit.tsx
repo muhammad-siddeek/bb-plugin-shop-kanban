@@ -15,35 +15,28 @@ function OverLimitMark() {
 }
 
 /**
- * Working threads against the limit, the same in the Working column's header, the title bar and the hidden board's
- * pill: blocked threads as red dots first (when given), then one amber dot per working thread in a slot, a ring per
- * free slot, and a warning mark per thread over the limit, all one row of marks; then `working/limit` and `+N waiting`.
- * With no limit every working thread is a dot. Past MAX_MARKS of either kind the marks give way to counts.
+ * Working threads against the limit, in the Working column's header: one amber dot per working thread in a slot, a
+ * ring per free slot, and a warning mark per thread over the limit, all one row of marks; then `working/limit` and
+ * `+N waiting`. With no limit every working thread is a dot. Past MAX_MARKS the marks give way to counts.
  */
-export function WorkingMeter({ limit, working, waiting, blocked = 0 }: {
+export function WorkingMeter({ limit, working, waiting }: {
   limit: number | null;
   /** Working threads holding a slot: not Blocked. */
   working: number;
   waiting: number;
-  blocked?: number;
 }) {
   const slots = Math.max(limit ?? 0, working);
   const marks = slots <= MAX_MARKS;
   const over = limit !== null && working > limit;
   const count = limit === null ? (marks ? null : `${working} working`) : marks ? `${working}/${limit}` : `${working}/${limit} working`;
   const label = [
-    blocked ? `${blocked} blocked` : null,
     limit === null ? `${working} working, no limit` : `${working} of ${limit} working${over ? `, ${working - limit} over the limit` : ""}`,
     waiting ? `${waiting} waiting` : null,
   ].filter(Boolean).join(", ");
   return (
     <span className="inline-flex shrink-0 items-center gap-1.5">
-      {blocked > 0 || (marks ? slots > 0 : over) ? (
+      {(marks ? slots > 0 : over) ? (
         <span className="flex items-center gap-[3px]" aria-hidden>
-          {Array.from({ length: Math.min(blocked, MAX_MARKS) }, (_, index) => (
-            <span key={`blocked-${index}`} className="size-2 rounded-full bg-rose-500" />
-          ))}
-          {blocked > MAX_MARKS ? <span className={`${TYPE.badge} ${ACCENT_TEXT.rose}`}>+{blocked - MAX_MARKS}</span> : null}
           {marks ? (
             Array.from({ length: slots }, (_, slot) =>
               slot >= working ? (
