@@ -1,33 +1,29 @@
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
-import { ACCENT_BADGE, ACCENT_TEXT, CARD_EDGE, CARD_SURFACE, formatShortAge, type ReviewCard } from "./model";
-import type { ReviewVerdict, ReviewsApi } from "./hooks";
+import { prRef, type ReviewCard, type ReviewState } from "./model";
+import { usePending, type ReviewVerdict, type ReviewsApi } from "./hooks";
+import { Age, CappedList, ForgeLink, GroupHeader, IconMark, listProblems, RowActions, Spinner, useBbLinks, useRowAction } from "./primitives";
 import {
+  ACCENT_BADGE,
+  ACCENT_TEXT,
   CHIP,
   EMPTY_NOTE,
-  ForgeLink,
-  GroupHeader,
-  listProblems,
-  MARK_FRAME,
+  ICON_ACTION,
   ROW_ACTION,
-  ROW_ICON_ACTION,
-  RowActions,
-  ShowMore,
-  Spinner,
   TWO_LINE_META,
   TWO_LINE_META_ROW,
   TWO_LINE_PAD,
   TYPE,
-  useBbLinks,
-  useRowError,
-} from "./primitives";
+  UNREAD_BADGE,
+  cardFrame,
+  cardTitle,
+} from "./styles";
 
 // Reviews, at the bottom of the Queue tab above Assigned: pull requests asking for the user's review by name only.
 // The title opens a new-thread draft asking for what changed, why, and how risky it is; the second line opens the pull
 // request (marking it read), approves after a confirming second click, or requests changes with a reason.
 
-const SHOWN_MAX = 8;
 const CONFIRM_MS = 3_000;
 const RISK_CHIP = {
   low: { label: "Low", tone: ACCENT_BADGE.emerald },
@@ -44,7 +40,7 @@ function RiskChip({ review }: { review: ReviewCard }) {
       </span>
     );
   }
-  if (review.summarizing) return <span aria-label="Reading the pull request" className="inline-flex h-4 w-7 shrink-0 animate-pulse rounded-[4px] bg-muted" />;
+  if (review.summarizing) return <span aria-label="Reading the pull request" className="inline-flex h-4 w-7 shrink-0 animate-pulse rounded-sm bg-muted" />;
   return null;
 }
 
@@ -59,8 +55,7 @@ function ReviewRow({ review, now, unread, actions }: { review: ReviewCard; now: 
   const [confirming, setConfirming] = useState(false);
   const [declining, setDeclining] = useState(false);
   const [reason, setReason] = useState("");
-  const [pending, setPending] = useState<ReviewVerdict | null>(null);
-  const { attempt, view: error } = useRowError();
+  const { attempt, pending, view: error } = useRowAction<ReviewVerdict>();
 
   useEffect(() => {
     if (!confirming) return;
@@ -68,44 +63,37 @@ function ReviewRow({ review, now, unread, actions }: { review: ReviewCard; now: 
     return () => window.clearTimeout(timer);
   }, [confirming]);
 
-  const submit = async (verdict: ReviewVerdict, body: string) => {
+  const submit = (verdict: ReviewVerdict, body: string) => {
     if (pending) return;
     setConfirming(false);
-    setPending(verdict);
-    await attempt(() => actions.onSubmit(review, verdict, body));
-    setPending(null);
+    void attempt(() => actions.onSubmit(review, verdict, body), verdict);
   };
 
   const sendReason = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (reason.trim()) void submit("request_changes", reason.trim());
+    if (reason.trim()) submit("request_changes", reason.trim());
   };
 
-  const updated = Date.parse(review.updatedAt);
   return (
     <article
-      className={`group relative ${CARD_SURFACE} ${TWO_LINE_PAD} ${unread ? "border-sky-500/45 hover:border-sky-500/70" : CARD_EDGE}`}
+      className={`group relative ${unread ? cardFrame("sky", "sky") : cardFrame("muted")} ${TWO_LINE_PAD}`}
     >
       <div className="flex items-start gap-2">
-        <span className={MARK_FRAME} aria-label={unread ? "Pull request, new" : "Pull request"}>
-          <Icon name="GitPullRequest" className={`size-3.5 ${unread ? ACCENT_TEXT.sky : "text-muted-foreground/50"}`} aria-hidden />
-        </span>
+        <IconMark label={unread ? "Pull request, new" : "Pull request"} icon="GitPullRequest" disc={unread ? UNREAD_BADGE.sky : undefined} tone="text-muted-foreground/50" />
         <div className="min-w-0 flex-1">
           <button
             type="button"
             onClick={() => void attempt(() => actions.onDraft(review))}
-            className={`flex h-[18px] w-full min-w-0 items-center gap-1.5 rounded-sm text-left ${TYPE.title} leading-[18px] text-foreground decoration-muted-foreground/40 underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 ${
-              unread ? "font-bold" : "font-semibold"
-            }`}
+            className={`flex h-[18px] w-full min-w-0 items-center gap-1.5 rounded-sm text-left ${cardTitle(unread)} leading-[18px] text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60`}
           >
             <RiskChip review={review} />
             <span className="min-w-0 truncate">{review.title}</span>
           </button>
           <div className={TWO_LINE_META_ROW}>
             <span className={TWO_LINE_META}>
-              {Number.isFinite(updated) ? `${formatShortAge(updated, now)} · ` : ""}
+              <Age at={review.updatedAt} now={now} after=" · " />
               {review.rereview ? <span className={`font-medium ${ACCENT_TEXT.sky}`}>re-review · </span> : null}
-              {review.author} · {review.repo.split("/").pop()}#{review.number}
+              {review.author} · {prRef(review)}
               {review.draft ? " · draft" : ""}
             </span>
             <ForgeLink forge={review.forge} onClick={() => void attempt(() => actions.onOpen(review))} />
@@ -113,11 +101,11 @@ function ReviewRow({ review, now, unread, actions }: { review: ReviewCard; now: 
               type="button"
               aria-label={confirming ? "Confirm approval" : "Approve"}
               disabled={pending !== null}
-              onClick={() => (confirming ? void submit("approve", "") : setConfirming(true))}
+              onClick={() => (confirming ? submit("approve", "") : setConfirming(true))}
               className={
                 confirming
                   ? `${ROW_ACTION} bg-emerald-500 px-1.5 ${TYPE.meta} font-medium text-white hover:bg-emerald-600`
-                  : `${ROW_ICON_ACTION} hover:bg-emerald-500/10 hover:text-[light-dark(var(--color-emerald-700),var(--color-emerald-500))]`
+                  : ICON_ACTION.emerald
               }
             >
               {pending === "approve" ? <Spinner /> : confirming ? "Approve?" : <Icon name="Check" className="size-3.5" aria-hidden />}
@@ -128,7 +116,7 @@ function ReviewRow({ review, now, unread, actions }: { review: ReviewCard; now: 
               aria-expanded={declining}
               disabled={pending !== null}
               onClick={() => setDeclining((open) => !open)}
-              className={`${ROW_ICON_ACTION} hover:bg-rose-500/10 hover:text-[light-dark(var(--color-rose-700),var(--color-rose-500))] ${declining ? `bg-rose-500/10 ${ACCENT_TEXT.rose}` : ""}`}
+              className={`${ICON_ACTION.rose} ${declining ? `bg-rose-500/15 ${ACCENT_TEXT.rose}` : ""}`}
             >
               <Icon name="X" className="size-3.5" aria-hidden />
             </button>
@@ -147,12 +135,12 @@ function ReviewRow({ review, now, unread, actions }: { review: ReviewCard; now: 
                 placeholder="What needs to change?"
                 aria-label="What needs to change"
                 disabled={pending !== null}
-                className={`h-6 min-w-0 flex-1 rounded-md border border-border/70 bg-transparent px-1.5 ${TYPE.body} text-foreground outline-none placeholder:text-muted-foreground/60 focus:border-rose-500/60 disabled:opacity-60 pointer-coarse:h-9 pointer-coarse:text-base`}
+                className={`h-6 min-w-0 flex-1 rounded-md border border-border bg-transparent px-1.5 ${TYPE.body} text-foreground outline-none placeholder:text-muted-foreground/80 focus:border-rose-500/70 disabled:opacity-50 pointer-coarse:h-9 pointer-coarse:text-base`}
               />
               <button
                 type="submit"
                 disabled={pending !== null || !reason.trim()}
-                className={`inline-flex h-6 shrink-0 items-center gap-1 rounded-md bg-rose-500 px-2 ${TYPE.body} font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 pointer-coarse:h-9 pointer-coarse:px-3 pointer-coarse:text-sm`}
+                className={`inline-flex h-6 shrink-0 items-center gap-1 rounded-md bg-rose-500 px-2 ${TYPE.body} font-medium text-white transition-colors hover:bg-rose-600 disabled:cursor-not-allowed disabled:opacity-50 pointer-coarse:h-9 pointer-coarse:px-3 pointer-coarse:text-base`}
               >
                 {pending === "request_changes" ? <Spinner /> : null}
                 Send
@@ -171,27 +159,13 @@ function ReviewRow({ review, now, unread, actions }: { review: ReviewCard; now: 
 export function ReviewGroup({ reviews, now }: { reviews: ReviewsApi; now: number }) {
   const links = useBbLinks();
   const { state } = reviews;
-  const [showAll, setShowAll] = useState(false);
   // Opened ("read"), archived or reviewed ("hidden") here: applied at once, before the server's next list round-trips.
-  const [local, setLocal] = useState<ReadonlyMap<string, "read" | "hidden">>(() => new Map());
-  const mark = (id: string, value: "read" | "hidden" | null) =>
-    setLocal((current) => {
-      if ((current.get(id) ?? null) === value) return current;
-      const next = new Map(current);
-      if (value) next.set(id, value);
-      else next.delete(id);
-      return next;
-    });
-
-  useEffect(() => {
-    // Drop local marks once the server agrees, so a new push can mark the card unread again.
-    if (!state) return;
-    const listed = new Map(state.reviews.map((review) => [review.id, review]));
-    setLocal((current) => {
-      const next = new Map([...current].filter(([id, value]) => (value === "hidden" ? listed.has(id) : listed.get(id)?.unread === true)));
-      return next.size === current.size ? current : next;
-    });
-  }, [state]);
+  // Dropped once the server agrees, so a new push can mark the card unread again.
+  const [local, changeLocal] = usePending<ReviewState, "read" | "hidden">(state, (value, id, served) => {
+    const listed = served.reviews.find((review) => review.id === id);
+    return value === "hidden" ? listed !== undefined : listed?.unread === true;
+  });
+  const mark = (id: string, value?: "read" | "hidden") => changeLocal(id, () => value);
 
   if (!state || !state.scopes.includes("me")) return null;
   const scoped = state.reviews.filter((review) => review.scope === "me" && local.get(review.id) !== "hidden");
@@ -201,7 +175,6 @@ export function ReviewGroup({ reviews, now }: { reviews: ReviewsApi; now: number
 
   const isNew = (review: ReviewCard) => review.unread && !local.has(review.id);
   const unread = scoped.filter(isNew).length;
-  const shown = showAll ? scoped : scoped.slice(0, SHOWN_MAX);
 
   const actions: ReviewActions = {
     onDraft: async (review) => {
@@ -218,7 +191,7 @@ export function ReviewGroup({ reviews, now }: { reviews: ReviewsApi; now: number
       try {
         await reviews.archive(review.id);
       } catch (cause) {
-        mark(review.id, null);
+        mark(review.id);
         throw cause;
       }
     },
@@ -236,15 +209,14 @@ export function ReviewGroup({ reviews, now }: { reviews: ReviewsApi; now: number
         refreshing={state.refreshing}
         problems={problems}
       >
-        {unread > 0 ? <span className={`${TYPE.control} ${ACCENT_TEXT.sky}`}>{unread} new</span> : null}
+        {unread > 0 ? <span className={`inline-flex h-4 shrink-0 items-center rounded-full px-1.5 ${TYPE.badge} leading-none ${UNREAD_BADGE.sky}`}>{unread} new</span> : null}
       </GroupHeader>
       {scoped.length === 0 ? (
         <p className={EMPTY_NOTE}>{loading ? "Reading pull requests…" : "Nothing requested of you."}</p>
       ) : null}
-      {shown.map((review) => (
-        <ReviewRow key={review.id} review={review} now={now} unread={isNew(review)} actions={actions} />
-      ))}
-      <ShowMore total={scoped.length} max={SHOWN_MAX} all={showAll} onToggle={() => setShowAll((all) => !all)} />
+      <CappedList items={scoped}>
+        {(review) => <ReviewRow key={review.id} review={review} now={now} unread={isNew(review)} actions={actions} />}
+      </CappedList>
     </div>
   );
 }

@@ -1,7 +1,8 @@
 import { TaskStatusMark } from "./card";
 import type { RemoteApi } from "./hooks";
-import { ACCENT_TEXT, CARD_EDGE, CARD_SURFACE, formatMoney, type RemoteItem } from "./model";
-import { Age, CHIP, GroupHeader, ONE_LINE_AGE, ONE_LINE_PAD, TYPE, listProblems, useBbLinks } from "./primitives";
+import { formatMoney, type RemoteItem } from "./model";
+import { Age, GroupHeader, listProblems, useBbLinks } from "./primitives";
+import { ACCENT_TEXT, CHIP, ONE_LINE_AGE, ONE_LINE_PAD, STATUS_META, TYPE, cardFrame, cardTitle } from "./styles";
 
 // The Working column's Remote section: River sessions and Torrent tickets the user is part of that are live, one line
 // each, with the board's own working and blocked marks. A row opens the ticket on Torrent or the session's Slack
@@ -12,13 +13,10 @@ const SOURCE_NAME: Record<RemoteItem["source"], string> = { torrent: "Torrent", 
 
 function RemoteRow({ item, now }: { item: RemoteItem; now: number }) {
   const links = useBbLinks();
-  const at = Date.parse(item.updatedAt);
   return (
-    <article className={`group relative ${CARD_SURFACE} ${CARD_EDGE} ${ONE_LINE_PAD}`}>
+    <article className={`group relative ${cardFrame(STATUS_META[item.status].rail)} ${ONE_LINE_PAD}`}>
       <div className="flex h-5 items-center gap-2">
-        <span className="-mt-px flex w-4 shrink-0 justify-center">
-          <TaskStatusMark status={item.status} unread={false} />
-        </span>
+        <TaskStatusMark status={item.status} unread={false} />
         <button
           type="button"
           onClick={() => links.openUrl(item.url)}
@@ -27,7 +25,7 @@ function RemoteRow({ item, now }: { item: RemoteItem; now: number }) {
         >
           <span className={`flex min-w-0 items-center gap-1.5 ${TYPE.body} leading-5`}>
             <span className={`${CHIP} bg-muted text-muted-foreground`}>{item.key}</span>
-            <span className={`min-w-0 truncate ${TYPE.title} font-semibold text-foreground/85 decoration-muted-foreground/40 underline-offset-2 group-hover/open:underline`}>
+            <span className={`min-w-0 truncate ${cardTitle()} text-foreground/85 group-hover/open:underline`}>
               {item.title}
             </span>
           </span>
@@ -35,9 +33,9 @@ function RemoteRow({ item, now }: { item: RemoteItem; now: number }) {
         {item.status === "blocked" ? <span className={`shrink-0 ${TYPE.meta} font-medium ${ACCENT_TEXT.rose}`}>{item.detail}</span> : null}
         {item.cost !== null ? (
           <span className={ONE_LINE_AGE}>{formatMoney(item.cost)}</span>
-        ) : Number.isFinite(at) ? (
-          <Age at={at} now={now} className={ONE_LINE_AGE} />
-        ) : null}
+        ) : (
+          <Age at={item.updatedAt} now={now} className={ONE_LINE_AGE} />
+        )}
       </div>
     </article>
   );

@@ -2,9 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import type { KeyboardEvent, PointerEvent } from "react";
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
 import { PLUGIN_NAME } from "../brand";
-import { ACCENT_TEXT, BOTTOM_BOARD_COLLAPSED_CLASS, BOTTOM_BOARD_HEIGHT_VAR, BOTTOM_BOARD_OPEN_CLASS, type BoardState, type BoardTask } from "./model";
+import { BOTTOM_BOARD_COLLAPSED_CLASS, BOTTOM_BOARD_HEIGHT_VAR, BOTTOM_BOARD_OPEN_CLASS, type BoardState, type BoardTask } from "./model";
 import { useBoard, useRemote, useReviews, useWork, useRadar } from "./hooks";
-import { IconButton, TYPE } from "./primitives";
+import { IconButton } from "./primitives";
+import { ACCENT_TEXT, COLUMN_INSET, ELEVATION, TYPE } from "./styles";
 import { BoardView } from "./column";
 import { ThreadSearch } from "./search";
 import { SystemMonitor } from "./system";
@@ -173,7 +174,7 @@ export function BottomBoardOverlay() {
     return (
       <button
         type="button"
-        className={`group fixed bottom-4 right-4 z-50 inline-flex h-9 cursor-pointer select-none items-center gap-2 rounded-full border border-border bg-card/90 pl-2 pr-2.5 ${TYPE.title} font-medium text-foreground shadow-[0_8px_24px_-8px_rgba(0,0,0,0.35),0_2px_6px_-2px_rgba(0,0,0,0.15)] ring-1 ring-black/5 backdrop-blur-md transition-[transform,background-color,box-shadow] duration-150 ease-out hover:-translate-y-0.5 hover:bg-card hover:shadow-[0_12px_28px_-8px_rgba(0,0,0,0.4),0_2px_6px_-2px_rgba(0,0,0,0.15)] active:translate-y-0 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring max-sm:inset-x-0 max-sm:bottom-0 max-sm:h-[calc(2.75rem+env(safe-area-inset-bottom))] max-sm:rounded-none max-sm:border-x-0 max-sm:border-b-0 max-sm:pb-[env(safe-area-inset-bottom)] max-sm:pl-3.5 max-sm:pr-4 max-sm:shadow-[0_-8px_24px_-12px_rgba(0,0,0,0.35)] max-sm:hover:translate-y-0 max-sm:active:scale-100`}
+        className={`group fixed bottom-4 right-4 z-50 inline-flex h-9 cursor-pointer select-none items-center gap-2 rounded-full border border-border bg-card/90 pl-2 pr-3 ${TYPE.title} font-medium text-foreground ${ELEVATION.float} backdrop-blur-md transition-[transform,background-color] duration-150 ease-out hover:-translate-y-0.5 hover:bg-card active:translate-y-0 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 max-sm:inset-x-0 max-sm:bottom-0 max-sm:h-[calc(2.75rem+env(safe-area-inset-bottom))] max-sm:rounded-none max-sm:border-x-0 max-sm:border-b-0 max-sm:pb-[env(safe-area-inset-bottom)] max-sm:pl-4 max-sm:pr-4 max-sm:shadow-[0_-12px_32px_-12px_rgb(0_0_0/0.35)] max-sm:hover:translate-y-0 max-sm:active:scale-100`}
         onClick={() => setOpen(true)}
         aria-label={`Open ${PLUGIN_NAME} board`}
       >
@@ -186,7 +187,7 @@ export function BottomBoardOverlay() {
 
   return (
     <div
-      className="fixed right-0 bottom-0 z-50 flex flex-col border-t border-border bg-background/95 pb-[env(safe-area-inset-bottom)] shadow-[0_-12px_32px_-16px_rgba(0,0,0,0.35),0_-1px_0_0_rgba(0,0,0,0.04)] backdrop-blur-md"
+      className={`fixed right-0 bottom-0 z-50 flex flex-col border-t border-border bg-background/90 pb-[env(safe-area-inset-bottom)] ${ELEVATION.floatUp} backdrop-blur-md`}
       style={{ height: `${panelHeight}px`, left: `${sidebarInset}px` }}
     >
       <div
@@ -201,12 +202,12 @@ export function BottomBoardOverlay() {
         onPointerDown={startResize}
         onKeyDown={handleResizeKeyDown}
       >
-        <span aria-hidden className="pointer-events-none absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-primary/0 transition-colors duration-150 group-hover:bg-primary/30 group-focus-visible:bg-primary/50" />
-        <span aria-hidden className="relative h-1 w-9 rounded-full bg-muted-foreground/30 transition-all duration-150 ease-out group-hover:w-14 group-hover:bg-primary/60 group-active:w-16 group-active:bg-primary group-focus-visible:w-14 group-focus-visible:bg-primary/70 group-focus-visible:ring-2 group-focus-visible:ring-ring group-focus-visible:ring-offset-1 group-focus-visible:ring-offset-background" />
+        <span aria-hidden className="pointer-events-none absolute inset-x-0 top-1/2 h-px -translate-y-1/2 transition-colors duration-150 group-hover:bg-muted-foreground/50 group-focus-visible:bg-muted-foreground/50" />
+        <span aria-hidden className="relative h-1 w-9 rounded-full bg-muted-foreground/50 transition-all duration-150 ease-out group-hover:w-14 group-hover:bg-muted-foreground group-active:w-16 group-focus-visible:w-14 group-focus-visible:bg-muted-foreground group-focus-visible:ring-2 group-focus-visible:ring-ring/60 group-focus-visible:ring-offset-1 group-focus-visible:ring-offset-background" />
       </div>
 
       {/* `relative`: on phones the search dropdown spans this bar instead of hanging off the search box. */}
-      <div className="relative flex h-9 shrink-0 items-center gap-2 border-b border-border pl-[15px] pr-1.5 pointer-coarse:h-12 pointer-coarse:pr-1 max-sm:gap-1.5 max-sm:pr-1">
+      <div className={`relative flex h-9 shrink-0 items-center gap-2 border-b border-border ${COLUMN_INSET} pr-1.5 pointer-coarse:h-12 pointer-coarse:pr-1 max-sm:gap-1.5 max-sm:pr-1`}>
         <ShopifyMark className="size-4" />
         <BoardStatus tasks={tasks} wipLimit={board?.wipLimit} />
         <div className="ml-1 min-w-0 max-lg:ml-0 max-lg:flex-1">
@@ -215,7 +216,7 @@ export function BottomBoardOverlay() {
         </div>
         <div className="ml-auto flex shrink-0 items-center gap-1.5">
           <SystemMonitor maxPanelHeight={panelHeight - 56} />
-          <IconButton icon="ChevronDown" label="Hide board" onClick={() => setOpen(false)} small className="size-7 rounded-md border border-border/70 pointer-coarse:size-9" />
+          <IconButton icon="ChevronDown" label="Hide board" onClick={() => setOpen(false)} />
         </div>
         {/* As wide as the columns' scrollbar gutter (nothing with overlay scrollbars), so the bar ends where the cards do. */}
         <span aria-hidden className="-ml-2 box-content h-px shrink-0 overflow-y-hidden [scrollbar-gutter:stable] [scrollbar-width:thin] max-sm:-ml-1.5" />

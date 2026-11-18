@@ -1,67 +1,26 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { experimental_Icon as Icon, useBbContext, useBbNavigate } from "@get-bb/plugin-sdk/app";
-import { ACCENT_TEXT, errorMessage, formatShortAge } from "./model";
+import { errorMessage, formatShortAge, parseTime } from "./model";
+import { ACCENT_TEXT, CARD_INSET, ICON_ACTION, ROW_ACTION, TYPE } from "./styles";
+
+const FORGE_NAME = { delta: "Delta", github: "GitHub" } as const;
+/** Lists show this many rows until "Show N more". */
+const SHOWN_MAX = 8;
 
 /**
- * The board's type scale. Every text size, and the weight and tracking of headings, badges and chips, comes from here so
- * cards, rows, popovers and the title bar read as one family. Weights for emphasis (a title's semibold, an action's
- * medium) stay at the call site.
+ * How long ago `at` (epoch ms or an ISO string) was, as a `<time>`: `5m`, `3h`, `2d`; nothing when it isn't a time.
+ * `after` follows it only when it shows, such as a meta line's ` · `.
  */
-export const TYPE = {
-  /** Card, row and search result titles; the composer's text; a popover's headline figure. */
-  title: "text-[13px]",
-  /** Card summaries, inputs, buttons, banners and panel copy. */
-  body: "text-[12px]",
-  /** Secondary text: row meta, times and costs, empty notes, hints, tooltips and popover lists. */
-  meta: "text-[11px]",
-  /** Column titles and the Queue column's tabs. */
-  heading: "text-[11px] font-bold uppercase tracking-[0.1em]",
-  /** Section headings inside a column or popover, and the title bar's status counts. */
-  label: "text-[10px] font-semibold uppercase tracking-[0.1em]",
-  /** Counts and small pills. */
-  badge: "text-[10px] font-semibold tabular-nums",
-  /** Small notes beside a section title, such as Reviews' "3 new". */
-  control: "text-[10px] font-medium",
-  /** Category and risk chips in front of a title. */
-  chip: "text-[9px] font-semibold uppercase tracking-[0.06em]",
-} as const;
-
-/** A heading inside a column lines up with the cards' content: their 1px border plus `px-2`. */
-const CARD_INSET = "px-[9px]";
-/** Every small chip (a card's category, review risk, Archived, a follow-up already set): 16px, square-ish corners. */
-export const CHIP = `inline-flex h-4 shrink-0 items-center rounded-[4px] px-1 ${TYPE.chip} leading-none`;
-// Every card's marks share one 16px frame: they line up with the 18px title line (mt-px centers them), and pull
-// request, issue and thread cards line up in the column.
-export const MARK_FRAME = "mt-px inline-flex size-4 shrink-0 items-center justify-center";
-/** A row's 20px action (28px on touch screens); `ROW_ICON_ACTION` is its square icon-only form. */
-export const ROW_ACTION =
-  "inline-flex h-5 shrink-0 items-center justify-center rounded-md text-muted-foreground/70 transition-[color,background-color] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:pointer-events-none disabled:opacity-50 pointer-coarse:h-7";
-export const ROW_ICON_ACTION = `${ROW_ACTION} w-5 pointer-coarse:w-7`;
-export const FORGE_NAME = { delta: "Delta", github: "GitHub" } as const;
-/** Every dashed placeholder (empty lists, drop targets, the New thread button): one 32px-minimum slot. */
-export const DASHED_SLOT = `flex min-h-8 shrink-0 items-center justify-center gap-1.5 rounded-md border border-dashed px-3 py-1.5 text-center ${TYPE.meta}`;
-/** A list that has nothing to show, or nothing yet. */
-export const EMPTY_NOTE = `${DASHED_SLOT} border-foreground/15 text-muted-foreground/90`;
-/** One-line cards and rows (Done, Parked, Out): 28px tall, the 20px line inside a 3px pad and the border. */
-export const ONE_LINE_PAD = "px-2 py-[3px]";
-/** Two-line rows (Reviews, Assigned): the title line, then a meta line of age, reference and the row's actions. */
-export const TWO_LINE_PAD = "px-2 pb-1 pt-1.5";
-/** A two-line row's second line; its actions end flush with the archive button above. */
-export const TWO_LINE_META_ROW = "-mr-[3px] mt-0.5 flex h-5 items-center gap-0.5 pointer-coarse:h-7";
-/** The second line's text, truncated before the actions. */
-export const TWO_LINE_META = `mr-1 min-w-0 flex-1 truncate ${TYPE.meta} tabular-nums text-muted-foreground/80`;
-/**
- * A one-line row's age at its end. Touch screens always show the row's actions over the end of the line, so the age
- * gives way there instead of showing half under them.
- */
-export const ONE_LINE_AGE = `shrink-0 whitespace-nowrap ${TYPE.meta} tabular-nums text-muted-foreground/80 [@media(hover:none)]:hidden`;
-
-/** How long ago `at` (epoch ms) was, as a `<time>`: `5m`, `3h`, `2d`. */
-export function Age({ at, now, className }: { at: number; now: number; className: string }) {
+export function Age({ at, now, className, after }: { at: string | number | null; now: number; className?: string; after?: string }) {
+  const ms = parseTime(at);
+  if (ms === null) return null;
   return (
-    <time dateTime={new Date(at).toISOString()} className={className}>
-      {formatShortAge(at, now)}
-    </time>
+    <>
+      <time dateTime={new Date(ms).toISOString()} className={className}>
+        {formatShortAge(ms, now)}
+      </time>
+      {after}
+    </>
   );
 }
 
@@ -80,25 +39,56 @@ export function useBbLinks() {
 }
 
 /**
- * A row's failure, shown on the row itself: the board's own error banner clears on its next read, a second later.
- * `attempt` runs an action and keeps its error.
+ * A row's actions and their failure, shown on the row itself: the board's own error banner clears on its next read, a
+ * second later. `attempt` runs an action and keeps its error. Given a `key`, the action is `pending` until it settles,
+ * and keyed attempts made meanwhile are dropped.
  */
-export function useRowError() {
+export function useRowAction<Key extends string = string>() {
   const [error, setError] = useState<string | null>(null);
-  const attempt = async (action: () => Promise<void>) => {
+  const [pending, setPending] = useState<Key | null>(null);
+  const attempt = async (action: () => Promise<unknown>, key?: Key) => {
+    if (key !== undefined) {
+      if (pending !== null) return;
+      setPending(key);
+    }
     setError(null);
     try {
       await action();
     } catch (cause) {
       setError(errorMessage(cause));
     }
+    if (key !== undefined) setPending(null);
   };
   const view = error ? (
     <p role="alert" className={`mb-0.5 line-clamp-2 ${TYPE.meta} leading-[14px] ${ACCENT_TEXT.rose}`}>
       {error}
     </p>
   ) : null;
-  return { attempt, view };
+  return { attempt, pending, view };
+}
+
+/** While `open`, a press anywhere outside `root` calls `close`. */
+export function useOutsideClose(root: RefObject<Element | null>, open: boolean, close: () => void) {
+  const latest = useRef(close);
+  useEffect(() => {
+    latest.current = close;
+  });
+  useEffect(() => {
+    if (!open) return;
+    const closeOutside = (event: PointerEvent) => {
+      if (!(event.target instanceof Node && root.current?.contains(event.target))) latest.current();
+    };
+    document.addEventListener("pointerdown", closeOutside);
+    return () => document.removeEventListener("pointerdown", closeOutside);
+  }, [root, open]);
+}
+
+/**
+ * Whether a key belongs to `box`, which holds bb's composer: typed inside it, with none of the composer's menus open.
+ * The menus portal outside the box and handle their own keys, Escape included.
+ */
+export function keyForBox(box: Element, event: { target: EventTarget | null }): boolean {
+  return event.target instanceof Node && box.contains(event.target) && !box.querySelector('[aria-expanded="true"]');
 }
 
 /** A list's problems worth a warning; searches skipped as expected (no host, a forge CLI missing or signed out) aren't. */
@@ -122,8 +112,14 @@ export function ForgeLink({ forge, onClick }: { forge: keyof typeof FORGE_NAME; 
   );
 }
 
-export function Spinner() {
-  return <span aria-hidden className="inline-flex size-3 animate-spin rounded-full border-[1.5px] border-muted-foreground/25 border-t-muted-foreground" />;
+/** `large` for a whole panel's loading state. */
+export function Spinner({ large = false }: { large?: boolean }) {
+  return (
+    <span
+      aria-hidden
+      className={`inline-flex shrink-0 animate-spin rounded-full border-muted-foreground/15 border-t-muted-foreground ${large ? "size-4 border-2" : "size-3 border-[1.5px]"}`}
+    />
+  );
 }
 
 /**
@@ -162,7 +158,7 @@ export function GroupHeader({ title, count, countTone, refreshing = false, probl
       <span className="h-px min-w-2 flex-1 bg-border/60" aria-hidden />
       {refreshing ? <Spinner /> : null}
       {problems.length > 0 ? (
-        <span role="img" aria-label={`${title} problems: ${problems.join("; ")}`} className={`inline-flex ${ACCENT_TEXT.amber}`}>
+        <span role="img" aria-label={`${title} problems: ${problems.join("; ")}`} title={problems.join("\n")} className={`inline-flex ${ACCENT_TEXT.amber}`}>
           <Icon name="AlertCircle" className="size-3.5" aria-hidden />
         </span>
       ) : null}
@@ -187,7 +183,7 @@ export function RowActions({ label, onArchive, centered = false, children }: {
       <button
         type="button"
         aria-label={label}
-        className="inline-flex size-5 items-center justify-center rounded-md text-muted-foreground/70 transition-[color,background-color] duration-150 hover:bg-destructive/10 hover:text-destructive focus-visible:bg-destructive/10 focus-visible:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 pointer-coarse:size-7"
+        className={ICON_ACTION.rose}
         onClick={onArchive}
       >
         <Icon name="Archive" className="size-3.5" aria-hidden />
@@ -196,40 +192,65 @@ export function RowActions({ label, onArchive, centered = false, children }: {
   );
 }
 
-/** Under a list cut at `max` rows: shows the rest, or folds them away again. */
-export function ShowMore({ total, max, all, onToggle }: { total: number; max: number; all: boolean; onToggle: () => void }) {
-  if (total <= max) return null;
+/** A list's first SHOWN_MAX rows, then a toggle that shows the rest or folds them away again. */
+export function CappedList<T>({ items, children }: { items: readonly T[]; children: (item: T) => ReactNode }) {
+  const [all, setAll] = useState(false);
   return (
-    <button
-      type="button"
-      onClick={onToggle}
-      className={`w-full rounded-md py-0.5 ${TYPE.meta} text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 pointer-coarse:py-2.5`}
-    >
-      {all ? "Show fewer" : `Show ${total - max} more`}
-    </button>
+    <>
+      {(all ? items : items.slice(0, SHOWN_MAX)).map((item) => children(item))}
+      {items.length > SHOWN_MAX ? (
+        <button
+          type="button"
+          onClick={() => setAll((shown) => !shown)}
+          className={`block h-5 w-full rounded-md ${TYPE.meta} text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 pointer-coarse:h-7`}
+        >
+          {all ? "Show fewer" : `Show ${items.length - SHOWN_MAX} more`}
+        </button>
+      ) : null}
+    </>
   );
 }
 
-export function IconButton({ icon, label, onClick, small = false, solid = false, className = "" }: {
-  icon: string;
+/**
+ * A card's leading mark: a 16px frame whose 1px top and bottom margins make it as tall as the 18px title line, so it
+ * centers on the title in every row, and pull request, issue and thread cards line up in the column. On a `disc` (a
+ * solid or tinted circle) it holds a 10px glyph; bare, a 14px one.
+ */
+export function Mark({ label, disc, children }: { label: string; disc?: string; children: ReactNode }) {
+  return (
+    <span role="img" aria-label={label} className={`my-px inline-flex size-4 shrink-0 items-center justify-center${disc ? ` rounded-full ${disc}` : ""}`}>
+      {children}
+    </span>
+  );
+}
+
+/** A mark showing one icon: on `disc` in the disc's text color, else bare in `tone`. */
+export function IconMark({ label, icon, fallback, disc, tone = "", filled = false }: {
   label: string;
-  onClick: () => void;
-  small?: boolean;
-  /** A filled foreground circle (white in dark mode), for the bar's main action. */
-  solid?: boolean;
-  className?: string;
+  icon: string;
+  fallback?: string;
+  disc?: string;
+  tone?: string;
+  /** Fill the icon's shapes too (Lucide icons are outlines). */
+  filled?: boolean;
 }) {
-  const look = solid
-    ? "size-7 rounded-full bg-foreground text-background shadow-sm hover:bg-foreground/85 active:bg-foreground/70 pointer-coarse:size-10"
-    : `${small ? "size-6 rounded-md pointer-coarse:size-8" : "h-7 w-10 rounded-lg pointer-coarse:h-11 pointer-coarse:w-14"} text-muted-foreground hover:bg-accent hover:text-foreground active:bg-accent/70`;
+  return (
+    <Mark label={label} disc={disc}>
+      <Icon name={icon} fallback={fallback} className={`${disc ? "size-2.5" : `size-3.5 ${tone}`}${filled ? " fill-current" : ""}`} aria-hidden />
+    </Mark>
+  );
+}
+
+/** The title bar's bordered icon button (Hide board). */
+export function IconButton({ icon, label, onClick }: { icon: string; label: string; onClick: () => void }) {
   return (
     <button
       type="button"
       aria-label={label}
       onClick={onClick}
-      className={`inline-flex ${look} shrink-0 cursor-pointer select-none items-center justify-center transition-[background-color,color,transform] duration-150 ease-out active:scale-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-50 ${className}`}
+      className="inline-flex size-7 shrink-0 cursor-pointer select-none items-center justify-center rounded-md border border-border text-muted-foreground transition-[background-color,color,transform] duration-150 ease-out hover:bg-accent hover:text-foreground active:scale-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-50 pointer-coarse:size-9"
     >
-      <Icon name={icon} className={small ? "size-3.5 pointer-coarse:size-4" : solid ? "size-4 pointer-coarse:size-5" : "size-[15px] pointer-coarse:size-5"} aria-hidden />
+      <Icon name={icon} className="size-3.5 pointer-coarse:size-4" aria-hidden />
     </button>
   );
 }

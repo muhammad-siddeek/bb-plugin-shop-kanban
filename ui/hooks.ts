@@ -74,17 +74,47 @@ export function usePoll<T>(read: () => Promise<T>, intervalMs: number, stallMs =
   return { value, error, report, refetch };
 }
 
-/** `usePoll`, also reading on the server's `channel` signal. */
-function usePolledRead<T>(read: () => Promise<T>, intervalMs: number, channel: string) {
+type ListMethod = "board_list" | "reviews_list" | "work_list" | "remote_list" | "radar_list";
+
+/** One of the server's lists: `usePoll` on its `method`, also reading on the server's `channel` signal. */
+function useServerList<Method extends ListMethod>(method: Method, intervalMs: number, channel: string) {
+  const rpc = useRpc<typeof rpcContract>();
+  const read = useCallback(() => rpc.call(method, null), [rpc, method]);
   const poll = usePoll(read, intervalMs);
   useRealtime(channel, poll.refetch);
-  return poll;
+  return { rpc, ...poll };
+}
+
+/**
+ * Changes shown before the server's next read agrees: one value per id, each dropped once `pending(value, id, state)`
+ * says the server caught up (or the item left). `change` sets an id's value from its current one; undefined drops it.
+ */
+export function usePending<State, Value>(state: State | null, pending: (value: Value, id: string, state: State) => boolean) {
+  const [values, setValues] = useState<ReadonlyMap<string, Value>>(() => new Map());
+  useEffect(() => {
+    if (!state) return;
+    setValues((current) => {
+      const next = new Map([...current].filter(([id, value]) => pending(value, id, state)));
+      return next.size === current.size ? current : next;
+    });
+    // `pending` is a pure test written inline: only the server's state changes its answer.
+  }, [state]);
+  const change = useCallback((id: string, update: (value: Value | undefined) => Value | undefined) => {
+    setValues((current) => {
+      const before = current.get(id);
+      const after = update(before);
+      if (after === before) return current;
+      const next = new Map(current);
+      if (after === undefined) next.delete(id);
+      else next.set(id, after);
+      return next;
+    });
+  }, []);
+  return [values, change] as const;
 }
 
 export function useBoard() {
-  const rpc = useRpc<typeof rpcContract>();
-  const read = useCallback(() => rpc.call("board_list", null), [rpc]);
-  const { value: board, error, report, refetch } = usePolledRead(read, BOARD_REFRESH_MS, "board-changed");
+  const { rpc, value: board, error, report, refetch } = useServerList("board_list", BOARD_REFRESH_MS, "board-changed");
   return { rpc, board, error, report, refetch };
 }
 
@@ -103,9 +133,7 @@ export type ReviewVerdict = "approve" | "request_changes";
 
 /** The review queue; `error` is why the last list read failed. */
 export function useReviews() {
-  const rpc = useRpc<typeof rpcContract>();
-  const read = useCallback(() => rpc.call("reviews_list", null), [rpc]);
-  const { value: state, error } = usePolledRead(read, REVIEWS_POLL_MS, "reviews-changed");
+  const { rpc, value: state, error } = useServerList("reviews_list", REVIEWS_POLL_MS, "reviews-changed");
 
   return useMemo(
     () => ({
@@ -113,9 +141,9 @@ export function useReviews() {
       error,
       /** Marks read; resolves to the prompt that seeds a thread explaining the pull request. */
       draft: async (id: string) => (await rpc.call("reviews_draft", { id })).prompt,
-      markRead: (id: string) => rpc.call("reviews_mark_read", { id }).then(() => {}),
-      archive: (id: string) => rpc.call("reviews_archive", { id }).then(() => {}),
-      submit: (id: string, verdict: ReviewVerdict, body: string) => rpc.call("reviews_submit", { id, verdict, body }).then(() => {}),
+      markRead: (id: string) => rpc.call("reviews_mark_read", { id }),
+      archive: (id: string) => rpc.call("reviews_archive", { id }),
+      submit: (id: string, verdict: ReviewVerdict, body: string) => rpc.call("reviews_submit", { id, verdict, body }),
     }),
     [rpc, state, error],
   );
@@ -125,11 +153,9 @@ export type ReviewsApi = ReturnType<typeof useReviews>;
 
 /** The work lists; `error` is why the last list read failed. */
 export function useWork() {
-  const rpc = useRpc<typeof rpcContract>();
-  const read = useCallback(() => rpc.call("work_list", null), [rpc]);
-  const { value: state, error } = usePolledRead(read, REVIEWS_POLL_MS, "work-changed");
+  const { rpc, value: state, error } = useServerList("work_list", REVIEWS_POLL_MS, "work-changed");
   return useMemo(
-    () => ({ state, error, mark: (id: string, mark: WorkMark, on: boolean) => rpc.call("work_mark", { id, mark, on }).then(() => {}) }),
+    () => ({ state, error, mark: (id: string, mark: WorkMark, on: boolean) => rpc.call("work_mark", { id, mark, on }) }),
     [rpc, state, error],
   );
 }
@@ -140,16 +166,12 @@ export type WorkApi = ReturnType<typeof useWork>;
 export type RemoteApi = { state: RemoteState | null; error: string | null };
 
 export function useRemote(): RemoteApi {
-  const rpc = useRpc<typeof rpcContract>();
-  const read = useCallback(() => rpc.call("remote_list", null), [rpc]);
-  const { value: state, error } = usePolledRead(read, REVIEWS_POLL_MS, "remote-changed");
+  const { value: state, error } = useServerList("remote_list", REVIEWS_POLL_MS, "remote-changed");
   return useMemo(() => ({ state, error }), [state, error]);
 }
 
 export function useRadar(): RadarApi {
-  const rpc = useRpc<typeof rpcContract>();
-  const read = useCallback(() => rpc.call("radar_list", null), [rpc]);
-  const { value: state, error, refetch } = usePolledRead(read, REVIEWS_POLL_MS, "radar-changed");
+  const { rpc, value: state, error, refetch } = useServerList("radar_list", REVIEWS_POLL_MS, "radar-changed");
   return useMemo(() => ({
     state, error, refetch,
     refresh: async () => { try { await rpc.call("radar_execute", { action: "scan" }); } finally { refetch(); } },

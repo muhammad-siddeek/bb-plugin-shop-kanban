@@ -85,7 +85,7 @@ const boardTaskSchema = z.object({
   /** bb's unread state: new activity since the user last opened the thread. */
   unread: z.boolean(),
   createdAt: z.string(),
-  /** Subject classification from the labeler; null until classified (shown under Read · Other). */
+  /** Subject classification from the labeler; null until classified (shown under Other). */
   workstream: z.enum(["shopify", "other"]).nullable(),
   updatedAt: z.string(),
   lastUserInputAt: z.string().nullable(),

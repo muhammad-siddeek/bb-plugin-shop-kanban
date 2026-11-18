@@ -39,56 +39,6 @@ export const BOTTOM_BOARD_COLLAPSED_CLASS = `${PLUGIN_SLUG}-bottom-collapsed`;
 export const THREAD_DRAG_TYPE = `application/x-${PLUGIN_SLUG}-thread`;
 const COLUMNS: BoardColumn[] = ["queue", "wip", "done", "parked"];
 
-/**
- * Accent text per hue: the -500 shade on dark, -700 on light, where -500 is too faint to read (about 2:1 on
- * white). light-dark() follows the nearest bb theme scope (its .light/.dark classes set color-scheme), so the
- * selected card, drawn in the opposite theme, gets the right shade too.
- */
-export const ACCENT_TEXT = {
-  sky: "text-[light-dark(var(--color-sky-700),var(--color-sky-500))]",
-  amber: "text-[light-dark(var(--color-amber-700),var(--color-amber-500))]",
-  rose: "text-[light-dark(var(--color-rose-700),var(--color-rose-500))]",
-  emerald: "text-[light-dark(var(--color-emerald-700),var(--color-emerald-500))]",
-} as const;
-
-/** A tinted pill (counts, risk chips): the tint costs contrast, so its text goes one shade darker on light. */
-export const ACCENT_BADGE = {
-  sky: "bg-sky-500/15 text-[light-dark(var(--color-sky-800),var(--color-sky-500))]",
-  amber: "bg-amber-500/15 text-[light-dark(var(--color-amber-800),var(--color-amber-500))]",
-  rose: "bg-rose-500/15 text-[light-dark(var(--color-rose-800),var(--color-rose-500))]",
-  emerald: "bg-emerald-500/15 text-[light-dark(var(--color-emerald-800),var(--color-emerald-500))]",
-} as const;
-
-/**
- * Every card's surface: a hairline drawn from the foreground (so it reads in both themes and in the selected
- * card's inverted scope) plus a 1px drop, since the cards sit only 4px apart and need a crisp edge rather than
- * spacing to separate them. `CARD_EDGE` is the resting/hover border; callers swap it for a tinted one.
- */
-export const CARD_SURFACE =
-  "rounded-md border bg-card shadow-[0_1px_1px_0_rgb(0_0_0/0.05),0_1px_3px_-1px_rgb(0_0_0/0.08)] transition-[border-color,box-shadow,background-color,opacity] duration-150 hover:shadow-[0_1px_2px_0_rgb(0_0_0/0.08),0_2px_6px_-2px_rgb(0_0_0/0.12)]";
-// Dark cards sit darker than their column, so the hairline goes a step brighter there to keep a drawn edge.
-export const CARD_EDGE =
-  "border-[light-dark(color-mix(in_oklab,var(--foreground)_12%,transparent),color-mix(in_oklab,var(--foreground)_18%,transparent))] hover:border-[light-dark(color-mix(in_oklab,var(--foreground)_24%,transparent),color-mix(in_oklab,var(--foreground)_30%,transparent))]";
-
-/** Colors per card state; each column takes those of the state it is named after. Parked is grey. */
-export const STATUS_META: Record<BoardStatus, {
-  title: string;
-  accent: string;
-  badge: string;
-  outline: string;
-}> = {
-  queue: { title: ACCENT_TEXT.sky, accent: "bg-sky-500", badge: ACCENT_BADGE.sky, outline: "outline-sky-500" },
-  wip: { title: ACCENT_TEXT.amber, accent: "bg-amber-500", badge: ACCENT_BADGE.amber, outline: "outline-amber-500" },
-  blocked: { title: ACCENT_TEXT.rose, accent: "bg-rose-500", badge: ACCENT_BADGE.rose, outline: "outline-rose-500" },
-  done: { title: ACCENT_TEXT.emerald, accent: "bg-emerald-500", badge: ACCENT_BADGE.emerald, outline: "outline-emerald-500" },
-  parked: {
-    title: "text-muted-foreground",
-    accent: "bg-muted-foreground/40",
-    badge: "bg-muted-foreground/15 text-muted-foreground",
-    outline: "outline-muted-foreground/60",
-  },
-};
-
 export function shortNameFromPrompt(prompt: string): string {
   const firstLine = prompt.split(/\r?\n/u).map((line) => line.trim()).find(Boolean) ?? "New thread";
   return firstLine.length <= 40 ? firstLine : `${firstLine.slice(0, 37).trimEnd()}…`;
@@ -109,10 +59,16 @@ export function taskCardTitle(task: BoardTask): { category: string | null; inten
   return { category, intent };
 }
 
-function parseTime(value: string | number | null): number | null {
+/** Epoch ms from a timestamp (epoch ms or an ISO string); null when it isn't one. */
+export function parseTime(value: string | number | null): number | null {
   if (value === null) return null;
   const ms = typeof value === "number" ? value : Date.parse(value);
   return Number.isFinite(ms) ? ms : null;
+}
+
+/** A pull request's or issue's short reference: `repo#123`. */
+export function prRef(item: { repo: string; number: number }): string {
+  return `${item.repo.split("/").pop()}#${item.number}`;
 }
 
 /**
@@ -175,7 +131,7 @@ export function errorMessage(cause: unknown): string {
 /** `parkedLocally`: cards just parked from the board, shown in Parked before the server's board catches up. */
 export function groupTasksByColumn(
   board: BoardState | null,
-  parkedLocally: ReadonlySet<string>,
+  parkedLocally: ReadonlyMap<string, unknown>,
 ): Map<BoardColumn, BoardTask[]> {
   const grouped = new Map<BoardColumn, BoardTask[]>(COLUMNS.map((column) => [column, []]));
   for (const served of board?.tasks ?? []) {
@@ -185,13 +141,8 @@ export function groupTasksByColumn(
   // Working: blocked cards, which wait on the user, above working ones; each group keeps the server's order.
   const wip = grouped.get("wip") ?? [];
   grouped.set("wip", [...wip.filter((task) => task.status === "blocked"), ...wip.filter((task) => task.status !== "blocked")]);
-  // Done: unread cards first, then read ones, each newest completion first. Completion only moves when a thread
-  // finishes another turn, so reading, relabeling or renaming a card doesn't reshuffle the column.
-  const done = grouped.get("done") ?? [];
-  const byCompletion = (a: BoardTask, b: BoardTask) => (taskActivityTime(b) ?? 0) - (taskActivityTime(a) ?? 0);
-  grouped.set("done", [
-    ...done.filter((task) => task.unread).sort(byCompletion),
-    ...done.filter((task) => !task.unread).sort(byCompletion),
-  ]);
+  // Done: newest completion first, read or not, so a card keeps its place from the moment it lands. Completion only
+  // moves when a thread finishes another turn, so reading, relabeling or renaming a card doesn't reshuffle the column.
+  grouped.get("done")?.sort((a, b) => (taskActivityTime(b) ?? 0) - (taskActivityTime(a) ?? 0));
   return grouped;
 }

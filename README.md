@@ -36,9 +36,10 @@ thread (see Parked) and starting a waiting one (see Working limit).
   hidden. Remote work doesn't count toward the working limit.
 - **Done**: the thread is idle and its last reply reports completion. Cards
   are one line (status, tag, title, and what the thread's tree has spent, or
-  its age while it has no cost). Unread ones come first with a solid
-  check, then **Read · Work** (Shopify work) and **Read · Other**, each
-  newest finish first. The age is when the thread finished. Read state and
+  its age while it has no cost). Work cards (Shopify work) come first with no
+  header, then an **Other** section, each newest finish first; a card keeps
+  its place once it lands, read or unread (unread ones wear a solid check).
+  The age is when the thread finished. Read state and
   finish time are bb's own (the sidebar's unread dot), and the column's count
   is its unread cards. The existing labeler classifies the thread's subject
   from its user messages and the agent's reply, not its AI account or other
@@ -46,7 +47,7 @@ thread (see Parked) and starting a waiting one (see Working limit).
   Shopify-owned repos are work, including Verdict SDK and ExP; personal
   projects and unrelated tools are other. Without evidence of Shopify work
   it chooses other. Until the first
-  classification arrives, read cards sit in Other; existing cards classify
+  classification arrives, cards sit in Other; existing cards classify
   in the background without retitling them. With the labeler off, cards keep
   their last classification, or stay in Other if they have none.
 - **Parked** (grey): a section under the Queue tab, below the queued threads, one line per card. Idle threads you parked to come back to later, such as a
@@ -64,8 +65,12 @@ opportunity shows its best solution; opening it brings up bb's full new-thread
 composer with the findings, evidence and instruction to implement that solution.
 Cancel leaves it unread. Submit creates the thread using the selected project,
 environment and model, moves the opportunity to Read, and opens Queue. The normal
-working limit still controls when its thread starts. Dismiss removes a recommendation.
-Techniques open their originating Slack message and leave Radar immediately.
+working limit still controls when its thread starts. Dismiss (on hover, top
+right, like archive on other cards) removes a recommendation. Techniques are
+one line and open their originating Slack message, leaving Radar immediately.
+Read opportunities follow under a **Read** header, 8 at a time with a "Show
+more" button. Scan failures show as an amber mark on the Recommendations
+header; hover it for the error.
 
 Refresh scans the sources again and appends unseen opportunity/technique keys.
 Existing cards keep their content, read state and thread link; dismissed/opened
@@ -146,9 +151,24 @@ reloads.
   amber petal spinner while working), the tag and title on one line, and what
   the thread's whole tree has spent; the second has a pie with how full its
   context window is (dim grey, amber at 70%, red at 90%), a one-line summary
-  of the latest exchange, and how long ago it was updated (`5m`, `3h`, `2d`).
+  of the latest exchange, and how long ago it was updated (`5m`, `3h`, `2d`);
+  Working cards skip the age, so their summary runs to the end of the line.
   Costs show cents under $10 (`$4.30`, `$53`). Working
   threads refresh these every 5 seconds, idle threads every minute.
+- Every card has a thin rail on its left edge in its state's color: sky
+  queued, amber working, red blocked, green done, grey parked. Work, review,
+  remote and Radar cards use their mark's color, grey once read.
+- Anything unread is a solid circle with a white mark: a Done thread's check,
+  a new review request's pull-request icon, a Radar recommendation's bolt or
+  bulb. Unread counts (the Done column, the Radar tab, Recommendations, and
+  Reviews' `N new`) are solid pills with white numbers.
+- The board draws with a closed set of colors: four hues, each with one
+  meaning (sky queued or new, amber working or warning, red blocked, errors
+  or removing, green done or approving), and bb's theme greys for the rest.
+  Each hue and grey use one alpha step per job: a 15% tint for fills and
+  washes, 50% for lines, 70% for lines that carry a state (rails, the free
+  working slot, edges under the pointer), solid for marks and unread pills.
+  Errors are red text in the board's readable shade in both themes.
 - Cards open no popup on hover or focus. A tap on a touch screen opens the
   thread.
 - The cost adds up the thread, every descendant thread (hidden and archived
@@ -228,12 +248,11 @@ with this hint, and labels are retried right after either setting changes.
 
 The right end of the title bar shows how close the machine bb runs on (the
 one your threads use, even when you open bb from another device) is to running
-out of CPU, memory, disk or battery. Each gauge is a capsule in the metric's
-own color, half transparent, with a solid icon and a percentage cut out of it
-so the title bar shows through: blue CPU (chip), red memory (memory stick),
-yellow disk (hard drive), green battery. Every gauge reads as danger: a high
-number always means trouble, and the capsule turns amber, then red, as it nears
-running out. The panel it opens sums it up as Headroom, Busy or Strained.
+out of CPU, memory, disk or battery. Each gauge is a grey chip with a solid
+icon and a percentage: chip CPU, memory stick memory, hard drive disk, battery.
+Every gauge reads as danger: a high number always means trouble, and the chip
+turns amber, then red, as it nears running out. The panel it opens sums it up
+as Headroom, Busy or Strained.
 
 - **CPU**: share of all cores busy, averaged over 10 seconds. Amber at 80%, red at 95%.
 - **Memory**: memory pressure, 100 minus what macOS counts as available to apps
@@ -248,7 +267,7 @@ running out. The panel it opens sums it up as Headroom, Busy or Strained.
 
 Click it for advice on what to stop or clear, each gauge's exact figures (GB
 available, swap activity, GB free, time left), and the heaviest apps by CPU or
-memory, helper processes counted with their app.
+memory, helper processes counted with their app, each with a grey bar.
 
 The plugin server samples every 2 seconds while a board is open, and stops
 30 seconds after the last board closes or is hidden.
@@ -427,7 +446,7 @@ bb shop-kanban remove <thread-id> [--json]   # archives the thread; exits 1 if n
 From the bb plugin store, or from this repository:
 
 ```sh
-bb plugin install git:https://github.com/muhammad-siddeek/bb-plugin-shop-kanban.git@^0.23.0
+bb plugin install git:https://github.com/muhammad-siddeek/bb-plugin-shop-kanban.git@^0.27.0
 ```
 
 ## Development
@@ -435,6 +454,7 @@ bb plugin install git:https://github.com/muhammad-siddeek/bb-plugin-shop-kanban.
 ```sh
 npm install
 npm run typecheck
+npm test
 bb plugin build .
 bb plugin reload shop-kanban
 ```

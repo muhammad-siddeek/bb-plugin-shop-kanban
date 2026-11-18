@@ -1,13 +1,9 @@
 import { useCallback, useEffect, useRef } from "react";
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
-import { ACCENT_TEXT, CARD_EDGE, CARD_SURFACE, STATUS_META, THREAD_DRAG_TYPE, taskActivityTime, taskCardTitle, type BoardStatus, type BoardTask } from "./model";
-import { Age, CHIP, MARK_FRAME, ONE_LINE_AGE, ONE_LINE_PAD, RowActions, Spinner, TYPE } from "./primitives";
+import { THREAD_DRAG_TYPE, taskActivityTime, taskCardTitle, type BoardStatus, type BoardTask } from "./model";
+import { Age, IconMark, Mark, RowActions, Spinner } from "./primitives";
+import { ACCENT_TEXT, CHIP, ELEVATION, ICON_ACTION, ONE_LINE_AGE, ONE_LINE_PAD, STATUS_META, TYPE, UNREAD_BADGE, cardFrame, cardTitle } from "./styles";
 import { ContextPie, SessionCost } from "./session";
-
-const CARD_ACTION =
-  "inline-flex size-5 items-center justify-center rounded-md text-muted-foreground/70 transition-[color,background-color] duration-150 hover:bg-accent hover:text-foreground focus-visible:bg-accent focus-visible:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:pointer-events-none pointer-coarse:size-7";
-const BLOCKED_STRIPE =
-  "before:absolute before:inset-y-1.5 before:-left-px before:w-[3px] before:rounded-r-full before:bg-rose-500/70 before:content-['']";
 
 /** A full card's cost and age: 18px lines at the ends of its two rows. */
 const META_LINE = `flex h-[18px] shrink-0 items-center whitespace-nowrap ${TYPE.meta} tabular-nums text-muted-foreground/80`;
@@ -82,10 +78,10 @@ export function TaskStatusMark({ status, unread }: { status: BoardStatus; unread
   if (status === "wip") {
     // A petal spinner, ticking a petal at a time: a stroked arc would read as the context pie below it.
     return (
-      <span role="img" aria-label="Working" className={MARK_FRAME}>
+      <Mark label="Working">
         <svg
           viewBox="0 0 16 16"
-          className="size-3.5 animate-[spin_800ms_steps(8)_infinite] text-[light-dark(var(--color-amber-600),var(--color-amber-500))]"
+          className={`size-3.5 animate-[spin_800ms_steps(8)_infinite] ${ACCENT_TEXT.amber}`}
           aria-hidden
         >
           {PETALS.map(({ angle, opacity }) => (
@@ -103,45 +99,28 @@ export function TaskStatusMark({ status, unread }: { status: BoardStatus; unread
             />
           ))}
         </svg>
-      </span>
+      </Mark>
     );
   }
   if (status === "done") {
-    const label = unread ? "Done · unread" : "Done";
     return (
-      <span
-        role="img"
-        aria-label={label}
-        className={`${MARK_FRAME} rounded-full transition-colors ${
-          unread ? "bg-emerald-500 text-white" : STATUS_META.done.badge
-        }`}
-      >
+      <Mark label={unread ? "Done · unread" : "Done"} disc={`transition-colors ${unread ? UNREAD_BADGE.emerald : STATUS_META.done.badge}`}>
         <Icon name="Check" className="size-3" aria-hidden />
-      </span>
+      </Mark>
     );
   }
   if (status === "blocked") {
     return (
-      <span
-        role="img"
-        aria-label="Blocked"
-        className={`${MARK_FRAME} rounded-full bg-rose-500 text-[10.5px] font-bold leading-none text-white`}
-      >
+      <Mark label="Blocked" disc="bg-rose-500 text-[10px] font-bold leading-none text-white">
         !
-      </span>
+      </Mark>
     );
   }
-  if (status === "parked") {
-    return (
-      <span role="img" aria-label="Parked" className={`${MARK_FRAME} rounded-full ${STATUS_META.parked.badge}`}>
-        <Icon name="Pause" className="size-2.5" aria-hidden />
-      </span>
-    );
-  }
+  if (status === "parked") return <IconMark label="Parked" icon="Pause" disc={STATUS_META.parked.badge} />;
   return (
-    <span role="img" aria-label="In queue" className={MARK_FRAME}>
+    <Mark label="In queue">
       <span className="block size-3.5 rounded-full border-[1.5px] border-dashed border-sky-500/70" />
-    </span>
+    </Mark>
   );
 }
 
@@ -224,18 +203,18 @@ export function TaskCard({ task, now, unread, selected, dragging, starting, onAr
         </span>
       ) : null}
       <span
-        className={`min-w-0 truncate ${TYPE.title} decoration-muted-foreground/40 underline-offset-2 group-hover/open:underline ${
-          parked ? "text-foreground/70" : unread || !compact ? "text-foreground" : "text-foreground/85"
-        } ${unread ? "font-bold" : "font-semibold"}`}
+        className={`min-w-0 truncate ${cardTitle(unread)} group-hover/open:underline ${
+          unread || !compact ? "text-foreground" : "text-foreground/85"
+        }`}
       >
         {intent}
       </span>
     </span>
   );
   const meta = STATUS_META[task.status];
-  const activity = taskActivityTime(task);
+  // Working cards drop the age, so their summary runs to the end of the second line.
+  const activity = task.status === "wip" ? null : taskActivityTime(task);
   const canOpen = !task.missingThread;
-  const age = activity !== null ? <Age at={activity} now={now} className={META_LINE} /> : null;
   const titleButton = canOpen ? (
     <button
       type="button"
@@ -253,16 +232,10 @@ export function TaskCard({ task, now, unread, selected, dragging, starting, onAr
   // Idle cards outside Parked can also be dragged there; a startable Queue card can also be dropped on Working to start it.
   const canDrag = parkToggle && !parked;
 
-  // Selection wins over the column/unread border; the blocked stripe and the parked dashes stay either way.
-  const borderClass = selected
-    ? "border-transparent"
-    : unread
-      ? "border-emerald-500/45 hover:border-emerald-500/70"
-      : CARD_EDGE;
-  const stateClass =
-    task.status === "blocked" ? `${borderClass} ${BLOCKED_STRIPE}` : parked ? `${borderClass} border-dashed` : borderClass;
+  // Selection wins over the column/unread border; the state rail and the parked dashes stay either way.
+  const frameClass = `${cardFrame(meta.rail, selected ? "none" : unread ? "emerald" : "rest")}${parked ? " border-dashed" : ""}`;
   // Selected: a thick outline in the column accent; 3px stays inside the column list's p-1.5 scroll padding.
-  const surfaceClass = selected ? `shadow-md outline-3 outline-offset-0 ${meta.outline}` : "";
+  const surfaceClass = selected ? `${ELEVATION.raised} outline-3 outline-offset-0 ${meta.outline}` : "";
 
   return (
     <article
@@ -286,29 +259,25 @@ export function TaskCard({ task, now, unread, selected, dragging, starting, onAr
         if (!canOpen || (event.target as HTMLElement).closest("button, a, [role='button']")) return;
         open();
       }}
-      className={`group relative ${CARD_SURFACE} ${compact ? ONE_LINE_PAD : "px-2 py-1.5"} has-[[data-card-open]:focus-visible]:ring-2 has-[[data-card-open]:focus-visible]:ring-ring/60 ${
+      className={`group relative ${frameClass} ${compact ? ONE_LINE_PAD : "px-2 py-1.5"} has-[[data-card-open]:focus-visible]:ring-2 has-[[data-card-open]:focus-visible]:ring-ring/60 ${
         canOpen ? "cursor-pointer" : ""
-      } ${dragging ? "opacity-40" : ""} ${stateClass} ${surfaceClass}`}
+      } ${dragging ? "opacity-50" : ""} ${surfaceClass}`}
     >
       {compact ? (
         <div className="flex h-5 items-center gap-2">
-          <span className="-mt-px flex w-4 shrink-0 justify-center">
-            <TaskStatusMark status={task.status} unread={unread} />
-          </span>
+          <TaskStatusMark status={task.status} unread={unread} />
           {titleButton}
           {task.session?.cost ? (
             <SessionCost session={task.session} className={ONE_LINE_AGE} />
-          ) : activity !== null ? (
+          ) : (
             <Age at={activity} now={now} className={ONE_LINE_AGE} />
-          ) : null}
+          )}
         </div>
       ) : (
-        // Two lines: status, tag and title, cost; context fill, summary, age.
+        // Two lines: status, tag and title, cost; context fill, summary, age (none while working).
         <>
           <div className="flex h-[18px] items-center gap-2">
-            <span className="flex w-4 shrink-0 justify-center">
-              <TaskStatusMark status={task.status} unread={unread} />
-            </span>
+            <TaskStatusMark status={task.status} unread={unread} />
             {titleButton}
             <SessionCost session={task.session} className={META_LINE} />
           </div>
@@ -319,7 +288,7 @@ export function TaskCard({ task, now, unread, selected, dragging, starting, onAr
             <span className={`min-w-0 flex-1 truncate ${TYPE.body} ${task.missingThread ? `font-medium ${ACCENT_TEXT.rose}` : "text-muted-foreground"}`}>
               {task.missingThread ? "no thread" : task.note}
             </span>
-            {age}
+            <Age at={activity} now={now} className={META_LINE} />
           </div>
         </>
       )}
@@ -331,7 +300,7 @@ export function TaskCard({ task, now, unread, selected, dragging, starting, onAr
             type="button"
             aria-label="Start thread now"
             disabled={starting}
-            className={CARD_ACTION}
+            className={ICON_ACTION.neutral}
             onClick={() => onStart(task.threadId)}
           >
             {starting ? <Spinner /> : <Icon name="Play" className="size-3.5" aria-hidden />}
@@ -343,7 +312,7 @@ export function TaskCard({ task, now, unread, selected, dragging, starting, onAr
             <button
               type="button"
               aria-label="Mark thread unread"
-              className={CARD_ACTION}
+              className={ICON_ACTION.neutral}
               onClick={() => onMarkUnread(task.threadId)}
             >
               <Icon name="CircleDot" className="size-3.5" aria-hidden />
@@ -353,7 +322,7 @@ export function TaskCard({ task, now, unread, selected, dragging, starting, onAr
           <button
             type="button"
             aria-label={parked ? "Unpark thread" : "Park thread"}
-            className={CARD_ACTION}
+            className={ICON_ACTION.neutral}
             onClick={() => onPark(task.threadId, !parked)}
           >
             <Icon name={parked ? "ArrowTurnBackward" : "Pause"} className="size-3.5" aria-hidden />

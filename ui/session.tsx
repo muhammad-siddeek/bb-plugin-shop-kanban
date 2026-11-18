@@ -1,5 +1,5 @@
-import { ACCENT_TEXT, formatMoney, type BoardSession } from "./model";
-import { TYPE } from "./primitives";
+import { formatMoney, type BoardSession } from "./model";
+import { ACCENT_TEXT, TYPE } from "./styles";
 
 /** Context fill (0-1) where the pie turns amber, then red. */
 const CONTEXT_WARN = 0.7;
@@ -58,9 +58,9 @@ export function ContextPie({ session }: { session: BoardSession | null }) {
       role="img"
       aria-label={`${percent} of context used`}
       viewBox="0 0 12 12"
-      className={`size-3 -rotate-90 ${tone ?? "text-muted-foreground/45"}`}
+      className={`size-3 -rotate-90 ${tone ?? "text-muted-foreground/50"}`}
     >
-      <circle cx="6" cy="6" r={PIE_RADIUS} fill="currentColor" fillOpacity={0.2} />
+      <circle cx="6" cy="6" r={PIE_RADIUS} fill="currentColor" fillOpacity={0.15} />
       <circle
         cx="6"
         cy="6"

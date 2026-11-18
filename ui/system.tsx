@@ -3,8 +3,9 @@ import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
 import type { rpcContract } from "../server/schema";
 import { usePoll } from "./hooks";
-import { ACCENT_TEXT, formatMoney, type AiUsage, type SystemProcesses, type SystemStats } from "./model";
-import { TYPE } from "./primitives";
+import { formatMoney, type AiUsage, type SystemProcesses, type SystemStats } from "./model";
+import { useOutsideClose } from "./primitives";
+import { ACCENT_BADGE, ACCENT_TEXT, POPOVER, TYPE } from "./styles";
 
 const STATS_POLL_MS = 2_000;
 const PROCESSES_POLL_MS = 3_000;
@@ -58,11 +59,14 @@ const VERDICT: Record<Level, { dot: string; text: string }> = {
   critical: { dot: "bg-rose-500", text: ACCENT_TEXT.rose },
 };
 
-/** Chip and bar colors: neutral while fine, so the strip only draws the eye when a metric nears running out. */
-const TONE: Record<Level, { text: string; bg: string }> = {
-  ok: { text: "text-muted-foreground", bg: "bg-muted-foreground/60" },
-  warn: { text: "text-amber-500", bg: "bg-amber-500" },
-  critical: { text: "text-rose-500", bg: "bg-rose-500" },
+/**
+ * Chip and bar colors: neutral while fine, so the strip only draws the eye when a metric nears running out. A fine
+ * chip lights up when hovered or open; one that isn't wears the board's tinted badge.
+ */
+const TONE: Record<Level, { chip: string; bg: string }> = {
+  ok: { chip: "text-muted-foreground group-hover:text-foreground group-aria-expanded:text-foreground", bg: "bg-muted-foreground/50" },
+  warn: { chip: ACCENT_BADGE.amber, bg: "bg-amber-500" },
+  critical: { chip: ACCENT_BADGE.rose, bg: "bg-rose-500" },
 };
 
 // Solid glyphs (lucide has only outlines), drawn on a 20px grid and sized so each
@@ -250,11 +254,9 @@ function StripChip({ glyph, label, level, okBackground = "", dim = false }: { gl
   return (
     <span
       aria-hidden
-      className={`inline-flex h-5 shrink-0 items-center gap-1 rounded px-1 ${TYPE.meta} font-medium leading-none tabular-nums transition-colors duration-300 ${
-        level !== "ok"
-          ? `${TONE[level].text} ${level === "critical" ? "bg-rose-500/15" : "bg-amber-500/15"}`
-          : `text-muted-foreground group-hover:text-foreground group-aria-expanded:text-foreground ${okBackground}`
-      } ${dim ? "opacity-60" : ""}`}
+      className={`inline-flex h-5 shrink-0 items-center gap-1 rounded-sm px-1 ${TYPE.meta} font-medium leading-none tabular-nums transition-colors duration-300 ${TONE[level].chip} ${
+        level === "ok" ? okBackground : ""
+      } ${dim ? "opacity-50" : ""}`}
     >
       {glyph}
       <span className="max-sm:hidden">{label}</span>
@@ -308,20 +310,14 @@ export function SystemMonitor({ maxPanelHeight }: { maxPanelHeight: number }) {
 
   useEffect(() => () => window.clearTimeout(hoverTimer.current), []);
 
+  useOutsideClose(rootRef, open !== null, close);
   useEffect(() => {
     if (!open) return;
-    const closeOutside = (event: PointerEvent) => {
-      if (!(event.target instanceof Node && rootRef.current?.contains(event.target))) close();
-    };
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") close();
     };
-    document.addEventListener("pointerdown", closeOutside);
     document.addEventListener("keydown", closeOnEscape);
-    return () => {
-      document.removeEventListener("pointerdown", closeOutside);
-      document.removeEventListener("keydown", closeOnEscape);
-    };
+    return () => document.removeEventListener("keydown", closeOnEscape);
   }, [open]);
 
   const hoverChip = (key: PanelKey) => (event: ReactPointerEvent) => {
@@ -357,7 +353,7 @@ export function SystemMonitor({ maxPanelHeight }: { maxPanelHeight: number }) {
       aria-controls={open === key ? panelId : undefined}
       onPointerEnter={hoverChip(key)}
       onClick={clickChip(key)}
-      className="group inline-flex h-7 cursor-pointer select-none items-center rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:h-9"
+      className="group inline-flex h-7 cursor-pointer select-none items-center rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 pointer-coarse:h-9"
     >
       <span className="sr-only">{summary}</span>
       {content}
@@ -401,7 +397,7 @@ export function SystemMonitor({ maxPanelHeight }: { maxPanelHeight: number }) {
           id={panelId}
           role="dialog"
           aria-label={PANEL_LABEL[open]}
-          className="absolute right-0 top-full z-30 mt-1 flex w-[min(19rem,calc(100vw-1rem))] flex-col overflow-hidden rounded-xl border border-border bg-popover text-popover-foreground shadow-[0_12px_32px_-12px_rgba(0,0,0,0.35)] ring-1 ring-black/5 max-sm:inset-x-2 max-sm:w-auto"
+          className={`${POPOVER} right-0 w-[min(19rem,calc(100vw-1rem))]`}
           style={{ maxHeight: `${Math.max(maxPanelHeight, 160)}px` }}
         >
           <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-width:thin]">
@@ -410,7 +406,7 @@ export function SystemMonitor({ maxPanelHeight }: { maxPanelHeight: number }) {
             ) : stats && assessment ? (
               <MetricPanel metric={open} stats={stats} assessment={assessment} error={error} />
             ) : (
-              <p className={`px-3.5 py-3 ${TYPE.body} text-muted-foreground`}>{error ?? "Reading this machine's resources…"}</p>
+              <p className={`p-3 ${TYPE.body} text-muted-foreground`}>{error ?? "Reading this machine's resources…"}</p>
             )}
           </div>
         </div>
@@ -429,8 +425,8 @@ function Section({ label, glyph: SectionGlyph, value, level, bar, children }: {
   children: ReactNode;
 }) {
   return (
-    <section className="px-3.5 py-2.5">
-      <div className="mb-1.5 flex items-baseline justify-between gap-3">
+    <section className="p-3">
+      <div className="mb-2 flex items-baseline justify-between gap-3">
         <h4 className={`flex items-center gap-1.5 ${TYPE.label} text-muted-foreground`}>
           <SectionGlyph className="size-3 text-muted-foreground" />
           {label}
@@ -445,7 +441,7 @@ function Section({ label, glyph: SectionGlyph, value, level, bar, children }: {
 }
 
 function Detail({ children }: { children: ReactNode }) {
-  return <p className={`mt-1.5 ${TYPE.meta} leading-snug text-muted-foreground tabular-nums`}>{children}</p>;
+  return <p className={`mt-1.5 ${TYPE.meta} leading-[14px] text-muted-foreground tabular-nums`}>{children}</p>;
 }
 
 const PRESSURE_LABEL = { normal: "Normal", warn: "Elevated", critical: "Critical" } as const;
@@ -465,7 +461,7 @@ function MetricPanel({ metric, stats, assessment, error }: { metric: MetricKey; 
           <Detail>
             Average of all {cpu.cores} cores over the last 10 seconds.
             {cpu.groups.length ? <span className="block">{cpu.groups.map((group) => `${group.cores} ${group.name}`).join(" + ")}</span> : null}
-            <span className="block text-muted-foreground/70">{stats.name} · up {formatDuration(stats.uptimeSec / 60)}</span>
+            <span className="block text-muted-foreground/80">{stats.name} · up {formatDuration(stats.uptimeSec / 60)}</span>
           </Detail>
         </Section>
       ) : null}
@@ -477,7 +473,7 @@ function MetricPanel({ metric, stats, assessment, error }: { metric: MetricKey; 
             {memory.pressure ? (
               <span className="block">
                 macOS pressure{" "}
-                <span className={`font-medium ${gauges.memory.level === "ok" ? "text-foreground/80" : VERDICT[gauges.memory.level].text}`}>{PRESSURE_LABEL[memory.pressure]}</span>
+                <span className={`font-medium ${gauges.memory.level === "ok" ? "text-foreground/85" : VERDICT[gauges.memory.level].text}`}>{PRESSURE_LABEL[memory.pressure]}</span>
               </span>
             ) : null}
             {swap ? (
@@ -487,11 +483,11 @@ function MetricPanel({ metric, stats, assessment, error }: { metric: MetricKey; 
                   : assessment.swapRate < 0.1 * MB
                     ? "Not swapping"
                     : `Swapping ${formatRate(assessment.swapRate)}`}
-                <span className="text-muted-foreground/70"> · {formatBytes(swap.used)} sitting in swap</span>
+                <span className="text-muted-foreground/80"> · {formatBytes(swap.used)} sitting in swap</span>
               </span>
             ) : null}
             {breakdown ? (
-              <span className="block text-muted-foreground/70">
+              <span className="block text-muted-foreground/80">
                 Apps {formatBytes(memory.app!)} · Wired {formatBytes(memory.wired!)} · Compressed {formatBytes(memory.compressed!)}
               </span>
             ) : null}
@@ -502,7 +498,7 @@ function MetricPanel({ metric, stats, assessment, error }: { metric: MetricKey; 
       {metric === "disk" && disk ? (
         <Section label="Disk full" glyph={DiskGlyph} value={`${Math.round(gauges.disk.danger)}%`} level={gauges.disk.level} bar={gauges.disk.danger}>
           <Detail>
-            <span className="font-medium text-foreground/80">{formatBytes(disk.free)} free</span> of {formatBytes(disk.total, 0)} on the home volume
+            <span className="font-medium text-foreground/85">{formatBytes(disk.free)} free</span> of {formatBytes(disk.total, 0)} on the home volume
           </Detail>
         </Section>
       ) : null}
@@ -523,19 +519,19 @@ function MetricPanel({ metric, stats, assessment, error }: { metric: MetricKey; 
       ) : null}
 
       {advice.length > 0 || error ? (
-        <ul className="space-y-1 px-3.5 pb-2.5">
+        <ul className="space-y-1 px-3 pb-3">
           {advice.map((item) => (
-            <li key={item.text} className={`flex gap-2 ${TYPE.meta} leading-snug`}>
-              <span aria-hidden className={`mt-[5px] size-1.5 shrink-0 rounded-full ${VERDICT[item.level].dot}`} />
+            <li key={item.text} className={`flex gap-2 ${TYPE.meta} leading-[14px]`}>
+              <span aria-hidden className={`mt-1 size-1.5 shrink-0 rounded-full ${VERDICT[item.level].dot}`} />
               <span className="text-foreground">{item.text}</span>
             </li>
           ))}
-          {error ? <li className={`${TYPE.meta} text-destructive`}>Last update failed: {error}</li> : null}
+          {error ? <li className={`${TYPE.meta} ${ACCENT_TEXT.rose}`}>Last update failed: {error}</li> : null}
         </ul>
       ) : null}
 
       {metric === "cpu" || metric === "memory" ? (
-        <div className="border-t border-border/50">
+        <div className="border-t border-border/60">
           <TopProcesses cores={cpu.cores} sort={metric} />
         </div>
       ) : null}
@@ -572,7 +568,7 @@ function SpendChart({ days }: { days: AiUsage["days"] }) {
                 <span className="sr-only">{label}</span>
                 <span
                   aria-hidden
-                  className={`w-full rounded-sm transition-[height] duration-500 ${level === "ok" ? (isToday ? "bg-foreground/70" : "bg-muted-foreground/50") : TONE[level].bg}`}
+                  className={`w-full rounded-sm transition-[height] duration-500 ${level === "ok" ? (isToday ? "bg-muted-foreground" : "bg-muted-foreground/50") : TONE[level].bg}`}
                   style={{ height: Math.max(2, y(day.cost)) }}
                 />
               </li>
@@ -613,7 +609,7 @@ function AiUsageSection({ usage }: { usage: AiUsage }) {
         : null;
   const average = week ? week.cost / week.days : null;
   return (
-    <section className="px-3.5 py-2.5">
+    <section className="p-3">
       <h4 className={`mb-2 flex items-center gap-1.5 ${TYPE.label} text-muted-foreground`}>
         <WalletGlyph className="size-3 text-muted-foreground" />
         Shopify AI spend
@@ -625,7 +621,7 @@ function AiUsageSection({ usage }: { usage: AiUsage }) {
       {usage.days.length > 0 ? (
         <SpendChart days={usage.days} />
       ) : (
-        <p className={`pt-2 ${TYPE.meta} ${usage.daysLoading ? "text-muted-foreground" : "text-destructive"}`}>
+        <p className={`pt-2 ${TYPE.meta} ${usage.daysLoading ? "text-muted-foreground" : ACCENT_TEXT.rose}`}>
           {usage.daysLoading ? "Loading daily spend…" : `Daily spend unavailable: ${usage.daysError ?? usage.error ?? "not read yet."}`}
         </p>
       )}
@@ -643,11 +639,11 @@ function AiUsageSection({ usage }: { usage: AiUsage }) {
         {usage.pricingStale ? (
           <span className="block">The proxy has no pricing loaded; costs read $0.</span>
         ) : (
-          <span className="block text-muted-foreground/70">
+          <span className="block text-muted-foreground/80">
             Daily budget {formatMoney(AI_SPEND.warn)}, red past {formatMoney(AI_SPEND.critical)} (the dashed lines).
           </span>
         )}
-        {usage.error ? <span className="block text-destructive">Last update failed: {usage.error}</span> : null}
+        {usage.error ? <span className={`block ${ACCENT_TEXT.rose}`}>Last update failed: {usage.error}</span> : null}
       </Detail>
     </section>
   );
@@ -665,8 +661,8 @@ function TopProcesses({ cores, sort }: { cores: number; sort: "cpu" | "memory" }
   const problem = error ?? value?.error ?? null;
 
   return (
-    <section className="px-3.5 py-2.5">
-      <div className="mb-1.5 flex items-center justify-between gap-3">
+    <section className="p-3">
+      <div className="mb-2 flex items-center justify-between gap-3">
         <h4 className={`${TYPE.label} text-muted-foreground`}>Heaviest apps</h4>
       </div>
       {rows.length > 0 ? (
@@ -679,7 +675,7 @@ function TopProcesses({ cores, sort }: { cores: number; sort: "cpu" | "memory" }
                   <span className="truncate font-medium">{row.name}</span>
                   {row.count > 1 ? <span className={`shrink-0 ${TYPE.meta} tabular-nums text-muted-foreground`}>×{row.count}</span> : null}
                 </span>
-                <Bar value={(metric / top) * 100} tint={sort === "cpu" ? "bg-blue-500/70" : "bg-red-500/70"} className="h-1" />
+                <Bar value={(metric / top) * 100} tint={TONE.ok.bg} className="h-1" />
                 <span className="text-right tabular-nums text-muted-foreground">
                   {sort === "cpu" ? `${(row.cpu / 100).toFixed(row.cpu >= 1000 ? 0 : 1)} core${row.cpu === 100 ? "" : "s"}` : formatBytes(row.memory)}
                 </span>

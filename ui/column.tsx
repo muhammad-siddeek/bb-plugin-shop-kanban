@@ -1,15 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { DragEvent, ReactElement, ReactNode } from "react";
+import type { DragEvent, ReactElement } from "react";
 import { experimental_Icon as Icon, experimental_NewThreadComposer as NewThreadComposer, experimental_useSidebarThreads, useBbContext, useBbNavigate, type NewThreadRequest } from "@get-bb/plugin-sdk/app";
 import { PLUGIN_SLUG } from "../brand";
-import { CLOCK_TICK_MS, STATUS_META, THREAD_DRAG_TYPE, groupTasksByColumn, shortNameFromPrompt, type BoardColumn, type BoardState, type BoardTask } from "./model";
-import { useNow, type BoardApi, type RemoteApi, type ReviewsApi, type WorkApi, type RadarApi } from "./hooks";
+import { CLOCK_TICK_MS, THREAD_DRAG_TYPE, groupTasksByColumn, shortNameFromPrompt, type BoardColumn, type BoardState, type BoardTask } from "./model";
+import { useNow, usePending, type BoardApi, type RemoteApi, type ReviewsApi, type WorkApi, type RadarApi } from "./hooks";
 import { TaskCard } from "./card";
 import { RemoteSection } from "./remote";
 import { ReviewGroup } from "./reviews";
 import { WipLimitControl } from "./wip-limit";
 import { WorkGroup, useWorkItems } from "./work";
-import { CountBadge, DASHED_SLOT, EMPTY_NOTE, GroupHeader, TYPE } from "./primitives";
+import { CountBadge, GroupHeader, Spinner, keyForBox } from "./primitives";
+import { ACCENT_HOVER_TEXT, ALERT_BANNER, COLUMN_INSET, DASHED_SLOT, ELEVATION, EMPTY_NOTE, STATUS_META, TYPE, UNREAD_BADGE } from "./styles";
 import { RadarPanel } from "./radar";
 
 const SCROLL_TO_LATEST_SELECTOR = 'button[aria-label="Scroll to latest event"]';
@@ -54,40 +55,12 @@ function readQueueTab(): QueueTab {
   return QUEUE_TABS.some((tab) => tab.id === stored) ? (stored as QueueTab) : "queue";
 }
 
-/** `set` with `id` added, or `set` itself when it already holds it. */
-function withId(set: ReadonlySet<string>, id: string): ReadonlySet<string> {
-  return set.has(id) ? set : new Set([...set, id]);
-}
-
-/** `set` without `id`, or `set` itself when it doesn't hold it. */
-function withoutId(set: ReadonlySet<string>, id: string): ReadonlySet<string> {
-  if (!set.has(id)) return set;
-  const next = new Set(set);
-  next.delete(id);
-  return next;
-}
-
-/**
- * Thread ids the board applied before the server's board caught up. Each is dropped once the board no longer
- * `holds` its card (the server agrees, or the card left the board).
- */
-function useLocalIds(board: BoardState | null, holds: (task: BoardTask) => boolean) {
-  const [ids, setIds] = useState<ReadonlySet<string>>(() => new Set());
-  useEffect(() => {
-    if (!board || ids.size === 0) return;
-    const next = new Set(board.tasks.filter((task) => holds(task) && ids.has(task.threadId)).map((task) => task.threadId));
-    if (next.size !== ids.size) setIds(next);
-    // `holds` is a pure test written inline: only the board and the ids change its answer.
-  }, [board, ids]);
-  return [ids, setIds] as const;
-}
-
 /** Outline of a column or section while a dragged card is on its way: dashed, solid once the card is over it. */
 function dropOutline(awaiting: boolean, over: boolean): string {
   if (!awaiting) return "";
   return over
-    ? "bg-muted-foreground/12 outline-2 -outline-offset-2 outline-muted-foreground/70"
-    : "outline-2 outline-dashed -outline-offset-2 outline-muted-foreground/45";
+    ? "bg-muted-foreground/15 outline-2 -outline-offset-2 outline-muted-foreground/70"
+    : "outline-2 outline-dashed -outline-offset-2 outline-muted-foreground/50";
 }
 
 /**
@@ -139,17 +112,13 @@ function DropHint({ over, icon, label }: { over: boolean; icon: string; label: s
   return (
     <div
       className={`${DASHED_SLOT} font-medium transition-colors ${
-        over ? "border-muted-foreground/70 bg-card text-foreground" : "border-muted-foreground/40 text-muted-foreground"
+        over ? "border-muted-foreground/70 bg-card text-foreground" : "border-muted-foreground/50 text-muted-foreground"
       }`}
     >
       <Icon name={icon} className="size-3.5" aria-hidden />
       {label}
     </div>
   );
-}
-
-function EmptySlot({ children }: { children: ReactNode }) {
-  return <div className={EMPTY_NOTE}>{children}</div>;
 }
 
 /** The Queue column's header: one uppercase tab per list with its count, underlined in the column's accent when open. */
@@ -172,11 +141,11 @@ function QueueTabs({ tabs, active, onSelect }: {
             aria-selected={selected}
             onClick={() => onSelect(tab.id)}
             className={`relative flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-sm ${TYPE.heading} leading-none transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/60 ${
-              selected ? meta.title : "text-muted-foreground/70 hover:text-foreground"
+              selected ? meta.title : "text-muted-foreground hover:text-foreground"
             }`}
           >
             <span>{tab.label}</span>
-            <CountBadge count={tab.count} tone={tab.id === "radar" ? STATUS_META.blocked.badge : selected ? meta.badge : STATUS_META.parked.badge} />
+            <CountBadge count={tab.count} tone={tab.id === "radar" ? UNREAD_BADGE.rose : selected ? meta.badge : STATUS_META.parked.badge} />
             {selected ? <span aria-hidden className={`pointer-events-none absolute inset-x-0 bottom-0 h-[2px] rounded-full ${meta.accent}`} /> : null}
           </button>
         );
@@ -243,13 +212,11 @@ function AddTaskForm({ defaultProjectId, onAdd, onClose, onError }: {
   };
   return (
     <div
-      className="relative shrink-0 rounded-md border border-sky-500/50 bg-card shadow-sm ring-1 ring-sky-500/10"
+      className={`relative shrink-0 rounded-md border border-sky-500/50 bg-card ${ELEVATION.rest} ring-1 ring-sky-500/15`}
       // Capture phase: bb's composer editor handles Escape itself and the key never bubbles up here. A key from a
       // portaled menu (outside this box), or while one of the composer's own menus is open, stays with that menu.
       onKeyDownCapture={(event) => {
-        if (event.key !== "Escape" || event.nativeEvent.isComposing) return;
-        const box = event.currentTarget;
-        if (!(event.target instanceof Node) || !box.contains(event.target) || box.querySelector('[aria-expanded="true"]')) return;
+        if (event.key !== "Escape" || event.nativeEvent.isComposing || !keyForBox(event.currentTarget, event)) return;
         event.preventDefault();
         event.stopPropagation();
         onClose();
@@ -268,7 +235,7 @@ function AddTaskForm({ defaultProjectId, onAdd, onClose, onError }: {
         type="button"
         onClick={onClose}
         aria-label="Close"
-        className="absolute right-1 top-1 z-10 inline-flex size-5 items-center justify-center rounded-full border border-border bg-card text-muted-foreground shadow-sm transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:size-7"
+        className={`absolute right-1 top-1 z-10 inline-flex size-5 items-center justify-center rounded-full border border-border bg-card text-muted-foreground ${ELEVATION.rest} transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 pointer-coarse:size-7`}
       >
         <Icon name="X" className="size-3 pointer-coarse:size-4" aria-hidden />
       </button>
@@ -291,32 +258,25 @@ function ParkedSection({ tasks, dragging, onDrop, renderCard }: {
     <div role="group" aria-label="Parked" className={`space-y-1 rounded-md pt-1 transition-colors ${dropOutline(dragging, over)}`} {...handlers}>
       <GroupHeader title="Parked" count={tasks.length} />
       {dragging ? <DropHint over={over} icon="Pause" label="Drop to park" /> : null}
-      {tasks.length === 0 && !dragging ? <EmptySlot>Drag a finished thread here to come back to it later</EmptySlot> : null}
+      {tasks.length === 0 && !dragging ? <p className={EMPTY_NOTE}>Drag a finished thread here to come back to it later</p> : null}
       {tasks.map(renderCard)}
     </div>
   );
 }
 
-/** Unread results stay together; only read cards split by their subject, each keeping completion order. */
+/** Work results on top with no header, then Other; both keep the column's completion order, read or not. */
 function DoneTasks({ tasks, renderCard }: { tasks: BoardTask[]; renderCard: (task: BoardTask) => ReactElement }) {
-  const unread: BoardTask[] = [];
-  const work: BoardTask[] = [];
-  const other: BoardTask[] = [];
-  for (const task of tasks) {
-    (task.unread ? unread : task.workstream === "shopify" ? work : other).push(task);
-  }
+  const work = tasks.filter((task) => task.workstream === "shopify");
+  const other = tasks.filter((task) => task.workstream !== "shopify");
   return (
     <>
-      {unread.map(renderCard)}
-      {[
-        { title: "Read · Work", tasks: work },
-        { title: "Read · Other", tasks: other },
-      ].map((group) => group.tasks.length > 0 ? (
-        <div key={group.title} role="group" aria-label={group.title} className="space-y-1 pt-1">
-          <GroupHeader title={group.title} count={group.tasks.length} />
-          {group.tasks.map(renderCard)}
+      {work.map(renderCard)}
+      {other.length > 0 ? (
+        <div role="group" aria-label="Other" className="space-y-1 pt-1">
+          <GroupHeader title="Other" count={other.length} />
+          {other.map(renderCard)}
         </div>
-      ) : null)}
+      ) : null}
     </>
   );
 }
@@ -355,18 +315,18 @@ function BoardColumnView({ column, title, tasks, count, renderCard, dragging, dr
   return (
     <section
       aria-label={title}
-      className={`relative flex min-h-0 min-w-0 flex-col overflow-hidden bg-muted/45 transition-[background-color,outline-color] duration-150 max-sm:snap-start ${dropOutline(awaitingDrop, over)}`}
+      className={`relative flex min-h-0 min-w-0 flex-col overflow-hidden bg-muted/50 transition-[background-color,outline-color] duration-150 max-sm:snap-start ${dropOutline(awaitingDrop, over)}`}
       {...handlers}
     >
       {/* Flush columns' accents meet edge to edge: one status strip along the board's top. */}
-      <span className={`pointer-events-none absolute inset-x-0 top-0 h-[2px] ${meta.accent} opacity-80`} aria-hidden />
+      <span className={`pointer-events-none absolute inset-x-0 top-0 h-[2px] ${meta.accent}`} aria-hidden />
       {/* Text starts on the cards' content edge (column padding + card border + padding), and the stable gutter
           mirrors the scroller's so the header's end lines up with the cards' right edge. */}
-      <header className="flex h-8 shrink-0 items-center gap-1.5 overflow-hidden border-b border-border/60 pl-[15px] pr-1.5 pt-[2px] [scrollbar-gutter:stable] [scrollbar-width:thin]">
+      <header className={`flex h-8 shrink-0 items-center gap-1.5 overflow-hidden border-b border-border/60 ${COLUMN_INSET} pr-1.5 pt-0.5 [scrollbar-gutter:stable] [scrollbar-width:thin]`}>
         {tabs ?? (
           <>
             <h2 className={`truncate ${TYPE.heading} leading-none ${meta.title}`}>{title.toUpperCase()}</h2>
-            {count !== null ? <CountBadge count={count} tone={meta.badge} /> : null}
+            {count !== null ? <CountBadge count={count} tone={column === "done" ? UNREAD_BADGE.emerald : meta.badge} /> : null}
           </>
         )}
         {headerControl}
@@ -386,13 +346,13 @@ function BoardColumnView({ column, title, tasks, count, renderCard, dragging, dr
               <button
                 type="button"
                 onClick={onStartAdding}
-                className={`${EMPTY_NOTE} w-full transition-colors hover:border-sky-500/50 hover:bg-sky-500/5 hover:text-[light-dark(var(--color-sky-700),var(--color-sky-500))] focus-visible:border-sky-500/60 focus-visible:text-[light-dark(var(--color-sky-700),var(--color-sky-500))] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/20`}
+                className={`${EMPTY_NOTE} w-full transition-colors hover:border-sky-500/50 hover:bg-sky-500/15 ${ACCENT_HOVER_TEXT.sky} focus-visible:border-sky-500/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60`}
               >
                 <Icon name="Plus" className="size-3.5" aria-hidden />
                 New thread
               </button>
             ) : tasks.length === 0 && !adding && !awaitingDrop ? (
-              <EmptySlot>No threads</EmptySlot>
+              <p className={EMPTY_NOTE}>No threads</p>
             ) : null}
             {column === "done" ? <DoneTasks tasks={tasks} renderCard={renderCard} /> : tasks.map(renderCard)}
             {parked ? <ParkedSection tasks={parked.tasks} dragging={dragging} onDrop={parked.onDrop} renderCard={renderCard} /> : null}
@@ -424,10 +384,14 @@ export function BoardView({ api, reviews, work, remote, radar }: { api: BoardApi
       }),
     };
   }, [board, liveThreads]);
-  // Cards parked from the board move to Parked right away, before the server's board round-trips.
-  const [parkedLocally, setParkedLocally] = useLocalIds(board, (task) => task.status !== "parked");
+  // Cards parked from the board move to Parked right away, until the server's board has them parked too.
+  const [parkedLocally, changeParked] = usePending<BoardState, true>(board, (_, id, served) =>
+    served.tasks.some((task) => task.threadId === id && task.status !== "parked"),
+  );
   // Cards started from the board: their start button waits until the server's board no longer offers to start them.
-  const [startingIds, setStartingIds] = useLocalIds(board, (task) => task.startable);
+  const [startingIds, changeStarting] = usePending<BoardState, true>(board, (_, id, served) =>
+    served.tasks.some((task) => task.threadId === id && task.startable),
+  );
   const grouped = useMemo(() => groupTasksByColumn(liveBoard, parkedLocally), [liveBoard, parkedLocally]);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const draggingStartable = board?.tasks.some((task) => task.threadId === draggingId && task.startable) ?? false;
@@ -438,11 +402,11 @@ export function BoardView({ api, reviews, work, remote, radar }: { api: BoardApi
     rpc.call("board_remove_task", { threadId }).then(refetch, report);
   };
 
-  const forgetParked = (threadId: string) => setParkedLocally((current) => withoutId(current, threadId));
+  const forgetParked = (threadId: string) => changeParked(threadId, () => undefined);
 
   const parkTask = (threadId: string, parked: boolean) => {
     // Parking shows right away; unparking waits for the server, which decides where the card goes.
-    if (parked) setParkedLocally((current) => withId(current, threadId));
+    if (parked) changeParked(threadId, () => true);
     else forgetParked(threadId);
     rpc.call("board_park_task", { threadId, parked }).then(
       (task) => {
@@ -464,9 +428,9 @@ export function BoardView({ api, reviews, work, remote, radar }: { api: BoardApi
   };
 
   const startTask = (threadId: string) => {
-    setStartingIds((current) => withId(current, threadId));
+    changeStarting(threadId, () => true);
     rpc.call("board_start_task", { threadId }).then(refetch, (cause) => {
-      setStartingIds((current) => withoutId(current, threadId));
+      changeStarting(threadId, () => undefined);
       report(cause);
     });
   };
@@ -519,17 +483,17 @@ export function BoardView({ api, reviews, work, remote, radar }: { api: BoardApi
   // Incoming shows while its lists load, and once Reviews or Assigned has a search configured.
   const incomingShown = !reviews.state || !workItems.state || reviews.state.scopes.includes("me") || workItems.lists.includes("assigned");
   const incomingSection = incomingShown ? (
-    <section aria-label="In" className="space-y-1 pt-1">
+    <section aria-label="In" className="space-y-2 pt-1">
       <ReviewGroup reviews={reviews} now={now} />
       <WorkGroup list="assigned" work={workItems} now={now} />
     </section>
   ) : null;
   const queueBody = queueTab === "outgoing" ? (
-    <div className="space-y-2.5">
+    <div className="space-y-2">
       <WorkGroup list="open" work={workItems} now={now} />
       <WorkGroup list="shipped" work={workItems} now={now} />
     </div>
-  ) : queueTab === "radar" ? <RadarPanel api={radar} onQueued={() => { selectTab("queue"); refetch(); }} /> : null;
+  ) : queueTab === "radar" ? <RadarPanel api={radar} now={now} onQueued={() => { selectTab("queue"); refetch(); }} /> : null;
 
   const renderCard = (task: BoardTask) => (
     <TaskCard
@@ -549,7 +513,6 @@ export function BoardView({ api, reviews, work, remote, radar }: { api: BoardApi
     />
   );
 
-  // groupTasksByColumn puts these first in Done.
   const unreadDone = tasksIn("done").filter((task) => task.unread).length;
 
   const renderColumn = (column: { id: BoardColumn; title: string }) => (
@@ -589,7 +552,7 @@ export function BoardView({ api, reviews, work, remote, radar }: { api: BoardApi
   return (
     <div className="flex h-full min-h-0 flex-col">
       {error ? (
-        <div role="alert" className={`flex shrink-0 items-center gap-2 border-b border-destructive/30 bg-destructive/10 px-3 py-1.5 ${TYPE.body} leading-snug text-destructive`}>
+        <div role="alert" className={`flex shrink-0 items-center gap-2 ${COLUMN_INSET} pr-3 py-1.5 ${ALERT_BANNER} ${TYPE.body} leading-4`}>
           <Icon name="AlertCircle" className="size-4 shrink-0" aria-hidden />
           <span className="min-w-0 flex-1 truncate">{error}</span>
         </div>
@@ -603,8 +566,8 @@ export function BoardView({ api, reviews, work, remote, radar }: { api: BoardApi
         </div>
       ) : error ? null : (
         // Before the first board arrives; if reads fail, only the error above shows while they retry.
-        <div role="status" aria-live="polite" className={`flex flex-1 items-center justify-center gap-2.5 ${TYPE.body} font-medium text-muted-foreground`}>
-          <span className="inline-flex size-4 animate-spin rounded-full border-2 border-muted-foreground/20 border-t-muted-foreground/80" aria-hidden />
+        <div role="status" aria-live="polite" className={`flex flex-1 items-center justify-center gap-2 ${TYPE.body} font-medium text-muted-foreground`}>
+          <Spinner large />
           Loading board…
         </div>
       )}

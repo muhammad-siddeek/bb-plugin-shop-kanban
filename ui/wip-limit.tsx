@@ -1,6 +1,5 @@
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
-import { ACCENT_TEXT } from "./model";
-import { TYPE } from "./primitives";
+import { ACCENT_TEXT, TYPE } from "./styles";
 
 const LIMIT_CHOICES = [0, 1, 2, 3, 4, 5];
 /** Past this many marks a row stops reading at a glance; a count shows instead. */
@@ -48,7 +47,7 @@ export function WorkingMeter({ limit, working, waiting, blocked = 0 }: {
           {marks ? (
             Array.from({ length: slots }, (_, slot) =>
               slot >= working ? (
-                <span key={slot} className="size-2 rounded-full border border-amber-500/60" />
+                <span key={slot} className="size-2 rounded-full border border-amber-500/70" />
               ) : limit !== null && slot >= limit ? (
                 <OverLimitMark key={slot} />
               ) : (
@@ -61,7 +60,7 @@ export function WorkingMeter({ limit, working, waiting, blocked = 0 }: {
         </span>
       ) : null}
       {count ? <span className="tabular-nums" aria-hidden>{count}</span> : null}
-      {waiting > 0 ? <span className="font-medium opacity-80" aria-hidden>+{waiting} waiting</span> : null}
+      {waiting > 0 ? <span className="font-medium" aria-hidden>+{waiting} waiting</span> : null}
       <span className="sr-only">{label}</span>
     </span>
   );
@@ -79,7 +78,7 @@ export function WipLimitControl({ limit, working, waiting, onChange }: {
   const choices = limit === null || LIMIT_CHOICES.includes(limit) ? LIMIT_CHOICES : [...LIMIT_CHOICES, limit].sort((a, b) => a - b);
   return (
     <label
-      className={`relative ml-auto inline-flex h-5 shrink-0 cursor-pointer select-none items-center gap-1.5 rounded-md px-1.5 ${TYPE.badge} leading-none ${ACCENT_TEXT.amber} transition-colors hover:bg-amber-500/10 focus-within:ring-2 focus-within:ring-ring pointer-coarse:h-8`}
+      className={`relative ml-auto inline-flex h-5 shrink-0 cursor-pointer select-none items-center gap-1.5 rounded-md px-1.5 ${TYPE.badge} leading-none ${ACCENT_TEXT.amber} transition-colors hover:bg-amber-500/15 focus-within:ring-2 focus-within:ring-ring/60 pointer-coarse:h-7`}
     >
       {limit === null ? (
         <>
@@ -89,7 +88,7 @@ export function WipLimitControl({ limit, working, waiting, onChange }: {
       ) : (
         <WorkingMeter limit={limit} working={working} waiting={waiting} />
       )}
-      <Icon name="ChevronDown" fallback="ChevronUp" className="size-3 opacity-70" aria-hidden />
+      <Icon name="ChevronDown" fallback="ChevronUp" className="size-3" aria-hidden />
       <select
         aria-label="Working limit"
         value={limit ?? ""}

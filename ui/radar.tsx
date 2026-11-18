@@ -3,10 +3,11 @@ import type { KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import { experimental_Icon as Icon, experimental_NewThreadComposer as NewThreadComposer, useBbNavigate, type NewThreadRequest } from "@get-bb/plugin-sdk/app";
 import { PLUGIN_SLUG } from "../brand";
-import { useNow, type RadarApi } from "./hooks";
-import { ACCENT_TEXT, CARD_EDGE, CARD_SURFACE, CLOCK_TICK_MS, errorMessage, formatShortAge } from "./model";
-import { Age, EMPTY_NOTE, GroupHeader, MARK_FRAME, ROW_ACTION, ROW_ICON_ACTION, Spinner, TWO_LINE_META, TWO_LINE_META_ROW, TWO_LINE_PAD, TYPE, useRowError } from "./primitives";
-import type { RadarItem } from "../server/radar-schema";
+import { usePending, type RadarApi } from "./hooks";
+import { errorMessage, formatShortAge, parseTime } from "./model";
+import { Age, CappedList, GroupHeader, IconMark, Mark, RowActions, Spinner, keyForBox, useRowAction } from "./primitives";
+import { ACCENT_TEXT, ALERT_BANNER, CARD_INSET, ELEVATION, EMPTY_NOTE, ONE_LINE_PAD, ROW_ACTION, TWO_LINE_META, TWO_LINE_META_ROW, TWO_LINE_PAD, TYPE, UNREAD_BADGE, cardFrame, cardTitle } from "./styles";
+import type { RadarItem, RadarState } from "../server/radar-schema";
 
 type RadarDraft = { item: RadarItem; prompt: string | null; error: string | null };
 
@@ -23,28 +24,19 @@ function OpportunityRow({ item, now, onDraft, onDismiss, onThread }: {
   onDismiss: (id: string) => Promise<void>;
   onThread: (threadId: string) => void;
 }) {
-  const [dismissing, setDismissing] = useState(false);
-  const { attempt, view: error } = useRowError();
+  const { attempt, view: error } = useRowAction();
   const read = isRead(item);
-  const created = Date.parse(item.createdAt);
-  const titleClass = `block w-full min-w-0 truncate rounded-sm text-left ${TYPE.title} leading-[18px] ${read ? "font-medium text-muted-foreground" : "font-semibold text-foreground"}`;
+  // Read stays readable: only the mark and the weight change, as on every other card.
+  const titleClass = `block w-full min-w-0 truncate rounded-sm text-left ${cardTitle(!read)} leading-[18px] ${read ? "text-foreground/85" : "text-foreground"}`;
   const open = () => {
     if (item.threadId) onThread(item.threadId);
     else if (!read) onDraft(item);
   };
-  const dismiss = async () => {
-    if (dismissing) return;
-    setDismissing(true);
-    await attempt(() => onDismiss(item.id));
-    setDismissing(false);
-  };
 
   return (
-    <article className={`group relative ${CARD_SURFACE} ${TWO_LINE_PAD} ${read ? CARD_EDGE : "border-border/80 hover:border-sky-500/40 focus-within:border-sky-500/50"}`}>
+    <article className={`group relative ${cardFrame(read ? "muted" : "sky")} ${TWO_LINE_PAD}`}>
       <div className="flex items-start gap-2">
-        <span className={MARK_FRAME} aria-label={read ? "Read opportunity" : "Unread opportunity"}>
-          <Icon name="Zap" className={`size-3.5 fill-current ${read ? "text-muted-foreground/50" : ACCENT_TEXT.sky}`} aria-hidden />
-        </span>
+        <IconMark label={read ? "Read opportunity" : "Unread opportunity"} icon="Zap" filled disc={read ? undefined : UNREAD_BADGE.sky} tone="text-muted-foreground/50" />
         <div className="min-w-0 flex-1">
           {read && !item.threadId ? (
             <p className={titleClass}>{item.title}</p>
@@ -53,15 +45,15 @@ function OpportunityRow({ item, now, onDraft, onDismiss, onThread }: {
               type="button"
               aria-haspopup={read ? undefined : "dialog"}
               onClick={open}
-              className={`${titleClass} decoration-muted-foreground/40 underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60`}
+              className={`${titleClass} hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60`}
             >
               {item.title}
             </button>
           )}
-          {item.summary ? <p className={`mt-0.5 line-clamp-2 ${TYPE.body} leading-[16px] text-muted-foreground/80`}>{item.summary}</p> : null}
+          {item.summary ? <p className={`mt-0.5 line-clamp-2 ${TYPE.body} leading-4 text-muted-foreground/80`}>{item.summary}</p> : null}
           <div className={TWO_LINE_META_ROW}>
             <span className={TWO_LINE_META}>
-              {Number.isFinite(created) ? <><Age at={created} now={now} className="" /> · </> : null}
+              <Age at={item.createdAt} now={now} after=" · " />
               {read ? item.threadId ? "Thread created" : "Read" : "Ready to explore"}
             </span>
             {!read || item.threadId ? (
@@ -70,57 +62,41 @@ function OpportunityRow({ item, now, onDraft, onDismiss, onThread }: {
                 <Icon name={read ? "ArrowUpRight" : "ArrowRight"} className="size-3" aria-hidden />
               </button>
             ) : null}
-            <button
-              type="button"
-              aria-label="Dismiss opportunity"
-              disabled={dismissing}
-              onClick={() => void dismiss()}
-              className={`${ROW_ICON_ACTION} opacity-50 hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100`}
-            >
-              {dismissing ? <Spinner /> : <Icon name="Archive" className="size-3.5" aria-hidden />}
-            </button>
           </div>
           {error}
         </div>
       </div>
+      <RowActions label="Dismiss opportunity" onArchive={() => void attempt(() => onDismiss(item.id))} />
     </article>
   );
 }
 
 function TechniqueRow({ item, now, onOpen }: { item: RadarItem; now: number; onOpen: (item: RadarItem) => Promise<void> }) {
-  const [opening, setOpening] = useState(false);
-  const { attempt, view: error } = useRowError();
-  const created = Date.parse(item.createdAt);
-  const open = async () => {
-    if (opening) return;
-    setOpening(true);
-    await attempt(() => onOpen(item));
-    setOpening(false);
-  };
+  const { attempt, pending, view: error } = useRowAction();
+  const opening = pending !== null;
 
+  // One line, like Done and Out rows: the bulb, the title, its age, and the link out.
   return (
-    <article className={`group ${CARD_SURFACE} px-2 py-2 ${CARD_EDGE} hover:border-sky-500/30 focus-within:border-sky-500/50`}>
-      <div className="flex items-start gap-2">
-        <span className={MARK_FRAME} aria-label="Unread technique">
-          <svg viewBox="0 0 24 24" className={`size-3.5 ${ACCENT_TEXT.sky}`} aria-hidden="true">
+    <article className={`group relative ${cardFrame("sky")} ${ONE_LINE_PAD}`}>
+      <div className="flex h-5 items-center gap-2">
+        <Mark label="Unread technique" disc={UNREAD_BADGE.sky}>
+          <svg viewBox="0 0 24 24" className="size-2.5" aria-hidden="true">
             <path fill="currentColor" d="M12 2a7 7 0 0 0-4.9 12c.9.9 1.4 1.6 1.6 3h6.6c.2-1.4.7-2.1 1.6-3A7 7 0 0 0 12 2Z" />
             <path d="M9 19h6m-5 3h4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
           </svg>
-        </span>
-        <div className="min-w-0 flex-1">
-          <button
-            type="button"
-            disabled={opening}
-            onClick={() => void open()}
-            className={`flex w-full min-w-0 items-start gap-2 rounded-sm text-left ${TYPE.title} font-medium leading-[18px] text-foreground/90 decoration-muted-foreground/40 underline-offset-2 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:pointer-events-none disabled:opacity-60`}
-          >
-            <span className="min-w-0 flex-1 truncate">{item.title}</span>
-            {Number.isFinite(created) ? <Age at={created} now={now} className={`shrink-0 ${TYPE.meta} font-normal tabular-nums text-muted-foreground/60`} /> : null}
-            <span className="mt-0.5 inline-flex shrink-0 text-muted-foreground/40 transition-colors group-hover:text-muted-foreground">{opening ? <Spinner /> : <Icon name="ExternalLink" className="size-3" aria-hidden />}</span>
-          </button>
-          {error}
-        </div>
+        </Mark>
+        <button
+          type="button"
+          disabled={opening}
+          onClick={() => void attempt(() => onOpen(item), "open")}
+          className={`flex min-w-0 flex-1 items-center gap-2 rounded-sm text-left ${cardTitle(true)} leading-[18px] text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:pointer-events-none disabled:opacity-50`}
+        >
+          <span className="min-w-0 flex-1 truncate">{item.title}</span>
+          <Age at={item.createdAt} now={now} className={`shrink-0 ${TYPE.meta} font-normal tabular-nums text-muted-foreground/80`} />
+          <span className="inline-flex shrink-0 text-muted-foreground/50 transition-colors group-hover:text-muted-foreground">{opening ? <Spinner /> : <Icon name="ExternalLink" className="size-3" aria-hidden />}</span>
+        </button>
       </div>
+      {error}
     </article>
   );
 }
@@ -159,7 +135,7 @@ function OpportunityModal({ draft, onRetry, onSubmit, onClose, onQueued }: {
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     const panel = panelRef.current;
     // Composer menus portal outside the dialog. Let their own focus and Escape handlers run first.
-    if (!panel || !(event.target instanceof Node) || !panel.contains(event.target) || panel.querySelector('[aria-expanded="true"]')) return;
+    if (!panel || !keyForBox(panel, event)) return;
     if (event.key === "Escape" && !event.nativeEvent.isComposing) {
       event.preventDefault();
       event.stopPropagation();
@@ -207,7 +183,7 @@ function OpportunityModal({ draft, onRetry, onSubmit, onClose, onQueued }: {
   return createPortal(
     <div
       data-bb-plugin={PLUGIN_SLUG}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4 max-sm:p-2"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 max-sm:p-2"
       onPointerDown={(event) => {
         if (event.target === event.currentTarget) close();
       }}
@@ -221,27 +197,27 @@ function OpportunityModal({ draft, onRetry, onSubmit, onClose, onQueued }: {
         aria-describedby={descriptionId}
         aria-busy={submitting}
         tabIndex={-1}
-        className="relative flex h-[min(52rem,calc(100dvh-2rem))] w-full max-w-5xl flex-col overflow-hidden rounded-xl border border-border bg-background text-foreground shadow-[0_24px_80px_-16px_rgba(0,0,0,0.5)] outline-none max-sm:h-[calc(100dvh-1rem)]"
+        className={`relative flex h-[min(52rem,calc(100dvh-2rem))] w-full max-w-5xl flex-col overflow-hidden rounded-xl border border-border bg-background text-foreground ${ELEVATION.modal} outline-none max-sm:h-[calc(100dvh-1rem)]`}
       >
         <header className="relative shrink-0 border-b border-border px-5 py-4 pr-14 max-sm:px-3 max-sm:pr-12">
-          <h2 id={titleId} className={`${TYPE.title} font-semibold leading-snug`}>{draft.item.title}</h2>
-          <p id={descriptionId} className={`mt-1 ${TYPE.body} leading-snug text-muted-foreground`}>Review the full findings and choose your settings. Nothing runs until you submit.</p>
+          <h2 id={titleId} className={`${TYPE.title} font-semibold leading-[18px]`}>{draft.item.title}</h2>
+          <p id={descriptionId} className={`mt-1 ${TYPE.body} leading-4 text-muted-foreground`}>Review the full findings and choose your settings. Nothing runs until you submit.</p>
           <button
             ref={closeRef}
             type="button"
             onClick={close}
             disabled={submitting}
             aria-label="Close opportunity"
-            className="absolute right-3 top-3 inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 pointer-coarse:size-9"
+            className="absolute right-3 top-3 inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:pointer-events-none disabled:opacity-50 pointer-coarse:size-9"
           >
             <Icon name="X" className="size-4" aria-hidden />
           </button>
         </header>
-        {submitError ? <p role="alert" className={`shrink-0 border-b border-destructive/25 bg-destructive/10 px-5 py-2 ${TYPE.body} text-destructive`}>{submitError}</p> : null}
+        {submitError ? <p role="alert" className={`shrink-0 px-5 py-2 ${ALERT_BANNER} ${TYPE.body} leading-4 max-sm:px-3`}>{submitError}</p> : null}
         <div className="min-h-0 flex-1 p-3 sm:p-5">
           {draft.error ? (
             <div role="alert" className={`flex h-full flex-col items-center justify-center gap-3 text-center ${TYPE.body}`}>
-              <p className="max-w-lg text-destructive">{draft.error}</p>
+              <p className={`max-w-lg ${ACCENT_TEXT.rose}`}>{draft.error}</p>
               <button type="button" onClick={onRetry} className={`${ROW_ACTION} gap-1.5 px-2 hover:bg-accent hover:text-foreground`}>
                 <Icon name="RefreshCw" className="size-3.5" aria-hidden />
                 Load findings again
@@ -267,32 +243,19 @@ function OpportunityModal({ draft, onRetry, onSubmit, onClose, onQueued }: {
   );
 }
 
-export function RadarPanel({ api, onQueued }: { api: RadarApi; onQueued: () => void }) {
+export function RadarPanel({ api, now, onQueued }: { api: RadarApi; now: number; onQueued: () => void }) {
   const navigate = useBbNavigate();
-  const now = useNow(CLOCK_TICK_MS);
   const [draft, setDraft] = useState<RadarDraft | null>(null);
-  const [hidden, setHidden] = useState<ReadonlySet<string>>(() => new Set());
   const { state } = api;
-  const [refreshing, setRefreshing] = useState(false);
-  const { attempt: attemptRefresh, view: refreshError } = useRowError();
-  const refresh = async () => {
-    if (refreshing || state?.running) return;
-    setRefreshing(true);
-    await attemptRefresh(api.refresh);
-    setRefreshing(false);
+  // Dismissed or opened here: hidden at once, until the server's list drops them too.
+  const [hidden, changeHidden] = usePending<RadarState, true>(state, (_, id, served) => served.items.some((item) => item.id === id));
+  const { attempt: attemptRefresh, pending: refreshing, view: refreshError } = useRowAction();
+  const refresh = () => {
+    if (!state?.running) void attemptRefresh(api.refresh, "scan");
   };
 
-  useEffect(() => {
-    if (!state) return;
-    const listed = new Set(state.items.map((item) => item.id));
-    setHidden((current) => {
-      const next = new Set([...current].filter((id) => listed.has(id)));
-      return next.size === current.size ? current : next;
-    });
-  }, [state]);
-
   const hide = (id: string) => {
-    setHidden((current) => new Set([...current, id]));
+    changeHidden(id, () => true);
     api.refetch();
   };
   const loadDraft = async (item: RadarItem) => {
@@ -319,46 +282,42 @@ export function RadarPanel({ api, onQueued }: { api: RadarApi; onQueued: () => v
   const unread = items.filter((item) => !isRead(item));
   const read = items.filter((item) => isRead(item));
   const problems = [api.error, state?.error !== api.error ? state?.error : null].filter((message): message is string => Boolean(message));
-  const generated = state?.generatedAt ? Date.parse(state.generatedAt) : NaN;
-  const generatedAge = Number.isFinite(generated) ? formatShortAge(generated, now) : null;
+  const generated = parseTime(state?.generatedAt ?? null);
+  const generatedAge = generated !== null ? formatShortAge(generated, now) : null;
 
-  const scanning = refreshing || state?.running;
+  const scanning = refreshing !== null || state?.running;
   return (
-    <div className="space-y-2.5">
-      <div className={`flex min-h-8 items-center gap-2 border-b border-border/50 px-[9px] pb-2 ${TYPE.meta}`}>
-        <span role="status" aria-live="polite" className="flex min-w-0 flex-1 items-center gap-1.5 text-muted-foreground/50">
-          {scanning ? <><Spinner /><span className="truncate">Looking for new ideas…</span></> : Number.isFinite(generated) ? (
+    <div className="space-y-2">
+      <div className={`flex min-h-8 items-center gap-2 border-b border-border/60 ${CARD_INSET} pb-2 ${TYPE.meta}`}>
+        <span role="status" aria-live="polite" className="flex min-w-0 flex-1 items-center gap-1.5 text-muted-foreground/80">
+          {scanning ? <><Spinner /><span className="truncate">Looking for new ideas…</span></> : generated !== null ? (
             <time dateTime={state?.generatedAt ?? undefined} title={new Date(generated).toLocaleString()} className="truncate">Updated {generatedAge === "now" ? "just now" : `${generatedAge} ago`}</time>
           ) : <span className="truncate">{state ? "Ready for your first scan" : api.error ? "Radar unavailable" : "Loading Radar…"}</span>}
         </span>
-        <button type="button" aria-label="Refresh Radar" title="Scan for new recommendations" disabled={scanning} onClick={() => void refresh()} className={`${ROW_ACTION} gap-1.5 border border-border/70 bg-background/40 px-2 hover:border-border hover:bg-accent hover:text-foreground disabled:opacity-50`}>
+        <button type="button" aria-label="Refresh Radar" title="Scan for new recommendations" disabled={scanning} onClick={refresh} className={`${ROW_ACTION} gap-1.5 border border-border px-2 hover:bg-accent hover:text-foreground`}>
           <Icon name="RefreshCw" className={`size-3 ${scanning ? "animate-spin" : ""}`} aria-hidden />
           Refresh
         </button>
       </div>
       {refreshError}
-      {problems.map((problem) => <details key={problem} className={`rounded-md border border-amber-500/20 bg-amber-500/5 px-2.5 py-2 ${TYPE.meta} text-muted-foreground`}>
-        <summary className="cursor-pointer font-medium text-foreground/80">Radar couldn't update · show details</summary>
-        <p role="alert" className="mt-1.5 whitespace-pre-wrap break-words leading-relaxed">{problem}</p>
-      </details>)}
-      {state ? (
-        <>
-          <section aria-label="Ranked recommendations" className="space-y-1">
-            <GroupHeader title="Recommendations" count={unread.length} />
-            {unread.length === 0 ? <p className={`px-[9px] py-2 ${TYPE.meta} text-muted-foreground/60`}>No new recommendations. Refresh to look again.</p> : unread.map((item) => item.kind === "opportunity" ? (
-              <OpportunityRow key={item.id} item={item} now={now} onDraft={loadDraft} onDismiss={dismiss} onThread={(threadId) => navigate.toThread(threadId)} />
-            ) : <TechniqueRow key={item.id} item={item} now={now} onOpen={openTechnique} />)}
-          </section>
-          {read.length > 0 ? (
-            <details aria-label="Read opportunities" className="border-t border-border/50 pt-2">
-              <summary className={`cursor-pointer px-[9px] py-1 ${TYPE.label} text-muted-foreground/60 transition-colors hover:text-muted-foreground`}>Read · {read.length}</summary>
-              {read.map((item) => (
-                <OpportunityRow key={item.id} item={item} now={now} onDraft={loadDraft} onDismiss={dismiss} onThread={(threadId) => navigate.toThread(threadId)} />
-              ))}
-            </details>
-          ) : null}
-        </>
-      ) : problems.length === 0 ? <p className={EMPTY_NOTE}>Reading Radar…</p> : null}
+      <section aria-label="Ranked recommendations" className="space-y-1">
+        <GroupHeader title="Recommendations" count={state ? unread.length : null} countTone={UNREAD_BADGE.sky} problems={problems} />
+        {!state ? (
+          <p className={EMPTY_NOTE}>{problems.length > 0 ? "Couldn't read Radar." : "Reading Radar…"}</p>
+        ) : unread.length === 0 ? (
+          <p className={EMPTY_NOTE}>No new recommendations. Refresh to look again.</p>
+        ) : unread.map((item) => item.kind === "opportunity" ? (
+          <OpportunityRow key={item.id} item={item} now={now} onDraft={loadDraft} onDismiss={dismiss} onThread={(threadId) => navigate.toThread(threadId)} />
+        ) : <TechniqueRow key={item.id} item={item} now={now} onOpen={openTechnique} />)}
+      </section>
+      {read.length > 0 ? (
+        <section aria-label="Read opportunities" className="space-y-1">
+          <GroupHeader title="Read" count={read.length} />
+          <CappedList items={read}>
+            {(item) => <OpportunityRow key={item.id} item={item} now={now} onDraft={loadDraft} onDismiss={dismiss} onThread={(threadId) => navigate.toThread(threadId)} />}
+          </CappedList>
+        </section>
+      ) : null}
       {draft ? (
         <OpportunityModal
           key={draft.item.id}

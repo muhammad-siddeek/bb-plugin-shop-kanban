@@ -2,9 +2,10 @@ import { useEffect, useId, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import { experimental_Icon as Icon, useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
 import type { rpcContract } from "../server/schema";
-import { CLOCK_TICK_MS, errorMessage, formatShortAge, type SearchResponse } from "./model";
+import { CLOCK_TICK_MS, errorMessage, type SearchResponse } from "./model";
 import { useNow } from "./hooks";
-import { CHIP, TYPE } from "./primitives";
+import { Age, Spinner, useOutsideClose } from "./primitives";
+import { ACCENT_TEXT, CHIP, ICON_ACTION, POPOVER, TYPE } from "./styles";
 
 const SEARCH_DEBOUNCE_MS = 200;
 
@@ -52,14 +53,7 @@ export function ThreadSearch({ maxListHeight }: { maxListHeight: number }) {
     return () => window.clearTimeout(timer);
   }, [rpc, trimmed, pending, inFlight]);
 
-  useEffect(() => {
-    if (!open) return;
-    const closeOutside = (event: PointerEvent) => {
-      if (!(event.target instanceof Node && rootRef.current?.contains(event.target))) setOpen(false);
-    };
-    document.addEventListener("pointerdown", closeOutside);
-    return () => document.removeEventListener("pointerdown", closeOutside);
-  }, [open]);
+  useOutsideClose(rootRef, open, () => setOpen(false));
 
   const select = (threadId: string) => {
     setOpen(false);
@@ -103,7 +97,7 @@ export function ThreadSearch({ maxListHeight }: { maxListHeight: number }) {
   return (
     // Phones: `static`, so the dropdown spans the whole title bar (the overlay's positioned row) and stays on screen.
     <div ref={rootRef} className="relative min-w-0 max-sm:static">
-      <div className="flex h-7 w-56 items-center gap-1.5 rounded-md border border-border/70 bg-muted/40 pl-2 pr-1 transition-[border-color,box-shadow,background-color] focus-within:border-ring/60 focus-within:bg-background focus-within:ring-2 focus-within:ring-ring/20 lg:w-72 max-lg:w-full pointer-coarse:h-9">
+      <div className="flex h-7 w-56 items-center gap-1.5 rounded-md border border-border bg-muted/50 pl-2 pr-1 transition-[box-shadow,background-color] focus-within:bg-background focus-within:ring-2 focus-within:ring-ring/60 lg:w-72 max-lg:w-full pointer-coarse:h-9">
         <Icon name="Search" className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
         <input
           ref={inputRef}
@@ -125,11 +119,9 @@ export function ThreadSearch({ maxListHeight }: { maxListHeight: number }) {
           spellCheck={false}
           autoComplete="off"
           // 16px on touch: iOS zooms the page into any smaller input that takes focus.
-          className={`h-full min-w-0 flex-1 bg-transparent ${TYPE.body} text-foreground outline-none placeholder:text-muted-foreground/60 [&::-webkit-search-cancel-button]:hidden pointer-coarse:text-base`}
+          className={`h-full min-w-0 flex-1 bg-transparent ${TYPE.body} text-foreground outline-none placeholder:text-muted-foreground/80 [&::-webkit-search-cancel-button]:hidden pointer-coarse:text-base`}
         />
-        {pending ? (
-          <span className="inline-flex size-3 shrink-0 animate-spin rounded-full border-[1.5px] border-muted-foreground/25 border-t-muted-foreground/80" aria-hidden />
-        ) : null}
+        {pending ? <Spinner /> : null}
         {query ? (
           <button
             type="button"
@@ -138,7 +130,7 @@ export function ThreadSearch({ maxListHeight }: { maxListHeight: number }) {
               changeQuery("");
               inputRef.current?.focus();
             }}
-            className="inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:size-7"
+            className={ICON_ACTION.neutral}
           >
             <Icon name="X" className="size-3" aria-hidden />
           </button>
@@ -147,7 +139,7 @@ export function ThreadSearch({ maxListHeight }: { maxListHeight: number }) {
 
       {open && trimmed ? (
         <div
-          className="absolute left-0 top-full z-30 mt-1.5 flex w-[min(30rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-xl border border-border bg-popover text-popover-foreground shadow-[0_12px_32px_-12px_rgba(0,0,0,0.35)] ring-1 ring-black/5 max-sm:inset-x-2 max-sm:w-auto"
+          className={`${POPOVER} left-0 w-[min(30rem,calc(100vw-2rem))]`}
           style={{ maxHeight: `${Math.max(maxListHeight, 120)}px` }}
         >
           {results.length > 0 ? (
@@ -171,12 +163,10 @@ export function ThreadSearch({ maxListHeight }: { maxListHeight: number }) {
                         Archived
                       </span>
                     ) : null}
-                    {result.updatedAt !== null ? (
-                      <span className={`shrink-0 ${TYPE.meta} tabular-nums text-muted-foreground/80`}>{formatShortAge(result.updatedAt, now)}</span>
-                    ) : null}
+                    <Age at={result.updatedAt} now={now} className={`shrink-0 ${TYPE.meta} tabular-nums text-muted-foreground/80`} />
                   </div>
                   {result.snippet ? (
-                    <p className={`mt-0.5 line-clamp-2 ${TYPE.meta} leading-snug text-muted-foreground`}>{result.snippet}</p>
+                    <p className={`mt-0.5 line-clamp-2 ${TYPE.meta} leading-[14px] text-muted-foreground`}>{result.snippet}</p>
                   ) : null}
                 </li>
               ))}
@@ -186,12 +176,12 @@ export function ThreadSearch({ maxListHeight }: { maxListHeight: number }) {
             <div
               role="status"
               aria-live="polite"
-              className={`flex shrink-0 items-start gap-1.5 px-3.5 py-2 ${TYPE.meta} leading-snug ${results.length > 0 ? "border-t border-border/60" : ""}`}
+              className={`flex shrink-0 items-start gap-1.5 px-3 py-2 ${TYPE.meta} leading-[14px] ${results.length > 0 ? "border-t border-border/60" : ""}`}
             >
               {error ? (
                 <>
-                  <Icon name="AlertCircle" className="mt-px size-3.5 shrink-0 text-destructive" aria-hidden />
-                  <span className="min-w-0 text-destructive">{error}</span>
+                  <Icon name="AlertCircle" className={`size-3.5 shrink-0 ${ACCENT_TEXT.rose}`} aria-hidden />
+                  <span className={`min-w-0 ${ACCENT_TEXT.rose}`}>{error}</span>
                 </>
               ) : (
                 <span className="text-muted-foreground">{status}</span>

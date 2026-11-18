@@ -1,5 +1,51 @@
 # Changelog
 
+## 0.27.0
+
+- Queue's Assigned section no longer shows a count badge beside its header.
+- Done shows Shopify work first with no header, then an **Other** section,
+  instead of unread cards followed by **Read · Work** and **Read · Other**.
+  Both keep newest finish first whether read or not, so opening or marking a
+  card unread no longer moves it.
+- Working cards no longer show an activity timestamp; their description uses
+  the full remaining width of the second row.
+- One closed size set on a 4px grid (2px half-steps inside rows), defined in
+  `ui/styles.ts`: cards and rows sit 4px apart and groups 8px apart in every
+  column (the In and Out stacks used 4px and 10px); the resource and AI spend
+  popovers pad 12px instead of 14 by 10; wrapping meta uses one 14px line
+  height instead of `leading-snug`'s 13.75px; Show more is a 20px row 4px
+  under the last card instead of 20.5px and 8px; the board's error banner
+  lines up with the cards' text; the blocked mark's glyph is 10px instead of
+  10.5px.
+- Every card has a thin state-colored rail on its left edge: the blocked
+  stripe, extended to each thread state and to work, review, remote and Radar
+  cards. Icons, chips, controls and sizes are unchanged.
+- Unread marks and counts are solid circles and pills with white text: new
+  review requests, Radar recommendations, the Done column's and Radar tab's
+  unread counts, and Reviews' `N new`, matching the unread Done check.
+- One look per element across every card type: the same border at rest and
+  for unread; one mark frame and glyph size; titles semibold, bold while
+  unread (Radar's read titles stay readable instead of greyed); every small
+  icon button tints on keyboard focus as on hover, and the Hide board button
+  has a single style.
+- Palette: the title bar's amber and red chips and the Working spinner use the
+  board's darker light-theme shades; the heaviest-apps bars are grey instead
+  of blue and red.
+- One closed color set: sky, amber, rose and emerald each mean one thing, the
+  rest is bb's theme greys, and every tint, line and edge uses one of three
+  alpha steps (15%, 50%, 70%). Errors in the board banner, the Radar dialog,
+  search and the title bar's panels are rose in the readable shade instead of
+  the theme's destructive red, which measured about 2:1 on dark. Focus rings,
+  the resize handle and the search box use the theme's ring and greys instead
+  of its primary color; shadows come from four elevation steps.
+- Radar matches the other lists: dismiss moved into the hover overlay, the
+  empty state is the dashed note, Read opportunities sit under a `Read` header
+  capped at 8, scan failures are an amber mark on the Recommendations header
+  instead of boxes, and techniques take the 28px one-line row height.
+- Simpler UI code with no change in behavior: one age, busy-action,
+  optimistic-update, popover, spinner and capped-list helper each, and every
+  shared style token in `ui/styles.ts`.
+
 ## 0.26.0
 
 - The board's new-thread form opens on the project bb's New thread page last
