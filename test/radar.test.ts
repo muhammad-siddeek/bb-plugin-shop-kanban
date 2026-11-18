@@ -131,21 +131,21 @@ test("automatic refresh scans once per work hour in Toronto and never outside wo
     await harness.behavior.runSchedule("radar-daily");
   };
   try {
-    await tick("2026-11-16T11:55:00Z"); // 06:55 EST
+    await tick("2026-11-16T11:55:00Z");
     assert.deepEqual(actions, []);
-    await tick("2026-11-16T12:00:00Z"); // 07:00 EST
+    await tick("2026-11-16T12:00:00Z");
     await tick("2026-11-16T12:55:00Z");
-    await tick("2026-11-16T13:00:00Z"); // 08:00 is an ordinary scan.
+    await tick("2026-11-16T13:00:00Z");
     await tick("2026-11-16T13:05:00Z");
     await tick("2026-11-16T14:00:00Z");
     ({ bb, harness } = await harness.lifecycle.reload((next) => { createRadar(next, async () => {}); }));
-    await tick("2026-11-16T14:05:00Z"); // Reload keeps the completed hour.
-    await tick("2026-11-16T20:00:00Z"); // 15:00 EST
+    await tick("2026-11-16T14:05:00Z");
+    await tick("2026-11-16T20:00:00Z");
     await tick("2026-11-16T21:00:00Z");
     assert.deepEqual(actions, ["scan", "scan", "scan", "scan"]);
-    await tick("2026-11-21T12:00:00Z"); // Saturday 07:00: no hourly refresh.
+    await tick("2026-11-21T12:00:00Z");
     assert.deepEqual(actions, ["scan", "scan", "scan", "scan"]);
-    await tick("2027-03-15T11:00:00Z"); // 07:00 EDT after DST changes.
+    await tick("2027-03-15T11:00:00Z");
     assert.equal(actions.at(-1), "scan");
     assert.equal(actions.length, 5);
     await harness.behavior.setSettings({ radarEnabled: false });

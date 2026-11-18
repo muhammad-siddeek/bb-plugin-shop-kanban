@@ -3,7 +3,6 @@ import { test } from "node:test";
 import { parseIssue, selectBacklog } from "../../host/radar/backlog";
 import { CONFIG } from "../../host/radar/config";
 
-// Shape of `vault.get_issue` output (2026-10).
 const issueMd = (o: { title: string; due?: string; assignees: [id: string, name: string][] }) => `# ${o.title}
 
 - **URL**: https://vault.shopify.io/teams/2902-ExP/issues/1-x

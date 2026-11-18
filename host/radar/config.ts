@@ -18,7 +18,6 @@ export const CONFIG = {
   team: {
     name: "ExP",
     vaultId: "2902",
-    // Vault issues page the resiliency backlog reads: every open issue on it, nothing pre-filtered.
     issuesUrl: "https://vault.shopify.io/teams/2902-ExP/issues",
     channels: [
       { id: "C0591HU360M", name: "exp-team" },
@@ -26,46 +25,29 @@ export const CONFIG = {
     ],
   },
   model: "claude-sonnet-5-5",
-  // The host owns scheduling; all engine dates follow the same Toronto calendar.
   timezone: "America/Toronto",
-
   userCacheMaxAgeDays: 30,
-
-  // Classification batches bound individual model calls, never the discoveries retained.
+  leadersBootstrapDays: 30,
   classifyBatchSize: 15,
-
-  // Gates
+  updateBatchChars: 80_000,
   minCategoryConfidence: 0.6,
   minMatchStrength: 0.7,
-  // Pairings at or above this fit are rated P0 (matcher rubric: "directly hits the problem's stated pain").
   p0MatchStrength: 0.85,
   minReactors: 2,
-  // Ranking weights (priority order: ExP fit, leadership, traction).
   weights: { match: 0.5, leadership: 0.3, traction: 0.2 },
-  // A reported idea may reappear only when its traction grew by this factor.
   resurfaceFactor: 2,
-
   feedbackExamples: 15,
-  // Resiliency backlog (open Vault issues): anyone's issue shows once its SLA fix-due date is at most this many
-  // days away; open issues assigned to you always show.
   backlogDueWithinDays: 1,
 };
 
 export const KEEP_CATEGORIES = ["new_tech", "new_finding", "leadership_push"] as const;
 
 export interface WatchSources {
-  /** `includeBots` for alert channels, where recurring alerts are the signal. */
   channels: { id: string; name: string; includeBots?: boolean }[];
-  /** GitHub `owner/repo`; PRs updated since each repo's durable checkpoint are judged. */
   repos: string[];
-  /**
-   * Vault teams judged as a snapshot: active GSD projects (direct team only) and open issues (Vault includes
-   * subtree teams, so list a parent once rather than it and its children).
-   */
   vault: { projectTeams: string[]; issueTeams: string[] };
 }
 
-// Every refresh checks the same sources; cursors restrict judging to new activity.
 export const WATCH: WatchSources = {
   channels: [
     { id: "C0132GND4TB", name: "help-exp" },
@@ -83,21 +65,13 @@ export const WATCH: WatchSources = {
     { id: "C0AKUSQ9SD6", name: "proj-static-shop-cloner" },
   ],
   repos: ["Shopify/experiments-data", "Shopify/exp-stats", "shopify-playground/verdict-rust-core", "shopify-playground/merchant-experimentation-data"],
-  // Optimization's issue list includes ExP; don't fetch those issues twice.
   vault: { projectTeams: ["2902", "16737"], issueTeams: ["16737"] },
 };
 
 export const WATCH_LIMITS = {
-  // Only a big ask with a big solution the team could plausibly accept makes the digest. Scores are 1-5. The
-  // best-ranked solution (fit + buy-in) is usually the direct fix, so the gate looks at every credible solution.
   minAsk: 4,
   minAmbition: 4,
-  /** A solution counts as credible with fit and buy-in both at least this. */
   minCredible: 3,
-  /**
-   * Judge input is split into chunks of about this many characters (~100K tokens). Chunks are judged separately and
-   * may name one problem differently, so a sweep should fit in one.
-   */
   chunkChars: 400_000,
 };
 

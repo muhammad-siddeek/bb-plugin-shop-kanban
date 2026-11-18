@@ -1,9 +1,9 @@
-// Slack reads via Tool Gateway. All programs slim payloads server-side before returning.
 import { CONFIG, PATHS } from "./config";
-import { lit, runCode } from "./gateway";
+import { GatewayError, lit, OUTPUT_BUDGET, runCode, TIME_BUDGET_MS } from "./gateway";
+import { delay } from "./runtime";
 import { ageDays, readJson, writeJson } from "./store";
 
-export interface Reaction {
+interface Reaction {
   name: string;
   count: number;
   users: string[];
@@ -19,7 +19,6 @@ export interface Message {
   reactions: Reaction[];
   attachments: string[];
   files: string[];
-  /** ts of the newest thread reply; absent when the message has no replies. */
   latestReply?: string;
 }
 
@@ -30,14 +29,12 @@ export interface Reply {
   text: string;
 }
 
-/** Every known parent is retained, including quiet threads that may receive their first reply years later. */
 export interface SlackChannelState {
   threads: Record<string, { message: Message; replies: Reply[] }>;
 }
 
-export interface ChannelScan {
+interface ChannelScan {
   messages: Message[];
-  /** Only replies newer than the caller's checkpoint, for opportunity evidence. */
   updates: Record<string, Reply[]>;
   state: SlackChannelState;
 }
@@ -48,8 +45,6 @@ export interface UserInfo {
   at: string;
 }
 
-// Raw Slack Web API shapes (subset) used inside code-mode programs. The gateway types these
-// responses as opaque JSON, so programs cast once at the boundary.
 const RAW_TYPES = `
 interface RawReaction { name: string; count: number; users?: string[] }
 interface RawAttachment { author_name?: string; title?: string; text?: string; fallback?: string; from_url?: string; original_url?: string }
@@ -81,6 +76,35 @@ const slim = (m: RawMessage): SlimMessage => ({
   ...(m.latest_reply ? { latestReply: String(m.latest_reply) } : {}),
 });`;
 
+const PACED = `
+let throttled = false;
+const deadline = Date.now() + ${TIME_BUDGET_MS};
+const open = () => !throttled && Date.now() < deadline;
+const unthrottled = async <T>(call: () => Promise<T>): Promise<T | undefined> => {
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      return await call();
+    } catch (error) {
+      if (!(error instanceof Error) || !/^ratelimited$|"error":"rate_limited"/.test(error.message)) throw error;
+    }
+  }
+  throttled = true;
+  return undefined;
+};`;
+
+const THROTTLE_PAUSE_MS = [5_000, 15_000, 45_000, 90_000];
+const PROFILE_PAUSE_MS = THROTTLE_PAUSE_MS.slice(0, 2);
+
+function pacer(pauses = THROTTLE_PAUSE_MS): (stopped: { throttled: boolean }, progressed: boolean) => Promise<void> {
+  let stalls = 0;
+  return async ({ throttled }, progressed) => {
+    if (progressed) stalls = 0;
+    if (!throttled) return;
+    if (stalls >= pauses.length) throw new GatewayError("ratelimit", "Slack stayed rate-limited");
+    await delay(pauses[stalls++]);
+  };
+}
+
 const SKIP_SUBTYPES: Record<string, true> = {
   channel_join: true,
   channel_leave: true,
@@ -89,99 +113,156 @@ const SKIP_SUBTYPES: Record<string, true> = {
   bot_message: true,
 };
 
-/**
- * Top-level channel messages newer than `oldestSec` (unix seconds), newest first. Bot posts are dropped unless
- * `includeBots` (alert channels, where recurring alerts are the signal).
- */
+const THREADS_PER_PROGRAM = 50;
+
 export async function fetchMessages(channelId: string, oldestSec: number, opts: { includeBots?: boolean; latest?: number } = {}): Promise<Message[]> {
-  const rows = await runCode<(Message & { subtype: string })[]>(`
-await slack.who_am_i();
+  const rows: (Message & { subtype: string })[] = [];
+  const seen = new Set<string>();
+  const pace = pacer();
+  let cursor: string | null = null;
+  for (;;) {
+    const page: { messages: (Message & { subtype: string })[]; cursor: string | null; done: boolean; pages: number; throttled: boolean } = await runCode(`
+${PACED}
 ${RAW_TYPES}
 const out: SlimMessage[] = [];
-let cursor: string | undefined;
-const seen = new Set<string>();
-for (;;) {
-  const r = (await slack.read_channel(${lit(channelId)}, {
+const seen = new Set<string>(${lit([...seen])});
+let cursor: string | undefined = ${cursor === null ? "undefined" : lit(cursor)};
+let size = 0;
+let pages = 0;
+while (open() && size < ${OUTPUT_BUDGET}) {
+  const r = (await unthrottled(() => slack.read_channel(${lit(channelId)}, {
     limit: 100, oldest: ${lit(String(oldestSec))}, format: 'json',
     ...${lit(opts.latest === undefined ? {} : { latest: String(opts.latest) })}, ...(cursor ? { cursor } : {}),
-  })) as unknown as RawPage;
+  }))) as unknown as RawPage | undefined;
+  if (!r) break;
   if (!r.ok) throw new Error('read_channel failed: ' + JSON.stringify(r).slice(0, 300));
-  out.push(...(r.messages ?? []).map(slim));
+  pages++;
+  const page = (r.messages ?? []).map(slim);
+  out.push(...page);
+  size += JSON.stringify(page).length;
   const next = r.response_metadata?.next_cursor?.trim();
-  if (!next && !r.has_more) break;
+  if (!next && !r.has_more) return { messages: out, cursor: null, done: true, pages, throttled };
   if (!next || seen.has(next)) throw new Error('Slack channel pagination did not finish');
   seen.add(next);
   cursor = next;
 }
-return out;`);
+return { messages: out, cursor: cursor ?? null, done: false, pages, throttled };`);
+    rows.push(...page.messages);
+    if (page.done) break;
+    cursor = page.cursor;
+    if (cursor !== null) seen.add(cursor);
+    await pace(page, page.pages > 0);
+  }
   return rows
     .filter((m) => !SKIP_SUBTYPES[m.subtype] || (opts.includeBots && m.subtype === "bot_message"))
     .map(({ subtype: _, ...m }) => m);
 }
 
-/** Read every reply after `oldest`, following all pages; the parent is excluded. */
 export async function fetchThreads(
   channelId: string,
   parents: string[],
   opts: { oldest?: string; latest?: string } = {},
 ): Promise<Record<string, Reply[]>> {
-  if (parents.length === 0) return {};
-  return runCode<Record<string, Reply[]>>(`
-await slack.who_am_i();
+  const out: Record<string, Reply[]> = {};
+  const pace = pacer();
+  let queue: { ts: string; cursor?: string }[] = parents.map((ts) => ({ ts }));
+  while (queue.length) {
+    const batch = queue.slice(0, THREADS_PER_PROGRAM);
+    const result = await runCode<{
+      replies: Record<string, Reply[]>;
+      resume: { ts: string; cursor?: string }[];
+      read: number;
+      pages: number;
+      throttled: boolean;
+    }>(`
+${PACED}
 ${RAW_TYPES}
-const parents: string[] = ${lit(parents)};
-const out: Record<string, { ts: string; user: string; userName: string; text: string }[]> = {};
-for (let i = 0; i < parents.length; i += 5) {
-  await Promise.all(parents.slice(i, i + 5).map(async (ts) => {
-    const replies = new Map<string, { ts: string; user: string; userName: string; text: string }>();
-    let cursor: string | undefined;
-    const seen = new Set<string>();
+type Reply = { ts: string; user: string; userName: string; text: string };
+const batch: { ts: string; cursor?: string }[] = ${lit(batch)};
+const replies: Record<string, Reply[]> = {};
+const resume: { ts: string; cursor?: string }[] = [];
+let size = 0;
+let read = 0;
+let pages = 0;
+while (read < batch.length && open() && size < ${OUTPUT_BUDGET}) {
+  const group = batch.slice(read, read + 5);
+  read += group.length;
+  await Promise.all(group.map(async ({ ts, cursor: start }) => {
+    const rows: Reply[] = (replies[ts] = []);
+    const seen = new Set<string>(start ? [start] : []);
+    let cursor = start;
     for (;;) {
-      const r = (await slack.read_thread(${lit(channelId)}, ts, {
+      const r = (await unthrottled(() => slack.read_thread(${lit(channelId)}, ts, {
         limit: 100, format: 'json', ...${lit(opts)}, ...(cursor ? { cursor } : {}),
-      })) as unknown as RawPage;
+      }))) as unknown as RawPage | undefined;
+      if (!r) {
+        resume.push(cursor ? { ts, cursor } : { ts });
+        return;
+      }
       if (!r.ok) throw new Error('read_thread failed: ' + JSON.stringify(r).slice(0, 300));
-      for (const m of r.messages ?? []) if (m.ts !== ts) replies.set(String(m.ts), {
+      pages++;
+      const page = (r.messages ?? []).filter((m) => m.ts !== ts).map((m) => ({
         ts: String(m.ts), user: String(m.user ?? m.bot_id ?? ''), userName: authorName(m), text: String(m.text ?? ''),
-      });
+      }));
+      rows.push(...page);
+      size += JSON.stringify(page).length;
       const next = r.response_metadata?.next_cursor?.trim();
-      if (!next && !r.has_more) break;
+      if (!next && !r.has_more) return;
       if (!next || seen.has(next)) throw new Error('Slack thread pagination did not finish');
       seen.add(next);
+      if (!open() || size >= ${OUTPUT_BUDGET}) {
+        resume.push({ ts, cursor: next });
+        return;
+      }
       cursor = next;
     }
-    out[ts] = [...replies.values()].sort((a, b) => Number(a.ts) - Number(b.ts));
   }));
 }
-return out;`);
+return { replies, resume, read, pages, throttled };`);
+    for (const [ts, replies] of Object.entries(result.replies)) (out[ts] ??= []).push(...replies);
+    queue = [...result.resume, ...queue.slice(result.read)];
+    await pace(result, result.pages > 0);
+  }
+  for (const [ts, replies] of Object.entries(out)) {
+    out[ts] = [...new Map(replies.map((reply) => [reply.ts, reply])).values()].sort((a, b) => Number(a.ts) - Number(b.ts));
+  }
+  return out;
 }
 
-/** A one-message header read refreshes edits and reactions without rereading old reply pages. */
 async function fetchParents(channelId: string, parents: string[], now: number): Promise<Record<string, Message>> {
-  if (!parents.length) return {};
-  return runCode<Record<string, Message>>(`
-await slack.who_am_i();
+  const out: Record<string, Message> = {};
+  const pace = pacer();
+  let pending = parents;
+  while (pending.length) {
+    const result = await runCode<{ parents: Record<string, Message>; throttled: boolean }>(`
+${PACED}
 ${RAW_TYPES}
-const parents: string[] = ${lit(parents)};
+const batch: string[] = ${lit(pending.slice(0, THREADS_PER_PROGRAM))};
 const out: Record<string, Omit<SlimMessage, 'subtype'>> = {};
-for (let index = 0; index < parents.length; index += 5) {
-  await Promise.all(parents.slice(index, index + 5).map(async (ts) => {
-    const result = (await slack.read_thread(${lit(channelId)}, ts, { limit: 1, latest: ${lit(String(now))}, format: 'json' })) as unknown as RawPage;
+let size = 0;
+let read = 0;
+while (read < batch.length && open() && size < ${OUTPUT_BUDGET}) {
+  const group = batch.slice(read, read + 5);
+  read += group.length;
+  await Promise.all(group.map(async (ts) => {
+    const result = (await unthrottled(() => slack.read_thread(${lit(channelId)}, ts, { limit: 1, latest: ${lit(String(now))}, format: 'json' }))) as unknown as RawPage | undefined;
+    if (!result) return;
     if (!result.ok) throw new Error('read_thread parent failed: ' + JSON.stringify(result).slice(0, 300));
     const parent = result.messages?.find((message) => message.ts === ts);
     if (!parent) throw new Error('Slack did not return thread parent ' + ts);
     const { subtype, ...message } = slim(parent);
     out[ts] = message;
+    size += JSON.stringify(message).length;
   }));
 }
-return out;`);
+return { parents: out, throttled };`);
+    Object.assign(out, result.parents);
+    pending = pending.filter((ts) => !Object.hasOwn(result.parents, ts));
+    await pace(result, Object.keys(result.parents).length > 0);
+  }
+  return out;
 }
 
-/**
- * Resume channel history at its durable checkpoint and poll every retained parent for newer replies. An imported
- * cursor without a thread index bootstraps that index from the beginning, but only newer activity is rediscovered.
- * Nothing is persisted here: callers commit this state only after all judging and inbox publication succeed.
- */
 export async function scanChannel(
   channelId: string,
   since: number,
@@ -189,7 +270,7 @@ export async function scanChannel(
   previous?: SlackChannelState,
   opts: { includeBots?: boolean } = {},
 ): Promise<ChannelScan> {
-  const history = await fetchMessages(channelId, previous ? since : 0, { ...opts, latest: now });
+  const history = await fetchMessages(channelId, since, { ...opts, latest: now });
   const threads = { ...previous?.threads };
   for (const message of history) {
     if (Number(message.ts) > now) continue;
@@ -197,7 +278,7 @@ export async function scanChannel(
   }
   const parents = Object.keys(threads);
   const headers = await fetchParents(channelId, parents, now);
-  const fetched = await fetchThreads(channelId, parents, { oldest: String(previous ? since : 0), latest: String(now) });
+  const fetched = await fetchThreads(channelId, parents, { oldest: String(since), latest: String(now) });
   const messages: Message[] = [];
   const updates: Record<string, Reply[]> = {};
   for (const [ts, thread] of Object.entries(threads)) {
@@ -230,28 +311,36 @@ export async function scanChannel(
   return { messages, updates, state: { threads } };
 }
 
-/** Resolve Slack user IDs to name + title, cached on disk. */
 export async function resolveUsers(ids: Iterable<string>): Promise<Record<string, UserInfo>> {
   const cache = readJson<Record<string, UserInfo>>(PATHS.users, {});
-  const missing = [...new Set(ids)].filter(
-    (id) => /^[UW][A-Z0-9]+$/.test(id) && ageDays(cache[id]?.at) > CONFIG.userCacheMaxAgeDays,
-  );
-  for (let i = 0; i < missing.length; i += 25) {
-    const batch = missing.slice(i, i + 25);
-    const got = await runCode<Record<string, { name: string; title: string }>>(`
-await slack.who_am_i();
-const ids: string[] = ${lit(batch)};
-const out: Record<string, { name: string; title: string }> = {};
-await Promise.all(ids.map(async (id) => {
-  const p: unknown = await slack.read_user_profile({ user_id: id, response_format: 'detailed' });
+  const pace = pacer(PROFILE_PAUSE_MS);
+  let pending = [...new Set(ids)]
+    .filter((id) => /^[UW][A-Z0-9]+$/.test(id) && ageDays(cache[id]?.at) > CONFIG.userCacheMaxAgeDays)
+    .sort((a, b) => ageDays(cache[b]?.at) - ageDays(cache[a]?.at) || 0);
+  try {
+    while (pending.length) {
+      const got = await runCode<{ users: Record<string, { name: string; title: string }>; throttled: boolean }>(`
+${PACED}
+const ids: string[] = ${lit(pending.slice(0, 25))};
+const users: Record<string, { name: string; title: string }> = {};
+for (const id of ids) {
+  if (!open()) break;
+  const p: unknown = await unthrottled(() => slack.read_user_profile({ user_id: id, response_format: 'detailed' }));
+  if (p === undefined) break;
   const t = typeof p === 'string' ? p : String((p as { result?: unknown }).result ?? '');
   const field = (k: string) => (t.match(new RegExp('^' + k + ':[ \\\\t]*(.*)$', 'm'))?.[1] ?? '').trim();
-  out[id] = { name: field('Real Name') || field('Display Name'), title: field('Title') };
-}));
-return out;`);
-    const at = new Date().toISOString();
-    for (const [id, u] of Object.entries(got)) cache[id] = { ...u, at };
-    writeJson(PATHS.users, cache);
+  users[id] = { name: field('Real Name') || field('Display Name'), title: field('Title') };
+}
+return { users, throttled };`);
+      const at = new Date().toISOString();
+      for (const [id, u] of Object.entries(got.users)) cache[id] = { ...u, at };
+      if (Object.keys(got.users).length) writeJson(PATHS.users, cache);
+      pending = pending.filter((id) => !Object.hasOwn(got.users, id));
+      await pace(got, Object.keys(got.users).length > 0);
+    }
+  } catch (error) {
+    if (!(error instanceof GatewayError && error.kind === "ratelimit")) throw error;
+    console.error(`[radar] user profiles: ${pending.length} left for the next run, Slack rate-limited`);
   }
   return cache;
 }

@@ -1,8 +1,10 @@
-// Tool Gateway code-mode client: runs a TypeScript program against Slack/Vault/GitHub backends.
-import { delay, safeMessage, throwIfAborted, token, withTimeout } from "./runtime";
+import { retry, safeMessage, token, withTimeout } from "./runtime";
 
 const ENDPOINT = "https://tool-gateway.shopify.io/codemode/mcp";
 const RETRY_BACKOFF_MS = [15_000, 45_000, 90_000];
+
+export const OUTPUT_BUDGET = 400_000;
+export const TIME_BUDGET_MS = 30_000;
 
 export class GatewayError extends Error {
   kind: "auth" | "ratelimit" | "transient" | "tool" | "http";
@@ -14,12 +16,12 @@ export class GatewayError extends Error {
 
 let rpcId = 0;
 
-/** The gateway reports backend failures either as a JSON-RPC error or as an `isError` result; classify both alike. */
 function failure(text: string): GatewayError {
   text = safeMessage(text);
   if (/rate_?limit|rate limit|\b429\b/i.test(text)) return new GatewayError("ratelimit", text.slice(0, 300));
-  // Vault refresh/reconnect races and temporary backend connection failures are safe to retry.
-  if (/(please|safe to) retry|error executing tool: fetch failed/i.test(text)) return new GatewayError("transient", text.slice(0, 300));
+  if (/(please|safe to) retry|error executing tool: fetch failed|"error":"network_error"|code execution timed out/i.test(text)) {
+    return new GatewayError("transient", text.slice(0, 300));
+  }
   if (/not_authed|invalid_auth|token_expired|unauthori[sz]ed|reconnect slack/i.test(text)) {
     return new GatewayError("auth", text.slice(0, 300));
   }
@@ -30,7 +32,6 @@ function parseResponse<T>(text: string): T {
   try {
     return JSON.parse(text) as T;
   } catch {
-    // Native JSON errors can quote response fragments containing credentials.
     throw new GatewayError("http", "Tool Gateway returned invalid JSON");
   }
 }
@@ -60,25 +61,25 @@ async function callOnce(code: string): Promise<string> {
     if (!res.ok) throw new GatewayError("http", `Tool Gateway HTTP ${res.status}: ${safeMessage(await res.text()).slice(0, 300)}`);
 
     const raw = await res.text();
-    // Streamable HTTP may answer as SSE; take the last JSON-RPC payload.
     const payload = (res.headers.get("content-type") ?? "").includes("text/event-stream")
       ? raw.split("\n").filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trim()).pop() ?? ""
       : raw;
-    const body = parseResponse(payload) as {
+    const body = parseResponse<{
       error?: { message: string };
       result?: { content?: { type: string; text?: string }[]; isError?: boolean };
-    };
+    }>(payload);
     if (body.error) throw failure(body.error.message);
     const text = (body.result?.content ?? []).map((part) => part.text ?? "").join("");
     if (body.result?.isError || text.startsWith("Error:")) throw failure(text);
+    if (text.endsWith("[stdout truncated]")) {
+      throw new GatewayError("tool", `Tool Gateway truncated a program result over its output limit (${text.length} bytes)`);
+    }
     return text;
   });
 }
 
-// The gateway's bearer redactor can swallow the escaping quote in serialized Slack text. Scrub each
-// result string before it reaches that redactor, keeping the returned JSON parseable.
-// `Json` is the gateway's ambient type for program results.
-const SCRUB_PRELUDE = `
+const PRELUDE = `
+const str = (x: unknown) => (typeof x === 'string' ? x : JSON.stringify(x));
 function scrubResult(v: unknown): Json {
   if (typeof v === 'string') return v.replace(/bearer\\s+[^\\s"]*/gi, '[REDACTED]');
   if (Array.isArray(v)) return v.map(scrubResult);
@@ -86,25 +87,16 @@ function scrubResult(v: unknown): Json {
   return v as Json;
 }`;
 
-/** Run a code-mode program and parse its JSON return value. Retry only rate limits and transient backend errors. */
-export async function runCode<T>(code: string): Promise<T> {
-  const program = `${SCRUB_PRELUDE}
+export function runCode<T>(code: string): Promise<T> {
+  const program = `${PRELUDE}
 return scrubResult(await (async () => {
 ${code}
 })());`;
-  for (let attempt = 0; ; attempt++) {
-    throwIfAborted();
-    try {
-      const text = await callOnce(program);
-      return parseResponse<T>(text);
-    } catch (error) {
-      throwIfAborted();
-      const retryable = error instanceof GatewayError && (error.kind === "ratelimit" || error.kind === "transient");
-      if (!retryable || attempt >= RETRY_BACKOFF_MS.length) throw error;
-      await delay(RETRY_BACKOFF_MS[attempt]);
-    }
-  }
+  return retry(
+    RETRY_BACKOFF_MS,
+    (error) => error instanceof GatewayError && (error.kind === "ratelimit" || error.kind === "transient"),
+    async () => parseResponse<T>(await callOnce(program)),
+  );
 }
 
-/** Embed a JS value as a literal inside a code-mode program. */
 export const lit = (value: unknown): string => JSON.stringify(value);

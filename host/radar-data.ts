@@ -12,7 +12,6 @@ export async function radarSnapshot(dataDir: string) {
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
-  // Older installations kept dated digests; promote the newest complete one once.
   let names: string[];
   try { names = await readdir(join(dir, "digests")); }
   catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return null; throw error; }
@@ -25,7 +24,6 @@ export async function radarSnapshot(dataDir: string) {
   return null;
 }
 
-/** Explicit one-time copy; never reads the old checkout during normal operation. */
 export async function importRadarData(dataDir: string, source: string) {
   if (!isAbsolute(source) || !(await stat(source)).isDirectory()) throw new Error("Radar import needs an absolute data directory.");
   const destination = radarDataDir(dataDir);

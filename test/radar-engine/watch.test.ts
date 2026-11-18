@@ -25,9 +25,7 @@ test("only a big ask with a big solution the team could accept qualifies", () =>
     [
       opp("big-big"),
       opp("small-ask", { ask: WATCH_LIMITS.minAsk - 1 }),
-      // The usual shape: the best-ranked solution is the direct fix, the big one ranks lower but is still credible.
       opp("fix-first", { solutions: [sol(2, 5, 5), sol(4, 3, 3)] }),
-      // Big, but the team would not accept it.
       opp("big-but-rejected", { solutions: [sol(2, 5, 5), sol(5, 4, WATCH_LIMITS.minCredible - 1)] }),
     ],
     {},
@@ -41,7 +39,6 @@ test("an opportunity is delivered once, then again only after its evidence grows
   assert.deepEqual(first.picked.map((o) => o.key), ["srm-silent"]);
   assert.deepEqual(first.reported["srm-silent"], { title: "Opportunity srm-silent", date: "2026-11-16", seen: 2, atReport: 2 });
 
-  // One more sighting: 3 < 2 × factor, so it stays quiet but the sighting is counted.
   const second = selectOpportunities([opp("srm-silent")], first.reported, "2026-11-17");
   assert.equal(second.picked.length, 0);
   assert.equal(second.reported["srm-silent"].seen, 3);

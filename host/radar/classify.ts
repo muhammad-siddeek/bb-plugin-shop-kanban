@@ -1,11 +1,10 @@
-// LLM triage of channel messages into keep (new tech / finding / leadership push) vs noise.
 import { CONFIG } from "./config";
 import { feedbackPrompt } from "./feedback";
 import type { Priority } from "./leaders";
 import { inBatches, structured } from "./llm";
 import type { Message, Reply } from "./slack";
 
-export const CATEGORIES = [
+const CATEGORIES = [
   "new_tech",
   "new_finding",
   "leadership_push",
@@ -32,7 +31,7 @@ export interface Classification {
   priorityIds: string[];
 }
 
-export interface ClassifyInput {
+interface ClassifyInput {
   msg: Message;
   replies: Reply[];
   authorTitle: string;
@@ -113,7 +112,7 @@ function render({ msg, replies, authorTitle }: ClassifyInput): string {
   return parts.join("\n");
 }
 
-export interface KnownIdea {
+interface KnownIdea {
   key: string;
   title: string;
 }

@@ -5,7 +5,6 @@ import { isAbsolute, join, normalize } from "node:path";
 import { promisify } from "node:util";
 
 export interface RadarContext {
-  /** Absolute plugin-owned storage directory. Nothing is resolved against process.cwd(). */
   dataDir: string;
   signal: AbortSignal;
 }
@@ -33,11 +32,6 @@ export const radarPath = (name: string): string => join(runtime().dataDir, name)
 export const radarSignal = (): AbortSignal => runtime().signal;
 export const throwIfAborted = (): void => radarSignal().throwIfAborted();
 
-export function rememberSecret(value: string): void {
-  if (value) runtime().secrets.add(value);
-}
-
-/** Never include credential-bearing backend responses, child-process arguments, or webhook URLs in errors/logs. */
 export function safeMessage(error: unknown): string {
   let message = error instanceof Error ? error.message : String(error);
   for (const secret of storage.getStore()?.secrets ?? []) message = message.split(secret).join("[REDACTED]");
@@ -46,7 +40,6 @@ export function safeMessage(error: unknown): string {
     .replace(/\bbearer\s+[^\s\"'<>]+/gi, "Bearer [REDACTED]");
 }
 
-/** A bounded operation whose timer and abort subscription are removed on success, failure, and cancellation. */
 export async function withTimeout<T>(ms: number, fn: (signal: AbortSignal) => Promise<T>): Promise<T> {
   const parent = radarSignal();
   parent.throwIfAborted();
@@ -65,26 +58,36 @@ export async function withTimeout<T>(ms: number, fn: (signal: AbortSignal) => Pr
   }
 }
 
-/** Retry backoff stops immediately on plugin shutdown; no timer survives the invocation. */
 export function delay(ms: number): Promise<void> {
   const signal = radarSignal();
   signal.throwIfAborted();
-  return new Promise((resolve, reject) => {
-    const abort = () => {
-      clearTimeout(timer);
-      signal.removeEventListener("abort", abort);
-      reject(signal.reason);
-    };
-    const timer = setTimeout(() => {
-      signal.removeEventListener("abort", abort);
-      resolve();
-    }, ms);
-    signal.addEventListener("abort", abort, { once: true });
-  });
+  const { promise, resolve, reject } = Promise.withResolvers<void>();
+  const abort = () => {
+    clearTimeout(timer);
+    reject(signal.reason);
+  };
+  const timer = setTimeout(() => {
+    signal.removeEventListener("abort", abort);
+    resolve();
+  }, ms);
+  signal.addEventListener("abort", abort, { once: true });
+  return promise;
 }
 
-/** Sensitive subprocesses use argv, a fixed home cwd, bounded output, and sanitized failures. */
-export async function secretCommand(file: string, args: string[], failure: string): Promise<string> {
+export async function retry<T>(backoff: number[], retryable: (error: unknown) => boolean, fn: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    throwIfAborted();
+    try {
+      return await fn();
+    } catch (error) {
+      throwIfAborted();
+      if (attempt >= backoff.length || !retryable(error)) throw error;
+      await delay(backoff[attempt]);
+    }
+  }
+}
+
+function secretCommand(file: string, args: string[], failure: string): Promise<string> {
   return withTimeout(30_000, async (signal) => {
     try {
       const { stdout } = await execFileAsync(file, args, {
@@ -103,7 +106,6 @@ export async function secretCommand(file: string, args: string[], failure: strin
   });
 }
 
-/** Fresh dev tokens are scoped to one invocation, never assigned to process.env or retained across plugin reloads. */
 export function token(kind: TokenKind): Promise<string> {
   const current = runtime();
   current.signal.throwIfAborted();
@@ -119,7 +121,7 @@ export function token(kind: TokenKind): Promise<string> {
           : await secretCommand(current.shell, ["-lc", `exec dev tokens get ${service}`], failure);
       }
       if (!value) throw new Error("Radar dev token is empty. Run `dev tokens acquire`, then retry.");
-      rememberSecret(value);
+      current.secrets.add(value);
       return value;
     })();
     current.tokens.set(kind, pending);
@@ -127,16 +129,20 @@ export function token(kind: TokenKind): Promise<string> {
   return pending;
 }
 
-/** Internal context entry point also used by engine transport tests. */
-export async function withRadarContext<T>(context: RadarContext, fn: () => Promise<T>): Promise<T> {
+function storeKey(context: RadarContext): string {
   if (!isAbsolute(context.dataDir)) throw new Error("Radar dataDir must be an absolute plugin storage path");
+  return normalize(context.dataDir);
+}
+
+export async function withRadarContext<T>(context: RadarContext, fn: () => Promise<T>): Promise<T> {
+  const dataDir = storeKey(context);
   context.signal.throwIfAborted();
   const controller = new AbortController();
   const abort = () => controller.abort(context.signal.reason);
   context.signal.addEventListener("abort", abort, { once: true });
   const inherited = { gateway: process.env.TOOL_GATEWAY_TOKEN, llm: process.env.LLM_PROXY_TOKEN };
   const current: Runtime = {
-    dataDir: normalize(context.dataDir),
+    dataDir,
     signal: controller.signal,
     inherited,
     devBin: process.env.RADAR_DEV_BIN,
@@ -149,7 +155,6 @@ export async function withRadarContext<T>(context: RadarContext, fn: () => Promi
       try {
         return await fn();
       } catch (error) {
-        // Cancel sibling discovery branches when Promise.all fails, before the host invocation can finish.
         controller.abort(error);
         throw error;
       }
@@ -161,24 +166,18 @@ export async function withRadarContext<T>(context: RadarContext, fn: () => Promi
 
 function waitForTurn(previous: Promise<void>, signal: AbortSignal): Promise<void> {
   signal.throwIfAborted();
-  return new Promise((resolve, reject) => {
-    const abort = () => {
-      signal.removeEventListener("abort", abort);
-      reject(signal.reason);
-    };
-    signal.addEventListener("abort", abort, { once: true });
-    previous.then(() => {
-      signal.removeEventListener("abort", abort);
-      if (signal.aborted) reject(signal.reason);
-      else resolve();
-    });
+  const { promise, resolve, reject } = Promise.withResolvers<void>();
+  const abort = () => reject(signal.reason);
+  signal.addEventListener("abort", abort, { once: true });
+  void previous.then(() => {
+    signal.removeEventListener("abort", abort);
+    resolve();
   });
+  return promise;
 }
 
-/** Serialize mutations of one storage directory; independent plugin stores can run concurrently. */
 export async function serializeRadar<T>(context: RadarContext, fn: () => Promise<T>): Promise<T> {
-  if (!isAbsolute(context.dataDir)) throw new Error("Radar dataDir must be an absolute plugin storage path");
-  const key = normalize(context.dataDir);
+  const key = storeKey(context);
   const previous = queues.get(key) ?? Promise.resolve();
   const { promise: held, resolve: release } = Promise.withResolvers<void>();
   const queued = previous.then(() => held);

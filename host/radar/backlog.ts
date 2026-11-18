@@ -1,22 +1,17 @@
-// Resiliency backlog: open issues on the team's Vault issues page (CONFIG.team.issuesUrl) about to breach their SLA
-// fix-due date, plus everything on it assigned to me. Vault lists issues without SLA data, so each is read individually.
 import { CONFIG } from "./config";
 import { lit, runCode } from "./gateway";
 
-export interface BacklogIssue {
+interface BacklogIssue {
   id: string;
   title: string;
   url: string;
   priority: string;
-  /** SLA fix-due date (YYYY-MM-DD); null when the issue has no SLA. */
   fixDue: string | null;
-  /** Vault's verdict; it already flags an issue overdue on its fix-due date. */
   overdue: boolean;
   assignees: { id: string; name: string }[];
 }
 
 export interface BacklogItem extends BacklogIssue {
-  /** Days from the digest date to the fix-due date; negative once past it. */
   daysLeft: number | null;
   mine: boolean;
 }
@@ -26,7 +21,6 @@ const DAY_MS = 86_400_000;
 const decode = (s: string) =>
   s.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, "&");
 
-/** Parse the markdown `vault.get_issue` returns. */
 export function parseIssue(id: string, md: string): BacklogIssue {
   const field = (name: string) => md.match(new RegExp(`^- \\*\\*${name}\\*\\*: (.+)$`, "m"))?.[1].trim();
   const title = md.match(/^# (.+)$/m)?.[1].trim();
@@ -45,10 +39,8 @@ export function parseIssue(id: string, md: string): BacklogIssue {
   };
 }
 
-/** Every open issue on the team's Vault issues page, with SLA details. Fails rather than read a truncated list. */
 export async function fetchBacklog(): Promise<BacklogIssue[]> {
   const issues = await runCode<{ id: string; md: string }[]>(`
-const str = (x: unknown) => (typeof x === 'string' ? x : JSON.stringify(x));
 const list = str(await vault.get_issues({ team_id: ${lit(CONFIG.team.issuesUrl)}, status: 'open', limit: 200 }));
 if (/Results limited to/.test(list)) throw new Error('Vault returned a truncated issue list for ' + ${lit(CONFIG.team.issuesUrl)});
 const ids = [...list.matchAll(/^\\|\\s*(\\d+)\\s*\\|/gm)].map((m) => m[1]);
@@ -56,7 +48,6 @@ return await Promise.all(ids.map(async (id) => ({ id, md: str(await vault.get_is
   return issues.map(({ id, md }) => parseIssue(id, md));
 }
 
-/** Everything assigned to me, plus anyone's not-yet-overdue issue due within the window; most urgent first. */
 export function selectBacklog(issues: BacklogIssue[], date: string): BacklogItem[] {
   return issues
     .map((it) => {

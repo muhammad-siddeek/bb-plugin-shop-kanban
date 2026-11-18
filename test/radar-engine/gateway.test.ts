@@ -10,7 +10,6 @@ const executeCode = <T>(code: string): Promise<T> => withRadarContext(
   () => runCode<T>(code),
 );
 
-// Shape of the 2026-10-05 failure: Slack's 429 came back as a JSON-RPC error, not an `isError` tool result.
 const RATE_LIMITED =
   'Code exited with a non-zero status (exit_code=1).\n\nstderr:\nError: {"ok":false,"error":"rate_limited","status":429,"retry_after":"10"}';
 
@@ -41,7 +40,6 @@ afterEach(() => {
   else process.env.TOOL_GATEWAY_TOKEN = realToken;
 });
 
-/** Await `p`, fast-forwarding the rate-limit backoff sleeps. */
 async function settle<T>(p: Promise<T>): Promise<T> {
   let done = false;
   p.then(
@@ -70,8 +68,6 @@ test("runCode fails fast on an auth failure reported as a JSON-RPC error", async
   assert.equal(calls, 1);
 });
 
-// Shape of the 2026-10-07..12 failures: the gateway rewrites `bearer <word>` in the serialized result
-// to `Bearer [REDACTED]`, swallowing the backslash that escapes a following quote.
 test("runCode survives gateway redaction of bearer tokens in program results", async () => {
   globalThis.fetch = async (_url, init) => {
     const { params } = JSON.parse(String(init?.body)) as { params: { arguments: { code: string } } };

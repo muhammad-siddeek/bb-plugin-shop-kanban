@@ -7,7 +7,6 @@ export function readJson<T>(path: string, fallback: T): T {
   return JSON.parse(readFileSync(path, "utf8")) as T;
 }
 
-/** Atomic write: a crash mid-write never leaves a truncated state file. */
 export function writeJson(path: string, value: unknown): void {
   throwIfAborted();
   mkdirSync(dirname(path), { recursive: true });
@@ -40,3 +39,5 @@ export function ageDays(iso: string | undefined): number {
   if (!iso) return Infinity;
   return (Date.now() - Date.parse(iso)) / 86_400_000;
 }
+
+export const epochSeconds = (iso: string | undefined): number => (iso ? Date.parse(iso) / 1000 || 0 : 0);

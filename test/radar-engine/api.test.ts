@@ -3,12 +3,14 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { stripTypeScriptTypes } from "node:module";
 import { dirname, join } from "node:path";
-import { afterEach, beforeEach, test } from "node:test";
+import { afterEach, beforeEach, test, type TestContext } from "node:test";
+import { setImmediate as nextTurn } from "node:timers/promises";
 import { CONFIG, WATCH, radarDate } from "../../host/radar/config";
+import { GatewayError } from "../../host/radar/gateway";
 import { executeRadar, normalizeDigest, type Digest } from "../../host/radar/index";
 import type { State } from "../../host/radar/pipeline";
 import { withRadarContext } from "../../host/radar/runtime";
-import { fetchMessages, fetchThreads, scanChannel, type Message } from "../../host/radar/slack";
+import { fetchMessages, fetchThreads, resolveUsers, scanChannel, type Message } from "../../host/radar/slack";
 import { commitSweep, loadWatchState, selectOpportunities, sweep, type WatchState } from "../../host/radar/watch";
 
 const originalFetch = globalThis.fetch;
@@ -47,7 +49,6 @@ function digest(): Digest {
   return {
     date: radarDate(),
     generatedAt: new Date().toISOString(),
-    windowHours: 0,
     scanned: 10,
     qualified: 1,
     pairings: [],
@@ -68,7 +69,6 @@ function digest(): Digest {
       traction: 0.6,
       resurfaced: false,
     }],
-    othersHidden: 0,
     backlog: [],
     watch: {
       scanned: 3,
@@ -118,7 +118,6 @@ function rawMessage(ts: number, text = "A reusable new engineering technique"): 
   return { ts: ts.toFixed(6), user: "U1", text, reactions: [{ name: "eyes", count: 2, users: ["U2", "U3"] }] };
 }
 
-/** Execute the real code-mode programs against paginated backend fixtures, rather than mocking engine results. */
 function services() {
   const service = {
     history: {} as Record<string, RawMessage[]>,
@@ -138,11 +137,21 @@ function services() {
     prReads: [] as { repo: string; query: string; page: number }[],
     contributionReads: [] as { user: string; start_date: string; end_date: string }[],
     modelCalls: [] as { system: string; user: string }[],
+    registryUpdates: [] as { upserts: object[]; removed: string[] }[],
     programs: [] as string[],
+    throttle: 0,
+    cooldownMs: 0,
+    blockedUntil: 0,
+    slackCalls: 0,
+  };
+  const throttled = () => {
+    if (service.throttle && service.slackCalls++ % (service.throttle + 1) !== service.throttle) throw new Error("ratelimited");
+    if (Date.now() < service.blockedUntil) throw new Error('{"ok":false,"error":"rate_limited","status":429}');
+    service.blockedUntil = Date.now() + service.cooldownMs;
   };
   const slack = {
-    who_am_i: async () => ({ user_id: CONFIG.me.slackId }),
     read_channel: async (channel: string, options: { oldest: string; latest?: string; limit: number; cursor?: string }) => {
+      throttled();
       service.channelReads.push({ channel, oldest: options.oldest, cursor: options.cursor });
       if (service.failedChannels.has(channel)) throw new Error("source unavailable");
       if (service.missingChannelCursors.has(channel)) return { ok: true, messages: [], has_more: true, response_metadata: { next_cursor: "" } };
@@ -154,6 +163,7 @@ function services() {
       return { ok: true, messages: rows.slice(offset, next), has_more: next < rows.length, response_metadata: { next_cursor: next < rows.length ? String(next) : "" } };
     },
     read_thread: async (channel: string, parent: string, options: { oldest?: string; latest?: string; limit: number; cursor?: string }) => {
+      throttled();
       service.threadReads.push({ channel, parent, oldest: options.oldest, cursor: options.cursor });
       if (service.failedChannels.has(channel)) throw new Error("source unavailable");
       const rows = [
@@ -165,7 +175,10 @@ function services() {
       const next = offset + options.limit;
       return { ok: true, messages: rows.slice(offset, next), has_more: next < rows.length, response_metadata: { next_cursor: next < rows.length ? String(next) : "" } };
     },
-    read_user_profile: async () => "Real Name: Engineer\nTitle: Software Engineer",
+    read_user_profile: async () => {
+      throttled();
+      return "Real Name: Engineer\nTitle: Software Engineer";
+    },
   };
   const vault = {
     get_team: async () => "ExP owns experiments and feature flags.",
@@ -197,16 +210,18 @@ function services() {
       service.programs.push(params.arguments.code);
       const program = new Function("slack", "vault", "github", `return ${stripTypeScriptTypes(`(async () => {${params.arguments.code}})()`)}`);
       value = await program(slack, vault, github);
-      return new Response(JSON.stringify({ result: { content: [{ type: "text", text: JSON.stringify(value) }] } }), { headers: { "Content-Type": "application/json" } });
+      let text = typeof value === "string" ? value : JSON.stringify(value);
+      if (text.length > 1_000_000) text = `${text.slice(0, 1_000_000)}\n[stdout truncated]`;
+      return new Response(JSON.stringify({ result: { content: [{ type: "text", text }] } }), { headers: { "Content-Type": "application/json" } });
     }
     assert.equal(String(url), "https://proxy.shopify.ai/apis/anthropic/v1/messages");
     const request = JSON.parse(String(init?.body)) as { system: string; messages: { content: string }[] };
     const user = request.messages[0].content;
     service.modelCalls.push({ system: request.system, user });
     if (request.system.includes("You maintain a problem registry")) {
-      value = { problems: JSON.parse(user.match(/# Prior problem registry\n([^\n]*)/)?.[1] ?? "[]") };
+      value = service.registryUpdates.shift() ?? { upserts: [], removed: [] };
     } else if (request.system.includes("You maintain what Shopify leadership")) {
-      value = { priorities: JSON.parse(user.match(/# Prior leadership priorities\n([^\n]*)/)?.[1] ?? "[]") };
+      value = { upserts: [], removed: [] };
     } else if (request.system.includes("You triage messages")) {
       value = {
         items: service.incompleteClassification ? [] : [...user.matchAll(/<message ts="([^"]+)"/g)].map((match) => ({
@@ -306,7 +321,7 @@ test("failed discovery does not erase imported ledgers, checkpoints or the prior
   assert.deepEqual(readFixture("latest.json"), latest);
 });
 
-test("Slack history and thread reads follow every page without truncating content", async () => {
+test("Slack history and thread reads follow every page across programs without truncating content", async () => {
   const service = services();
   service.history[CONFIG.channel.id] = Array.from({ length: 2105 }, (_, i) => rawMessage(i + 1, "x".repeat(3000)));
   const messages = await withRadarContext(context(), () => fetchMessages(CONFIG.channel.id, 0));
@@ -314,29 +329,108 @@ test("Slack history and thread reads follow every page without truncating conten
   assert.equal(messages[0].text.length, 3000);
   assert.equal(service.channelReads.length, 22);
   const parent = service.history[CONFIG.channel.id][0].ts;
-  service.replies[`${CONFIG.channel.id}:${parent}`] = Array.from({ length: 225 }, (_, i) => rawMessage(i + 2, "y".repeat(1000)));
+  service.replies[`${CONFIG.channel.id}:${parent}`] = Array.from({ length: 225 }, (_, i) => rawMessage(i + 2, "y".repeat(5000)));
   const threads = await withRadarContext(context(), () => fetchThreads(CONFIG.channel.id, [parent]));
   assert.equal(threads[parent].length, 225);
-  assert.equal(threads[parent][224].text.length, 1000);
+  assert.equal(threads[parent][224].text.length, 5000);
   assert.equal(service.threadReads.length, 3);
 });
 
-test("imported Slack cursors bootstrap old quiet parents once and resume new replies without an age window", async () => {
+test("a source without a thread index builds it from its checkpoint and resumes new replies without an age window", async () => {
   const service = services();
   const now = Date.now() / 1000;
   const since = now - 120 * 86_400;
-  const parent = rawMessage(now - 500 * 86_400);
-  service.history[CONFIG.channel.id] = [parent];
-  service.replies[`${CONFIG.channel.id}:${parent.ts}`] = [rawMessage(since + 1, "A new finding in a very old thread")];
+  const old = rawMessage(now - 500 * 86_400);
+  const parent = rawMessage(since + 60);
+  service.history[CONFIG.channel.id] = [old, parent];
+  service.replies[`${CONFIG.channel.id}:${old.ts}`] = [rawMessage(since + 1, "A reply before the index existed")];
+  service.replies[`${CONFIG.channel.id}:${parent.ts}`] = [rawMessage(since + 120, "A new finding")];
   const first = await withRadarContext(context(), () => scanChannel(CONFIG.channel.id, since, now));
   assert.deepEqual(first.messages.map((message) => message.ts), [parent.ts]);
-  assert.equal(service.channelReads[0].oldest, "0");
+  assert.deepEqual(Object.keys(first.state.threads), [parent.ts]);
+  assert.equal(service.channelReads[0].oldest, String(since));
   service.replies[`${CONFIG.channel.id}:${parent.ts}`].push(rawMessage(now + 1, "Another new reply"));
   const second = await withRadarContext(context(), () => scanChannel(CONFIG.channel.id, now, now + 2, first.state));
   assert.equal(service.channelReads.at(-1)?.oldest, String(now));
   assert.equal(service.threadReads.at(-1)?.oldest, String(now));
   assert.deepEqual(second.updates[parent.ts].map((reply) => reply.text), ["Another new reply"]);
   assert.equal(second.state.threads[parent.ts].replies.length, 2);
+});
+
+test("briefly throttled Slack calls are retried in place", async () => {
+  const service = services();
+  service.throttle = 1;
+  const now = Date.now() / 1000;
+  const parent = rawMessage(now - 60);
+  service.history[CONFIG.channel.id] = [parent];
+  service.replies[`${CONFIG.channel.id}:${parent.ts}`] = [rawMessage(now - 30, "A throttled reply")];
+  const scan = await withRadarContext(context(), () => scanChannel(CONFIG.channel.id, now - 120, now));
+  assert.deepEqual(scan.state.threads[parent.ts].replies.map((reply) => reply.text), ["A throttled reply"]);
+  const users = await withRadarContext(context(), () => resolveUsers(["U1", "U2", "U3"]));
+  assert.deepEqual(["U1", "U2", "U3"].map((id) => users[id]?.title), Array(3).fill("Software Engineer"));
+  assert.equal(service.programs.length, 4);
+});
+
+async function fastForward<T>(timers: TestContext["mock"]["timers"], p: Promise<T>): Promise<T> {
+  let done = false;
+  p.then(
+    () => (done = true),
+    () => (done = true),
+  );
+  while (!done) {
+    await nextTurn();
+    timers.tick(1_000);
+  }
+  return p;
+}
+
+test("sustained Slack throttling ends programs early and resumes after a pause; once nothing passes reads fail and profiles wait", async (t) => {
+  const { timers } = t.mock;
+  timers.enable({ apis: ["setTimeout", "Date"], now: Date.now() });
+  const service = services();
+  service.cooldownMs = 4_000;
+  const now = Date.now() / 1000;
+  const parents = [rawMessage(now - 90), rawMessage(now - 60)];
+  service.history[CONFIG.channel.id] = parents;
+  for (const [index, parent] of parents.entries()) {
+    service.replies[`${CONFIG.channel.id}:${parent.ts}`] = [rawMessage(now - 30 + index, `Reply ${index}`)];
+  }
+  const scan = await fastForward(timers, withRadarContext(context(), () => scanChannel(CONFIG.channel.id, now - 120, now)));
+  assert.deepEqual(
+    parents.map((parent) => scan.state.threads[parent.ts].replies.map((reply) => reply.text)),
+    [["Reply 0"], ["Reply 1"]],
+  );
+  const users = await fastForward(timers, withRadarContext(context(), () => resolveUsers(["U1", "U2", "U3"])));
+  assert.deepEqual(["U1", "U2", "U3"].map((id) => users[id]?.title), Array(3).fill("Software Engineer"));
+  service.throttle = Infinity;
+  const partial = await fastForward(timers, withRadarContext(context(), () => resolveUsers(["U1", "U4"])));
+  assert.deepEqual([partial.U1?.title, partial.U4], ["Software Engineer", undefined]);
+  await assert.rejects(
+    fastForward(timers, withRadarContext(context(), () => scanChannel(CONFIG.channel.id, now - 120, now))),
+    (error) => error instanceof GatewayError && error.kind === "ratelimit",
+  );
+});
+
+test("legacy stores without checkpoints resume where the old engine stopped; a new leader starts 30 days back", async () => {
+  const now = Date.now();
+  const lastRunDate = radarDate(new Date(now - 3 * 86_400_000));
+  const registryAt = new Date(now - 5 * 86_400_000).toISOString();
+  const leadersAt = new Date(now - 6 * 86_400_000).toISOString();
+  seed({ lastRunDate });
+  fixture("registry.json", { refreshedAt: registryAt, problems: [] });
+  fixture("leaders.json", { refreshedAt: leadersAt, chain: [], priorities: [] });
+  const service = services();
+  service.chain = "**Organizational Chart:**\n[Leader](https://vault.shopify.io/users/1): VP\n";
+  await executeRadar({ action: "scan" }, context());
+  const oldest = (channel: string) => service.channelReads.find((read) => read.channel === channel)?.oldest;
+  assert.equal(oldest(CONFIG.channel.id), String(Date.parse(lastRunDate) / 1000));
+  assert.equal(oldest(CONFIG.team.channels[0].id), String(Date.parse(registryAt) / 1000));
+  assert.equal(service.contributionReads[0].start_date, leadersAt.slice(0, 10));
+  const newcomer = "https://vault.shopify.io/users/2";
+  service.chain += `[Newcomer](${newcomer}): Director\n`;
+  await executeRadar({ action: "refresh" }, context());
+  const read = service.contributionReads.find((contribution) => contribution.user === newcomer);
+  assert.equal(read?.start_date, new Date(Date.now() - 30 * 86_400_000).toISOString().slice(0, 10));
 });
 
 test("technique discovery retains all qualifying historical catch-up items and retries incomplete classification", async () => {
@@ -352,7 +446,6 @@ test("technique discovery retains all qualifying historical catch-up items and r
   service.incompleteClassification = false;
   const result = await executeRadar({ action: "scan" }, context());
   assert.equal(result.digest?.others.length, 31);
-  assert.equal(result.digest?.othersHidden, 0);
   const saved = readFixture<State>("state.json");
   assert.equal(Object.keys(saved.reported).length, 31);
   assert.equal(Object.keys(saved.classified).length, 31);
@@ -373,8 +466,12 @@ test("watch retains every qualifying revived thread beyond prior thread and repl
   for (const parent of service.history[channel.id]) {
     service.replies[`${channel.id}:${parent.ts}`] = Array.from({ length: 125 }, (_, i) => rawMessage(since + i + 1, `New evidence ${i}`));
   }
+  const threads = Object.fromEntries(service.history[channel.id].map((parent): [string, { message: Message; replies: [] }] => [parent.ts, {
+    message: { ts: parent.ts, user: parent.user, userName: "", text: parent.text, replyCount: 0, replyUsers: [], reactions: parent.reactions ?? [], attachments: [], files: [] },
+    replies: [],
+  }]));
   await withRadarContext(context(), async () => {
-    const state: WatchState = { cursors: { [`slack:${channel.id}`]: since }, reported: {} };
+    const state: WatchState = { cursors: { [`slack:${channel.id}`]: since }, reported: {}, channels: { [`slack:${channel.id}`]: { threads } } };
     const result = await sweep(state, [], { refreshedAt: "", chain: [], priorities: [] }, now);
     const selection = selectOpportunities(result.found, state.reported, radarDate());
     assert.equal(selection.picked.length, 26);
@@ -595,6 +692,27 @@ test("context refresh folds uncapped incremental sources into prior context rega
   assert.equal(readFixture<{ cursors: Record<string, number> }>("leaders.json").cursors["imported:leader"], 8);
 });
 
+test("context refresh folds registry changes batch by batch without re-emitting unchanged cards", async () => {
+  seed();
+  const service = services();
+  const card = (id: string, summary = id) => ({ id, title: id, kind: "toil", summary, whatWouldHelp: "", refs: [] });
+  fixture("registry.json", { refreshedAt: new Date().toISOString(), problems: [card("kept"), card("updated"), card("resolved")], cursors: {} });
+  service.projects = "y".repeat(CONFIG.updateBatchChars);
+  service.registryUpdates = [
+    { upserts: [card("updated", "new evidence"), card("added")], removed: ["resolved"] },
+    { upserts: [card("later")], removed: [] },
+  ];
+  await executeRadar({ action: "refresh" }, context());
+  const calls = service.modelCalls.filter((call) => call.system.includes("You maintain a problem registry"));
+  assert.ok(calls.length >= 2);
+  assert.match(calls[1].user, /"added"/);
+  assert.doesNotMatch(calls[1].user, /"resolved"/);
+  assert.deepEqual(
+    readFixture<{ problems: { id: string; summary: string }[] }>("registry.json").problems.map((p) => [p.id, p.summary]),
+    [["kept", "kept"], ["updated", "new evidence"], ["added", "added"], ["later", "later"]],
+  );
+});
+
 test("explicit backfill writes its report without advancing discovery or context checkpoints", async () => {
   seed({ cursors: { "imported:source": 123 } });
   const names = ["state.json", "watch-state.json", "registry.json", "leaders.json"];
@@ -687,7 +805,6 @@ test("the earliest radar array and unprioritized pairings migrate into the compl
   const result = normalizeDigest({
     date: current.date,
     generatedAt: current.generatedAt,
-    windowHours: current.windowHours,
     scanned: current.scanned,
     qualified: current.qualified,
     pairings: [{
@@ -705,7 +822,6 @@ test("the earliest radar array and unprioritized pairings migrate into the compl
   assert.deepEqual(result.others[0].leadership, { ...legacyIdea.leadership, headline: "" });
   assert.equal(result.pairings[0].priority, "P0");
   assert.equal(result.pairings[0].why, "Directly addresses the platform pain.");
-  assert.equal(result.othersHidden, 0);
   assert.deepEqual(result.backlog, []);
   assert.deepEqual(result.watch, { scanned: 0, opportunities: [], skipped: [] });
   assert.equal("radar" in result, false);

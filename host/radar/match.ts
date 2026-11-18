@@ -1,4 +1,3 @@
-// LLM pairing of kept ideas with ExP problem cards.
 import { feedbackPrompt } from "./feedback";
 import { inBatches, structured } from "./llm";
 import type { Classification } from "./classify";

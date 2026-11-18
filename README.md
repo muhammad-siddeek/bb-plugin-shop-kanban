@@ -96,6 +96,10 @@ All scans use one watch list: 13 Slack channels, four repositories' PR
 titles/descriptions, and ExP/Optimization Vault projects and issues. Discovery
 resumes durable per-source checkpoints without a rolling lookback or catch-up
 cap. Sources without incremental APIs are compared against saved snapshots.
+Imported stores without checkpoints resume where the old engine last ran; a
+Slack channel without a thread index builds it from its checkpoint, and a
+leader without a contribution checkpoint starts 30 days back. Every read pages
+across gateway programs under code mode's 1 MB output limit.
 
 The complete discovery engine lives in this plugin (`host/radar`): Slack/Vault/
 GitHub discovery, leadership context, scoring, opportunity watch, resiliency

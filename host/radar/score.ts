@@ -1,4 +1,3 @@
-// Deterministic scoring: traction, leadership signal, engagement gate, novelty, final rank.
 import { CONFIG } from "./config";
 import type { Message, UserInfo } from "./slack";
 
@@ -15,7 +14,6 @@ export interface TractionSample {
 export interface LeadershipSignal {
   score: number;
   reasons: string[];
-  /** Short form for one-line digests, e.g. "Rich Brown posted, leadership priority". */
   headline: string;
 }
 
@@ -26,7 +24,6 @@ export interface ReportedIdea {
   title: string;
 }
 
-// Used until enough history exists; calibrated on #ai-centaurs, 2026-09-22..10-02.
 const DEFAULT_BASELINE: Baseline = { reactorsP90: 25, replyUsersP90: 8 };
 
 export function computeBaseline(samples: TractionSample[]): Baseline {
@@ -38,14 +35,12 @@ export function computeBaseline(samples: TractionSample[]): Baseline {
   };
 }
 
-/** Distinct people (excluding the author) who reacted or replied. */
 export function engagement(msg: Message): TractionSample {
   const reactors = new Set(msg.reactions.flatMap((r) => r.users));
   reactors.delete(msg.user);
   return { reactors: reactors.size, replyUsers: msg.replyUsers.filter((u) => u !== msg.user).length };
 }
 
-/** 0..1. Unique reactors dominate; replies and "tried it" confirmations add depth. */
 export function tractionScore(e: TractionSample, confirmations: number, b: Baseline): number {
   return (
     0.5 * Math.min(1, e.reactors / b.reactorsP90) +
@@ -54,8 +49,7 @@ export function tractionScore(e: TractionSample, confirmations: number, b: Basel
   );
 }
 
-/** Seniority weight from a Slack title: execs 1.0, directors/distinguished 0.8, principals 0.6. */
-export function titleWeight(title: string): number {
+function titleWeight(title: string): number {
   if (!title || /\bassistant\b/i.test(title)) return 0;
   if (/\b(CEO|CTO|COO|CFO|CPO|Chief|President|VP|Vice President|Head of)\b/i.test(title)) return 1;
   if (/\b(Director|Distinguished|Fellow)\b/i.test(title)) return 0.8;
@@ -68,10 +62,6 @@ const ROLE_FACTOR = { author: 1, reply: 0.7, reaction: 0.5 };
 const ROLE_PAST = { author: "posted", reply: "replied", reaction: "reacted" };
 const PRIORITY_BONUS = 0.3;
 
-/**
- * Leadership signal: strongest leader involvement (posting > replying > reacting), scaled by
- * seniority, plus a bonus when the idea aligns with a known leadership priority.
- */
 export function leadershipSignal(
   msg: Message,
   users: Record<string, UserInfo>,
@@ -89,7 +79,7 @@ export function leadershipSignal(
   let best = 0;
   let strongest = "";
   const reasons: string[] = [];
-  const seen = new Set<string>(); // each leader is cited once, in their strongest role
+  const seen = new Set<string>();
   const consider = (ids: string[], role: keyof typeof ROLE_FACTOR, verb: string) => {
     const leaders = [...new Set(ids)]
       .filter((id) => !seen.has(id) && weightOf(id) > 0)
@@ -116,12 +106,10 @@ export function leadershipSignal(
   };
 }
 
-/** Drop zero-engagement link drops unless leadership is involved. */
 export function passesEngagement(e: TractionSample, leadership: LeadershipSignal): boolean {
   return e.reactors >= CONFIG.minReactors || e.replyUsers >= 1 || leadership.score >= 0.6;
 }
 
-/** An idea is reported once; it may reappear only after its traction multiplies. */
 export function novelty(
   ideaKey: string,
   traction: number,

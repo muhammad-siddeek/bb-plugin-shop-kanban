@@ -1,8 +1,7 @@
-// Reader feedback on digest items; recent entries are fed back into the classify/match prompts.
 import { CONFIG, PATHS } from "./config";
 import { appendJsonl, readJsonl } from "./store";
 
-export interface FeedbackEntry {
+interface FeedbackEntry {
   at: string;
   id: string;
   vote: "up" | "down";
@@ -16,7 +15,6 @@ export function recordFeedback(entry: FeedbackEntry): void {
   appendJsonl(PATHS.feedback, entry);
 }
 
-/** Prompt block with the most recent feedback, or "" when there is none. */
 export function feedbackPrompt(): string {
   const recent = readJsonl<FeedbackEntry>(PATHS.feedback).slice(-CONFIG.feedbackExamples);
   if (recent.length === 0) return "";

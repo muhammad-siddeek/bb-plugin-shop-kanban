@@ -37,7 +37,8 @@ Other commands are `refresh` (context only), `backfill --days N`, and
 copies existing caches to plugin-owned host storage without overwriting.
 Every scan checks the same Slack channels, repository PRs and Vault teams.
 Durable per-source checkpoints have no rolling lookback/catch-up cap; sources
-without incremental APIs use saved snapshots. PR discovery reads titles and
+without incremental APIs use saved snapshots. Imported stores without
+checkpoints resume where the old engine last ran. PR discovery reads titles and
 descriptions, not full codebases. No Slack delivery or daily digest remains.
 Settings `radarHostId` and `radarEnabled` select the persistent data host and
 enable hourly refreshes 07:00–15:00 inclusive, Monday–Friday, America/Toronto.

@@ -17,7 +17,7 @@ import { commitSweep, loadWatchState, selectOpportunities, sweep } from "./watch
 export type { Digest } from "./digest";
 export type { RadarContext } from "./runtime";
 
-export interface RadarInput {
+interface RadarInput {
   action: "scan" | "refresh" | "backfill" | "feedback";
   days?: number;
   id?: string;
@@ -25,7 +25,7 @@ export interface RadarInput {
   note?: string;
 }
 
-export interface RadarResult {
+interface RadarResult {
   digest: Digest | null;
   text: string;
 }
@@ -34,26 +34,15 @@ type StoredItem = Omit<DigestItem, "leadership"> & {
   leadership: Omit<DigestItem["leadership"], "headline"> & { headline?: string };
 };
 type StoredPairing = StoredItem & Omit<Pairing, keyof DigestItem | "priority"> & { priority?: Pairing["priority"] };
-type StoredDigest = Omit<Digest, "pairings" | "others" | "othersHidden" | "backlog" | "watch"> & {
+type StoredDigest = Omit<Digest, "pairings" | "others" | "backlog" | "watch"> & {
   pairings: StoredPairing[];
   others?: StoredItem[];
-  /** The first two releases called unpaired techniques "radar". Convert, never drop them. */
   radar?: StoredItem[];
-  othersHidden?: number;
   backlog?: Digest["backlog"];
   watch?: Partial<DigestWatch>;
 };
 
-/** Upgrade structurally valid historic snapshots before consumer-schema validation or rendering; preserve findings. */
 export function normalizeDigest(stored: StoredDigest): Digest {
-  const hasHeadline = (item: StoredItem) => item.leadership.headline !== undefined;
-  if (
-    stored.radar === undefined && stored.others !== undefined && stored.othersHidden !== undefined &&
-    stored.backlog !== undefined && stored.watch !== undefined && !("groups" in stored.watch) && stored.watch.scanned !== undefined &&
-    stored.watch.opportunities !== undefined && stored.watch.skipped !== undefined &&
-    stored.others.every(hasHeadline) && stored.pairings.every((item) => item.priority !== undefined && hasHeadline(item))
-  ) return stored as Digest;
-
   const { radar, ...digest } = stored;
   const item = (value: StoredItem): DigestItem => ({
     ...value,
@@ -67,7 +56,6 @@ export function normalizeDigest(stored: StoredDigest): Digest {
       priority: value.priority ?? (value.strength >= CONFIG.p0MatchStrength ? "P0" : "P1"),
     })),
     others: (digest.others ?? radar ?? []).map(item),
-    othersHidden: digest.othersHidden ?? 0,
     backlog: digest.backlog ?? [],
     watch: {
       ...(digest.watch?.error === undefined ? {} : { error: digest.watch.error }),
@@ -99,7 +87,6 @@ async function scan(): Promise<RadarResult> {
       const matches = await timed(`match (${ideas.length})`, () => match(ideas.map((idea) => idea.c), registry.problems));
       return { channel, analysis, ideas, matches };
     })(),
-    // A failed watch never advances its checkpoints. Cancellation is never a partial success.
     sweep(watchState, registry.problems, leaders, nowSec).then(
       (result) => ({ result, error: "" }),
       (error: unknown) => {
@@ -121,7 +108,6 @@ async function scan(): Promise<RadarResult> {
   const digest = buildDigest({
     date,
     scanned: channel.messages.length,
-    windowHours: Math.max(0, nowSec - since) / 3600,
     analysis,
     ideas,
     matches,
@@ -130,7 +116,6 @@ async function scan(): Promise<RadarResult> {
     watch,
   });
   throwIfAborted();
-  // The complete findings are durable before any source checkpoint can advance.
   writeJson(PATHS.latest, digest);
   commitDigest(state, digest);
   state.cursors = { ...state.cursors, [sourceKey]: Math.max(since, nowSec) };
@@ -170,16 +155,6 @@ async function refresh(): Promise<RadarResult> {
   };
 }
 
-/**
- * Bundled host-library entry point; no CLI, cwd, standalone repository, or external script dependency.
- *
- * The host supplies absolute plugin storage and its reload/shutdown signal, and owns scheduling, importing/exporting
- * that directory, and inbox read/dismiss state. Mutations of one directory are serialized. Every scan resumes durable
- * source checkpoints and returns every qualifying finding, without daily snapshots, previews, or Slack delivery.
- * Other actions return digest:null: refresh incrementally updates context, feedback appends the taste ledger, and
- * explicit backfill writes calibration reports under dataDir without advancing discovery checkpoints.
- * Missing tokens are obtained through RADAR_DEV_BIN or the login shell's dev, scoped to this invocation only.
- */
 export async function executeRadar(input: RadarInput, context: RadarContext): Promise<RadarResult> {
   return serializeRadar(context, async () => {
     try {
@@ -204,7 +179,6 @@ export async function executeRadar(input: RadarInput, context: RadarContext): Pr
       const hint = error instanceof GatewayError && error.kind === "auth" && !message.includes("dev tokens acquire")
         ? " Run `dev tokens acquire`, then retry."
         : "";
-      // Deliberately omit causes: subprocess errors can retain credential-bearing argv on their error objects.
       throw new Error(message + hint);
     }
   });

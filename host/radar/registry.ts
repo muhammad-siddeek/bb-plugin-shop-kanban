@@ -1,11 +1,10 @@
-// Durable ExP context: fold changed Vault snapshots and new Slack activity into the prior problem registry.
 import { CONFIG, PATHS } from "./config";
 import { lit, runCode } from "./gateway";
-import { structured } from "./llm";
+import { foldUpdates } from "./llm";
 import { permalink, scanChannel, type SlackChannelState } from "./slack";
-import { readJson, writeJson } from "./store";
+import { epochSeconds, readJson, writeJson } from "./store";
 
-export const PROBLEM_KINDS = [
+const PROBLEM_KINDS = [
   "project",
   "support",
   "maintenance",
@@ -25,7 +24,7 @@ export interface Problem {
   refs: { label: string; url: string }[];
 }
 
-export interface Registry {
+interface Registry {
   refreshedAt: string;
   problems: Problem[];
   cursors?: Record<string, number>;
@@ -42,7 +41,6 @@ interface Sources {
 
 async function gatherSources(cached: Registry | null, now: number): Promise<Sources> {
   const snapshots = await runCode<Record<string, string>>(`
-const str = (value: unknown) => typeof value === 'string' ? value : JSON.stringify(value);
 const complete = (text: string, limit?: number) => {
   if (/Results limited to|\\btruncated\\b/i.test(text) || (limit !== undefined && [...text.matchAll(/^\\|\\s*\\d+\\s*\\|/gm)].length >= limit)) {
     throw new Error('Vault returned truncated registry context');
@@ -68,10 +66,11 @@ return {
   }
   const cursors = { ...cached?.cursors };
   const channels = { ...cached?.channels };
+  const legacy = cached && !cached.cursors ? epochSeconds(cached.refreshedAt) : 0;
   for (const key of Object.keys(snapshots)) cursors[key] = Math.max(cursors[key] ?? 0, now);
   for (const channel of CONFIG.team.channels) {
     const key = `slack:${channel.id}`;
-    const scanned = await scanChannel(channel.id, cursors[key] ?? 0, now, channels[key]);
+    const scanned = await scanChannel(channel.id, cursors[key] ?? legacy, now, channels[key]);
     if (scanned.messages.length) changes.push(
       `# New #${channel.name} activity\n${scanned.messages.map((message) =>
         `${permalink(channel.id, message.ts)}\n${JSON.stringify(scanned.state.threads[message.ts])}`).join("\n\n")}`,
@@ -84,13 +83,16 @@ return {
 
 const SYSTEM = `You maintain a problem registry for ExP (Shopify's Experiments Platform team).
 The registry is used to match new AI tools, findings and leadership initiatives against what the team owns.
-Update the prior registry using every changed source below. Retain all supported problem cards, covering:
+Update the prior registry from the changed sources below. Problem cards cover:
 - open problems inside each active GSD project (the hard parts, risks, blockers — not just the project title)
 - recurring support asks and confusions in #help-exp (cluster repeated questions into one card)
 - maintenance, toil, performance, reliability and security work (open issues, on-call pain, migrations)
+Return only changes:
+- upserts: every new problem, and every prior problem the sources change, as a full card. Reuse a prior id to update it.
+- removed: ids of prior problems new evidence explicitly resolves, replaces or contradicts, including cards merged into another.
+- Prior problems in neither list stay unchanged; never repeat an unchanged card.
 Rules:
-- Preserve prior problems and stable ids unless new evidence explicitly resolves, replaces or contradicts them.
-- No age-based expiry, arbitrary card limit, or top-N selection: retain every supported problem.
+- No age-based expiry, arbitrary card limit, or top-N selection: add every supported problem.
 - Only use facts present in the prior registry and sources. Do not invent problems.
 - summary: what hurts and why, <= 50 words, concrete (systems, workflows, numbers when given).
 - whatWouldHelp: the kinds of technology/approaches that could move it, <= 40 words.
@@ -105,38 +107,26 @@ export async function loadRegistry({ persist = true }: { persist?: boolean } = {
     if (persist) writeJson(PATHS.registry, registry);
     return registry;
   }
-  const user = [
-    `# Prior problem registry\n${JSON.stringify(cached?.problems ?? [])}`,
-    ...sources.changes,
-  ].join("\n\n");
-
-  const out = await structured<{ problems: Problem[] }>({
+  const problems = await foldUpdates<Problem>({
     system: SYSTEM,
-    user,
-    schema: {
+    prior: cached?.problems ?? [],
+    sections: sources.changes,
+    user: (current, batch) => [`# Prior problem registry\n${JSON.stringify(current)}`, ...batch].join("\n\n"),
+    item: {
       type: "object",
-      required: ["problems"],
+      required: ["id", "title", "kind", "summary", "whatWouldHelp", "refs"],
       properties: {
-        problems: {
+        id: { type: "string" },
+        title: { type: "string" },
+        kind: { type: "string", enum: [...PROBLEM_KINDS] },
+        summary: { type: "string" },
+        whatWouldHelp: { type: "string" },
+        refs: {
           type: "array",
           items: {
             type: "object",
-            required: ["id", "title", "kind", "summary", "whatWouldHelp", "refs"],
-            properties: {
-              id: { type: "string" },
-              title: { type: "string" },
-              kind: { type: "string", enum: [...PROBLEM_KINDS] },
-              summary: { type: "string" },
-              whatWouldHelp: { type: "string" },
-              refs: {
-                type: "array",
-                items: {
-                  type: "object",
-                  required: ["label", "url"],
-                  properties: { label: { type: "string" }, url: { type: "string" } },
-                },
-              },
-            },
+            required: ["label", "url"],
+            properties: { label: { type: "string" }, url: { type: "string" } },
           },
         },
       },
@@ -145,7 +135,7 @@ export async function loadRegistry({ persist = true }: { persist?: boolean } = {
   const registry: Registry = {
     ...cached,
     refreshedAt: new Date().toISOString(),
-    problems: out.problems,
+    problems,
     cursors: sources.cursors,
     channels: sources.channels,
     snapshots: sources.snapshots,

@@ -6,12 +6,10 @@ test("local markdown renders every retained opportunity and solution without del
   const digest: Digest = {
     date: "2026-11-16",
     generatedAt: "2026-11-16T12:00:00Z",
-    windowHours: 0,
     scanned: 0,
     qualified: 0,
     pairings: [],
     others: [],
-    othersHidden: 0,
     backlog: [],
     watch: {
       scanned: 12,

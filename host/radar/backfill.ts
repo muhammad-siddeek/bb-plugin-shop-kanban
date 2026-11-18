@@ -1,4 +1,3 @@
-// Explicit calibration: classify + score + match the requested days without changing discovery checkpoints or ledgers.
 import { join } from "node:path";
 import { CONFIG, KEEP_CATEGORIES, PATHS } from "./config";
 import { loadLeaders } from "./leaders";
@@ -16,7 +15,6 @@ const day = (ts: string) => new Date(Number(ts) * 1000).toLocaleDateString("en-C
 export async function backfill(days: number): Promise<string> {
   const [registry, leaders] = await Promise.all([loadRegistry({ persist: false }), loadLeaders({ persist: false })]);
   const msgs = await timed("fetch", () => fetchMessages(CONFIG.channel.id, Math.floor(Date.now() / 1000 - days * 86_400)));
-  // Fresh classification cache: calibration exists to re-judge with the current prompt.
   const scratch: State = { ...loadState(), classified: {} };
   const analysis = await analyze(msgs, msgs, scratch, leaders);
   const passing = analysis.candidates.filter((x) => x.passesEngagement);

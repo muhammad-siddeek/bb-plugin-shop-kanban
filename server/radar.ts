@@ -167,7 +167,6 @@ export function createRadar(bb: BbPluginApi, spawn: Spawn): RadarService {
           changed();
         });
       } catch (cause) {
-        // Creation succeeded: never report a later materialization failure as a failed create and invite duplicates.
         if (!threadId) throw cause;
         bb.log.warn(`Radar thread ${threadId} created; board refresh failed: ${errorMessage(cause)}`);
       }
@@ -187,7 +186,6 @@ export function createRadar(bb: BbPluginApi, spawn: Spawn): RadarService {
     return { ok: true };
   }
 
-  // A short tick follows Toronto's clock across DST and catches up within the current hour.
   const scheduleClock = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Toronto", year: "numeric", month: "2-digit", day: "2-digit", weekday: "short", hour: "2-digit", hourCycle: "h23" });
   bb.background.schedule("radar-daily", "*/5 * * * *", async () => {
     if (!(await settings.get()).radarEnabled || running) return;

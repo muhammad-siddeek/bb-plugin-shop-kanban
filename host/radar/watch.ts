@@ -1,24 +1,19 @@
-// Opportunity watch: sweeps all configured sources (Slack threads, GitHub PRs, Vault) for
-// unowned ExP problems, has the LLM rate each ask and propose three ranked solutions, and keeps only big asks with
-// a big solution the team could plausibly accept.
 import { CONFIG, PATHS, WATCH, WATCH_LIMITS, type WatchSources } from "./config";
-import { lit, runCode } from "./gateway";
+import { lit, OUTPUT_BUDGET, runCode } from "./gateway";
 import type { Leaders } from "./leaders";
-import { inBatches, structured } from "./llm";
+import { bySize, inBatches, structured } from "./llm";
 import { timed } from "./log";
 import type { Problem } from "./registry";
 import { safeMessage, throwIfAborted } from "./runtime";
 import { permalink, scanChannel, type SlackChannelState, type UserInfo } from "./slack";
 import { readJson, writeJson } from "./store";
 
-/** One unit of new activity the judge sees: a Slack thread, a PR, or a Vault snapshot. */
 export interface Activity {
   ref: string;
   url: string;
   text: string;
 }
 
-/** Scores are 1-5. Solutions are ranked by fit + buyIn; ambition is how impactful, agentic and big it is. */
 export interface Solution {
   idea: string;
   fit: number;
@@ -31,10 +26,8 @@ export interface Opportunity {
   title: string;
   problem: string;
   owner: "unowned" | "partly_owned";
-  /** How big the problem is (reach and stakes, never effort), 1-5. */
   ask: number;
   askWhy: string;
-  /** Best-ranked first. */
   solutions: Solution[];
   evidence: { ref: string; quote: string; url: string }[];
 }
@@ -43,29 +36,24 @@ export interface Picked extends Opportunity {
   resurfaced: boolean;
 }
 
-export interface ReportedOpportunity {
+interface ReportedOpportunity {
   title: string;
   date: string;
-  /** Evidence items seen across all sweeps. */
   seen: number;
-  /** `seen` when it was last delivered; it resurfaces once `seen` reaches CONFIG.resurfaceFactor times this. */
   atReport: number;
 }
 
 export interface WatchState {
-  /** Unix seconds each source was last swept up to, by source key. */
   cursors: Record<string, number>;
   reported: Record<string, ReportedOpportunity>;
   channels?: Record<string, SlackChannelState>;
-  /** Last completely read Vault/PR content. Inclusive PR boundary reads and unchanged snapshots are not re-judged. */
   snapshots?: Record<string, string>;
 }
 
-export interface Sweep {
+interface Sweep {
   at: number;
   scanned: number;
   found: Opportunity[];
-  /** Source labels that failed (e.g. rate-limited); their cursors stay put so the next run retries them. */
   failed: { key: string; label: string }[];
   channels?: Record<string, SlackChannelState>;
   snapshots?: Record<string, string>;
@@ -80,21 +68,14 @@ const SOURCE_KEYS = [
   ...WATCH.vault.issueTeams.map((team) => `vault:issues:${team}`),
 ];
 
-// ---- gathering -------------------------------------------------------------------------------------------------
-
 const day = (sec: number) => new Date(sec * 1000).toISOString().slice(0, 10);
 
-/**
- * Author label from the digest's user cache and the management chain. No live profile lookups: Slack rate-limits
- * `read_user_profile` to about one call per 4s, which stalls a sweep for minutes.
- */
 function who(id: string, fallback: string, users: Record<string, UserInfo>): string {
   const u = users[id];
   if (!u?.name) return fallback || id;
   return u.title ? `${u.name} (${u.title})` : u.name;
 }
 
-/** Durable thread indexes make replies to arbitrarily old parents discoverable without a rolling history window. */
 async function channelActivity(
   ch: WatchSources["channels"][number],
   since: number,
@@ -131,9 +112,8 @@ interface Pr {
   body: string;
 }
 
-/** Read every updated PR. GitHub's 1,000-result search ceiling is handled by subdividing the checkpoint range. */
-async function repoActivity(repo: string, since: number, now: number): Promise<Activity[]> {
-  const prs = await runCode<Pr[]>(`
+async function readPrs(repo: string, from: number, to: number): Promise<Pr[]> {
+  const prs = await runCode<Pr[] | null>(`
 interface RawPr { number: number; title: string; html_url: string; user?: { login?: string }; created_at: string; updated_at?: string; state: string; draft?: boolean; body?: string | null }
 interface SearchPage { items?: RawPr[]; total_count?: number; incomplete_results?: boolean }
 const [owner, repo] = ${lit(repo)}.split('/');
@@ -165,13 +145,22 @@ const read = async (from: number, to: number): Promise<void> => {
     if (page >= 10) throw new Error('GitHub PR pagination did not finish for ' + ${lit(repo)});
   }
 };
-await read(${lit(Math.floor(since))}, ${lit(now)});
-return [...out.values()].map((pr) => ({
+await read(${lit(from)}, ${lit(to)});
+const prs = [...out.values()].map((pr) => ({
   repo: ${lit(repo)}, number: pr.number, title: pr.title, url: pr.html_url, author: pr.user?.login ?? '',
   createdAt: pr.created_at, updatedAt: pr.updated_at ?? pr.created_at,
   state: pr.draft ? 'draft' : pr.state, body: String(pr.body ?? ''),
-}));`);
-  return prs
+}));
+return JSON.stringify(prs).length > ${OUTPUT_BUDGET} ? null : prs;`);
+  if (prs) return prs;
+  const mid = Math.floor((from + to) / 2);
+  if (mid <= from || mid >= to) throw new Error(`GitHub PRs for ${repo} at one timestamp exceed the gateway output limit`);
+  return [...await readPrs(repo, from, mid), ...await readPrs(repo, mid, to)];
+}
+
+async function repoActivity(repo: string, since: number, now: number): Promise<Activity[]> {
+  const prs = new Map((await readPrs(repo, Math.floor(since), now)).map((pr) => [pr.number, pr]));
+  return [...prs.values()]
     .filter((pr) => Date.parse(pr.updatedAt) / 1000 >= Math.floor(since) && Date.parse(pr.updatedAt) / 1000 <= now)
     .map((pr) => ({
       ref: `${pr.repo}#${pr.number}`,
@@ -180,15 +169,14 @@ return [...out.values()].map((pr) => ({
     }));
 }
 
-/** Vault has no list-pagination parameter: reject truncated responses rather than checkpointing missing content. */
 async function vaultActivity(team: string, kind: "projects" | "issues"): Promise<Activity> {
-  const text = await runCode<string>(`
+  const { text } = await runCode<{ text: string }>(`
 const value = await vault.${kind === "projects" ? "get_projects" : "get_issues"}(${lit({ team_id: team, status: kind === "projects" ? "active" : "open", limit: kind === "projects" ? 100 : 200 })});
 const text = typeof value === 'string' ? value : JSON.stringify(value);
 if (/Results limited to|\\btruncated\\b/i.test(text) || [...text.matchAll(/^\\|\\s*\\d+\\s*\\|/gm)].length >= ${kind === "projects" ? 100 : 200}) {
   throw new Error('Vault returned a truncated ${kind} snapshot for ' + ${lit(team)});
 }
-return text;`);
+return { text };`);
   return {
     ref: `vault/${team}/${kind}`,
     url: `https://vault.shopify.io/teams/${team}${kind === "issues" ? "/issues" : ""}`,
@@ -196,11 +184,6 @@ return text;`);
   };
 }
 
-/**
- * New activity from every source: channels one at a time (parallel sweeps trip Slack's thread-read limit).
- * A source that fails after the gateway's retries is skipped and reported in `failed`, so one rate-limited channel
- * doesn't cost the rest of the sweep.
- */
 async function collectActivity(
   state: WatchState,
   now: number,
@@ -255,8 +238,6 @@ async function collectActivity(
   return { activity, channels, snapshots };
 }
 
-// ---- judging ---------------------------------------------------------------------------------------------------
-
 const SYSTEM = `You scout engineering opportunities for the reader, a senior engineer on ExP (Shopify's Experiments
 Platform: experiments, feature flags and the Verdict SDKs, bandits, the experiments dashboard, exp-data-plane,
 exp-stats, ExP agentic tooling). The reader wants a big, high-impact project to own, inside ExP or connecting ExP with
@@ -291,7 +272,6 @@ For each opportunity:
 Skip routine traffic: review or approval requests, deploy notices, how-to questions answered in the thread, social
 posts, bot alerts that fired once and resolved. Return an empty list when nothing qualifies.`;
 
-// Structured output rejects numeric bounds; the 1-5 range is in the prompt.
 const SCORE = { type: "integer" };
 
 const SCHEMA = {
@@ -345,26 +325,11 @@ function context(since: number, problems: Problem[], leaders: Leaders, reported:
   ].join("\n\n");
 }
 
-/** Split activity into prompt-sized chunks, keeping each item whole. */
-function chunk(items: Activity[]): Activity[][] {
-  const out: Activity[][] = [];
-  let size = Infinity;
-  for (const it of items) {
-    if (size + it.text.length > WATCH_LIMITS.chunkChars) {
-      out.push([]);
-      size = 0;
-    }
-    out[out.length - 1].push(it);
-    size += it.text.length;
-  }
-  return out;
-}
-
 const solutionRank = (s: Solution) => s.fit + s.buyIn;
 
 async function judge(activity: Activity[], header: string): Promise<Opportunity[]> {
   const urls = new Map(activity.map((a) => [a.ref, a.url]));
-  const found = await inBatches(chunk(activity), 1, async ([items]) => {
+  const found = await inBatches(bySize(activity, (a) => a.text.length, WATCH_LIMITS.chunkChars), 1, async ([items]) => {
     const res = await structured<{ opportunities: Judged[] }>({
       system: SYSTEM,
       user: `${header}\n\n${items.map((a) => `<activity ref="${a.ref}">\n${a.text}\n</activity>`).join("\n\n")}`,
@@ -372,21 +337,16 @@ async function judge(activity: Activity[], header: string): Promise<Opportunity[
     });
     return res.opportunities;
   });
-  // Evidence must point at activity we sent; an opportunity left without any is dropped.
   return found.flatMap((o) => {
     const evidence = o.evidence.flatMap((e) => {
       const url = urls.get(e.ref);
       return url ? [{ ...e, url }] : [];
     });
-    // Exactly three are asked for; the schema can't enforce a count.
     const solutions = [...o.solutions].sort((a, b) => solutionRank(b) - solutionRank(a) || b.ambition - a.ambition).slice(0, 3);
     return evidence.length && solutions.length ? [{ ...o, evidence, solutions }] : [];
   });
 }
 
-// ---- sweep + selection -----------------------------------------------------------------------------------------
-
-/** Sweep every source and judge all new activity. Commit checkpoints only after the findings are published. */
 export async function sweep(state: WatchState, problems: Problem[], leaders: Leaders, now: number): Promise<Sweep> {
   throwIfAborted();
   const users: Record<string, UserInfo> = {
@@ -402,7 +362,6 @@ export async function sweep(state: WatchState, problems: Problem[], leaders: Lea
   return { at: now, scanned: activity.length, found, failed, channels, snapshots };
 }
 
-/** Ambition of the biggest solution the team could plausibly accept; 0 when none is credible. */
 const bigCredible = (o: Opportunity): number => {
   let ambition = 0;
   for (const solution of o.solutions) {
@@ -413,11 +372,6 @@ const bigCredible = (o: Opportunity): number => {
   return ambition;
 };
 
-/**
- * Merge a sweep's opportunities by key and keep the big ones: ask ≥ minAsk and a credible solution (fit and buy-in
- * ≥ minCredible) with ambition ≥ minAmbition. Each is reported once, again only after its evidence grows by CONFIG.resurfaceFactor.
- * Returns every qualifying pick (biggest first) and the updated ledger.
- */
 export function selectOpportunities(
   found: Opportunity[],
   reported: WatchState["reported"],
@@ -449,7 +403,6 @@ export function selectOpportunities(
   return { picked, reported: next };
 }
 
-/** Advance successful sources' cursors and store the ledger. */
 export function commitSweep(state: WatchState, s: Sweep, reported: WatchState["reported"]): void {
   const failed = new Set(s.failed.map((f) => f.key));
   for (const key of SOURCE_KEYS) if (!failed.has(key)) state.cursors[key] = Math.max(state.cursors[key] ?? 0, s.at);

@@ -1,4 +1,3 @@
-// Incremental discovery: classify changed threads, retain qualifying ideas, pair them with ExP, and build the inbox snapshot.
 import { CONFIG, KEEP_CATEGORIES, PATHS } from "./config";
 import type { BacklogItem } from "./backlog";
 import { classify, type Classification } from "./classify";
@@ -21,9 +20,9 @@ import {
 } from "./score";
 import { fetchThreads, permalink, resolveUsers, type Message, type Reply, type SlackChannelState } from "./slack";
 import { timed } from "./log";
-import { readJson, writeJson } from "./store";
+import { epochSeconds, readJson, writeJson } from "./store";
 
-export interface ItemRecord {
+interface ItemRecord {
   date: string;
   ideaKey: string;
   category: string;
@@ -33,12 +32,9 @@ export interface ItemRecord {
 }
 
 export interface State {
-  /** Legacy delivery date, preserved for imported stores; scans never gate on or change it. */
-  lastRunDate: string;
-  /** Classification cache by parent ts, invalidated by any newly discovered thread activity. */
+  lastRunDate?: string;
   classified: Record<string, { replyCount: number; signature?: string; c: Classification }>;
   reported: Record<string, ReportedIdea>;
-  /** Published items by stable id, for reader feedback. */
   items: Record<string, ItemRecord>;
   cursors?: Record<string, number>;
   channels?: Record<string, SlackChannelState>;
@@ -46,7 +42,8 @@ export interface State {
 
 export function loadState(): State {
   const s = readJson<Partial<State>>(PATHS.state, {});
-  return { ...s, lastRunDate: s.lastRunDate ?? "", classified: s.classified ?? {}, reported: s.reported ?? {}, items: s.items ?? {}, cursors: s.cursors ?? {}, channels: s.channels ?? {} };
+  const cursors = s.cursors ?? (s.lastRunDate ? { [`slack:${CONFIG.channel.id}`]: epochSeconds(s.lastRunDate) } : {});
+  return { ...s, classified: s.classified ?? {}, reported: s.reported ?? {}, items: s.items ?? {}, cursors, channels: s.channels ?? {} };
 }
 
 export const saveState = (s: State): void => writeJson(PATHS.state, s);
@@ -64,13 +61,11 @@ export interface Candidate {
 export interface Analysis {
   baseline: Baseline;
   classified: { msg: Message; c: Classification }[];
-  /** Confidently kept (new tech / finding / leadership push), scored. */
   candidates: Candidate[];
 }
 
 const KEEP = new Set<string>(KEEP_CATEGORIES);
 
-/** Classify changed threads with complete reply context, then score every kept message. */
 export async function analyze(
   window: Message[],
   baselineSample: Message[],
@@ -107,7 +102,6 @@ export async function analyze(
     return hit ? [{ msg, c: hit.c }] : [];
   });
   const kept = classified.filter(({ c }) => KEEP.has(c.category) && c.confidence >= CONFIG.minCategoryConfidence);
-  // Leadership detection needs titles of everyone who engaged with a kept message.
   const users = await timed("engager titles", () =>
     resolveUsers(kept.flatMap(({ msg }) => [msg.user, ...msg.replyUsers, ...msg.reactions.flatMap((r) => r.users)])),
   );
@@ -139,9 +133,7 @@ export interface Idea extends Candidate {
   resurfaced: boolean;
 }
 
-/** One candidate per idea (its strongest message), minus ideas already delivered without a traction jump. */
 export function selectIdeas(candidates: Candidate[], reported: Record<string, ReportedIdea>): Idea[] {
-  // A message that was already delivered keeps its original key even if reclassification renamed it.
   const keyByTs = new Map(Object.entries(reported).map(([key, r]) => [r.ts, key]));
   const strength = (x: Candidate) => rankScore(0, x.leadership.score, x.traction);
   const best = new Map<string, Candidate>();
@@ -166,7 +158,6 @@ export function buildDigest(args: {
   problems: Problem[];
   backlog: BacklogItem[];
   watch?: DigestWatch;
-  windowHours?: number;
 }): Digest {
   const problems = new Map(args.problems.map((p) => [p.id, p]));
   const matchByTs = new Map(args.matches.map((m) => [m.ts, m]));
@@ -188,7 +179,6 @@ export function buildDigest(args: {
     resurfaced: x.resurfaced,
   });
 
-  // P0 = direct hit on a stated ExP pain; it outranks any P1 regardless of traction.
   const matched = args.ideas
     .flatMap((x) => {
       const m = matchByTs.get(x.msg.ts);
@@ -208,7 +198,6 @@ export function buildDigest(args: {
     score,
   }));
 
-  // Every qualified unpaired idea is retained too; advancing a source checkpoint must never strand overflow.
   const matchedTs = new Set(matched.map(({ x }) => x.msg.ts));
   const nearMiss = (x: Idea) => {
     const m = matchByTs.get(x.msg.ts);
@@ -223,18 +212,15 @@ export function buildDigest(args: {
   return {
     date: args.date,
     generatedAt: new Date().toISOString(),
-    windowHours: args.windowHours ?? 0,
     scanned: args.scanned,
     qualified: args.analysis.candidates.length,
     pairings,
     others,
-    othersHidden: 0,
     backlog: args.backlog,
     watch: args.watch ?? NO_WATCH,
   };
 }
 
-/** Record published items so novelty and feedback survive subsequent scans. */
 export function commitDigest(state: State, d: Digest): void {
   const items: (DigestItem & { problem?: Pairing["problem"] })[] = [...d.pairings, ...d.others];
   for (const it of items) {

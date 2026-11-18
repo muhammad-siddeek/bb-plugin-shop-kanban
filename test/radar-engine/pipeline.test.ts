@@ -134,7 +134,6 @@ test("buildDigest retains every pairing and unpaired idea in promise order", () 
     d.others.map((o) => o.ts),
     byPromise,
   );
-  assert.equal(d.othersHidden, 0);
 });
 
 test("buildDigest retains all qualifying ideas for the same problem", () => {

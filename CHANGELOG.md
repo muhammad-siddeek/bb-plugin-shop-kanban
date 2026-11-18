@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.28.1
+
+- Radar scan and refresh work again; since 0.25.0 every run failed with
+  `puddle /v1/v8/eval returned 400: read from isolate worker`. Imported stores
+  had no checkpoints, so each source restarted from 1970 and the leaders'
+  all-time Vault contributions crashed the code-mode isolate. Stores without
+  checkpoints now resume where the old engine last ran, Slack channels build
+  their thread index from the checkpoint, and a leader without a checkpoint
+  starts 30 days back. Slack history, thread and header reads, PR searches and
+  leader contributions page across gateway programs under code mode's 1 MB
+  output limit, and a truncated program result fails instead of surfacing as
+  invalid JSON. Vault snapshots and contributions return objects, because code
+  mode prints a bare string result unencoded. Slack programs no longer open
+  with an unused `who_am_i` call, whose profile endpoint rejects most calls as
+  `ratelimited` and failed whole programs through every retry. A Slack call
+  still throttled after a few immediate retries (the gateway's `ratelimited`
+  or Slack's own 429) ends its program early with what it read, and the plugin
+  pauses before resuming the rest; a read fails only after Slack passes
+  nothing for about two and a half minutes. Profile lookups, which often pass
+  only a few a minute through the gateway, read unknown users
+  before the stalest cache entries, keep using stale entries, and after 20
+  seconds without progress leave the rest for the next run instead of failing
+  the scan. Programs stop starting calls after 30 seconds, and a program code
+  mode timed out, or Slack's `network_error`, is retried.
+- Radar refresh no longer fails with `LLM output truncated` once the problem
+  registry grows. The problem registry and leadership priorities fold changed
+  sources in batches of about 80,000 characters, and the model returns only
+  new, changed and removed cards instead of rewriting every card.
+
 ## 0.28.0
 
 - The board is a drawer along the top of bb instead of a panel on the
