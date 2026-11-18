@@ -124,6 +124,63 @@ function BoardStatus({ tasks }: { tasks: readonly BoardTask[] }) {
   );
 }
 
+// bb's own soft-keyboard test: a text field has focus and the visual viewport is at least this much
+// shorter than when typing began. iOS shrinks only the visual viewport; Android's resizes-content
+// shrinks the layout too, and both show up here.
+const KEYBOARD_MIN_INSET = 80;
+
+function isTextEntry(target: EventTarget | null): boolean {
+  return (
+    target instanceof HTMLElement &&
+    (target.isContentEditable ||
+      target instanceof HTMLInputElement ||
+      target instanceof HTMLTextAreaElement ||
+      target instanceof HTMLSelectElement)
+  );
+}
+
+/**
+ * True while the soft keyboard is up for a field outside the board. bb then sizes its shell to the
+ * space above the keyboard from the top of the screen, so the board must leave the layout.
+ */
+function useKeyboardOutsideBoard(root: HTMLElement | null): boolean {
+  const [typing, setTyping] = useState(false);
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    if (!viewport || !root) return;
+    let baseline: number | null = null;
+    const update = () => {
+      const active = document.activeElement;
+      setTyping(
+        baseline !== null &&
+          isTextEntry(active) &&
+          !root.contains(active) &&
+          baseline - viewport.height >= KEYBOARD_MIN_INSET,
+      );
+    };
+    const handleFocusIn = (event: FocusEvent) => {
+      if (!isTextEntry(event.target)) return;
+      baseline ??= viewport.height;
+      update();
+    };
+    const handleFocusOut = (event: FocusEvent) => {
+      // Moving between fields keeps the keyboard, and the baseline taken before it opened.
+      if (isTextEntry(event.relatedTarget)) return;
+      baseline = null;
+      update();
+    };
+    viewport.addEventListener("resize", update);
+    document.addEventListener("focusin", handleFocusIn);
+    document.addEventListener("focusout", handleFocusOut);
+    return () => {
+      viewport.removeEventListener("resize", update);
+      document.removeEventListener("focusin", handleFocusIn);
+      document.removeEventListener("focusout", handleFocusOut);
+    };
+  }, [root]);
+  return typing;
+}
+
 export function TopBoardOverlay() {
   const [open, setOpen] = useState(true);
   const [panelHeight, setPanelHeight] = useState(() =>
@@ -133,6 +190,7 @@ export function TopBoardOverlay() {
   const [root, setRoot] = useState<HTMLElement | null>(null);
   const resizeCleanupRef = useRef<() => void>(() => {});
   const chrome = useBbChrome();
+  const keyboardOpen = useKeyboardOutsideBoard(root);
   const api = useBoard();
   const reviews = useReviews();
   const work = useWork();
@@ -203,7 +261,13 @@ export function TopBoardOverlay() {
     };
   }, [root, chrome.top]);
 
-  const frame = { top: `${chrome.top}px`, left: `${chrome.left}px`, "--board-lead": `${chrome.lead}px` } as CSSProperties;
+  // Hidden rather than unmounted, so a search in progress survives; the zero height drops the inset.
+  const frame = {
+    top: `${chrome.top}px`,
+    left: `${chrome.left}px`,
+    "--board-lead": `${chrome.lead}px`,
+    ...(keyboardOpen ? { display: "none" } : null),
+  } as CSSProperties;
   const dropdown: Dropdown = open
     ? { side: "above", maxHeight: panelHeight - BAR_ROOM }
     : { side: "below", maxHeight: viewportHeight - chrome.top - BAR_ROOM };

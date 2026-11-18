@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.28.2
+
+- On phones, the board steps out of the layout while the on-screen keyboard
+  is up for a field outside it, such as the thread composer, and returns when
+  typing ends. bb sizes its shell to the space above the keyboard starting at
+  the top of the screen, so the board's inset used to push the composer under
+  the keyboard and leave the thread a sliver between them. Typing in the
+  board's own search keeps the board.
+
 ## 0.28.1
 
 - Radar scan and refresh work again; since 0.25.0 every run failed with
