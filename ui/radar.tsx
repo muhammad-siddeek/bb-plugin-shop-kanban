@@ -6,7 +6,7 @@ import { PLUGIN_SLUG } from "../brand";
 import { usePending, type RadarApi } from "./hooks";
 import { errorMessage, formatShortAge, parseTime } from "./model";
 import { Age, CappedList, GroupHeader, IconMark, Mark, RowActions, Spinner, keyForBox, useRowAction } from "./primitives";
-import { ACCENT_TEXT, ALERT_BANNER, CARD_INSET, ELEVATION, EMPTY_NOTE, ONE_LINE_PAD, ROW_ACTION, TWO_LINE_META, TWO_LINE_META_ROW, TWO_LINE_PAD, TYPE, UNREAD_BADGE, cardFrame, cardTitle } from "./styles";
+import { ACCENT_TEXT, ALERT_BANNER, CARD_INSET, ELEVATION, EMPTY_NOTE, ONE_LINE_AGE, ONE_LINE_PAD, ROW_ACTION, TYPE, UNREAD_BADGE, cardFrame, cardTitle } from "./styles";
 import type { RadarItem, RadarState } from "../server/radar-schema";
 
 type RadarDraft = { item: RadarItem; prompt: string | null; error: string | null };
@@ -32,17 +32,21 @@ function OpportunityRow({ item, now, onDraft, onDismiss, onThread }: {
     if (item.threadId) onThread(item.threadId);
     else if (!read) onDraft(item);
   };
+  // Hover shows the best solution the old second and third lines carried.
+  const hint = item.summary || undefined;
 
+  // One line, like techniques: the bolt, the title, its age; dismiss on hover. The title explores or opens the thread.
   return (
-    <article className={`group relative ${cardFrame()} ${TWO_LINE_PAD}`}>
-      <div className="flex items-start gap-2">
-        <IconMark label={read ? "Read opportunity" : "Unread opportunity"} icon="Zap" filled disc={read ? undefined : UNREAD_BADGE.sky} tone="text-muted-foreground/50" />
+    <article className={`group relative ${cardFrame()} ${ONE_LINE_PAD}`}>
+      <div className="flex h-5 items-center gap-2">
+        <IconMark label={read ? item.threadId ? "Opportunity with a thread" : "Read opportunity" : "Unread opportunity"} icon="Zap" filled disc={read ? undefined : UNREAD_BADGE.sky} tone="text-muted-foreground/50" />
         <div className="min-w-0 flex-1">
           {read && !item.threadId ? (
-            <p className={titleClass}>{item.title}</p>
+            <p title={hint} className={titleClass}>{item.title}</p>
           ) : (
             <button
               type="button"
+              title={hint}
               aria-haspopup={read ? undefined : "dialog"}
               onClick={open}
               className={`${titleClass} hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60`}
@@ -50,23 +54,11 @@ function OpportunityRow({ item, now, onDraft, onDismiss, onThread }: {
               {item.title}
             </button>
           )}
-          {item.summary ? <p className={`mt-0.5 line-clamp-2 ${TYPE.body} leading-4 text-muted-foreground/80`}>{item.summary}</p> : null}
-          <div className={TWO_LINE_META_ROW}>
-            <span className={TWO_LINE_META}>
-              <Age at={item.createdAt} now={now} after=" · " />
-              {read ? item.threadId ? "Thread created" : "Read" : "Ready to explore"}
-            </span>
-            {!read || item.threadId ? (
-              <button type="button" onClick={open} className={`${ROW_ACTION} gap-1 px-1.5 ${TYPE.meta} hover:bg-accent hover:text-foreground`}>
-                {read ? "Open thread" : "Explore"}
-                <Icon name={read ? "ArrowUpRight" : "ArrowRight"} className="size-3" aria-hidden />
-              </button>
-            ) : null}
-          </div>
-          {error}
         </div>
+        <Age at={item.createdAt} now={now} className={ONE_LINE_AGE} />
       </div>
-      <RowActions label="Dismiss opportunity" onArchive={() => void attempt(() => onDismiss(item.id))} />
+      {error}
+      <RowActions centered label="Dismiss opportunity" onArchive={() => void attempt(() => onDismiss(item.id))} />
     </article>
   );
 }

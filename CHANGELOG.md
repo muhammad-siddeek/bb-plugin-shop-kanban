@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.30.1
+
+- Radar opportunities are one line, like techniques: the bolt, the title and
+  its age, with Dismiss on hover. The summary and the Explore / Open thread
+  line are gone; hover the title for the summary, and click it to explore or
+  open its thread.
+
 ## 0.30.0
 
 - Your open pull requests move from the Out tab to **Outgoing PRs**, in the

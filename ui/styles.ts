@@ -182,14 +182,8 @@ export const ICON_ACTION = {
 export const DASHED_SLOT = `flex min-h-8 shrink-0 items-center justify-center gap-1.5 rounded-md border border-dashed px-3 py-1.5 text-center ${TYPE.meta}`;
 /** A list that has nothing to show, or nothing yet: the cards' hairline, dashed. */
 export const EMPTY_NOTE = `${DASHED_SLOT} ${HAIRLINE} text-muted-foreground`;
-/** One-line cards and rows (Done, Parked, Out): 28px tall, the 20px line inside a 3px pad and the border. */
+/** One-line cards and rows (Done, Parked, Out, Radar): 28px tall, the 20px line inside a 3px pad and the border. */
 export const ONE_LINE_PAD = `${CARD_PAD_X} py-[3px]`;
-/** Two-line rows (Radar): the title line, then a meta line of age, reference and the row's actions. */
-export const TWO_LINE_PAD = `${CARD_PAD_X} pb-1 pt-1.5`;
-/** A two-line row's second line; its actions end flush with the archive button above. */
-export const TWO_LINE_META_ROW = "-mr-[3px] mt-0.5 flex h-5 items-center gap-0.5 pointer-coarse:h-7";
-/** The second line's text, truncated before the actions. */
-export const TWO_LINE_META = `mr-1 min-w-0 flex-1 truncate ${TYPE.meta} tabular-nums text-muted-foreground/80`;
 /**
  * A one-line row's age at its end. Touch screens always show the row's actions over the end of the line, so the age
  * gives way there instead of showing half under them.

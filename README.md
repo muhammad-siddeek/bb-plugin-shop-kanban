@@ -69,14 +69,16 @@ thread (see Parked) and starting a waiting one (see Working limit).
 
 ## Radar
 
-Radar's red badge counts unresolved recommendations, not opened drafts. An
-opportunity shows its best solution; opening it brings up bb's full new-thread
-composer with the findings, evidence and instruction to implement that solution.
-Cancel leaves it unread. Submit creates the thread using the selected project,
-environment and model, moves the opportunity to Read, and opens Queue. The normal
-working limit still controls when its thread starts. Dismiss (on hover, top
-right, like archive on other cards) removes a recommendation. Techniques are
-one line and open their originating Slack message, leaving Radar immediately.
+Radar's red badge counts unresolved recommendations, not opened drafts. Every
+Radar card is one line: its bolt or bulb, the title and its age. Hover an
+opportunity's title for its best solution; clicking it brings up bb's full
+new-thread composer with the findings, evidence and instruction to implement
+that solution. Cancel leaves it unread. Submit creates the thread using the
+selected project, environment and model, moves the opportunity to Read, and
+opens Queue; a read opportunity's title then opens its thread. The normal
+working limit still controls when its thread starts. Dismiss (on hover, right
+end, like archive on other cards) removes a recommendation. Techniques open
+their originating Slack message, leaving Radar immediately.
 Read opportunities follow under a **Read** header, 8 at a time with a "Show
 more" button. Scan failures show as an amber mark on the Recommendations
 header; hover it for the error.
