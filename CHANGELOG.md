@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.29.0
+
+- The board docks along the bottom of bb instead of the top, with its title
+  bar at the drawer's top edge; drag that edge to resize. Hidden, only the
+  title bar stays, spanning the window's full width along its bottom edge.
+  The title bar's dropdowns open down over the columns, or up over bb's page
+  while the board is hidden.
+- The Queue tab's New thread form opens on No project with omp on omp's
+  default model, instead of the project and model bb's New thread page last
+  used.
+- On phones, focusing bb's thread composer lets the on-screen keyboard cover
+  the board instead of pushing the page up and hiding the composer, even when
+  the composer already had focus before the keyboard rose.
+
 ## 0.28.2
 
 - On phones, the board steps out of the layout while the on-screen keyboard

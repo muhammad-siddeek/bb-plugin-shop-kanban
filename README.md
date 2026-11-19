@@ -1,19 +1,17 @@
 # Shop Kanban
 
 A Kanban board for [bb](https://getbb.app) threads. It opens as a drawer along
-the top of the bb app and shows every non-archived top-level thread. Child
+the bottom of the bb app and shows every non-archived top-level thread. Child
 threads roll up into their parent thread.
 
-The drawer starts beside bb's sidebar and, in the macOS app, under the
-window's title-bar row, so the traffic lights, back and forward and the
-sidebar toggle stay bb's. The columns come first and the board's title bar
-(thread counts, search, machine resources) runs along its bottom, next to
-bb's page, which starts at the drawer's lower edge; drag that edge, or focus
-it and use the arrow keys, Page Up/Down, Home and End, to resize. The chevron
-at the right end of the title bar hides the columns: the same title bar, with
-every control still there, moves to the top of the window, and the chevron
-shows the columns again. The title bar's dropdowns open up over the columns,
-or down over bb's page while the board is hidden.
+The drawer starts beside bb's sidebar. The board's title bar (thread counts,
+search, machine resources) runs along its top, next to bb's page, which ends
+at the drawer's upper edge; drag that edge, or focus it and use the arrow
+keys, Page Up/Down, Home and End, to resize. The chevron at the right end of
+the title bar hides the columns: only the title bar stays, with every control
+still there, across the full width of the window's bottom edge, and the
+chevron shows the columns again. The title bar's dropdowns open down over the
+columns, or up over bb's page while the board is hidden.
 
 ## Columns
 
@@ -209,17 +207,21 @@ reloads.
   the top of the Queue tab, shown whether or not Queue has threads, starts a
   new thread with bb's own new-thread composer: provider, model and reasoning,
   project, environment, branch and permission mode, mentions and attachments.
-  It takes the button's place and keeps its draft across closes, reloads and
-  crashes; the × in its corner or Esc closes it.
+  It opens on No project with omp on omp's default model, whatever bb's New
+  thread page last used; any of them can be changed. It takes the button's
+  place and keeps its draft across closes, reloads and crashes; the × in its
+  corner or Esc closes it.
 
 ### On a phone
 
 Below 640px wide, each column takes the width of the screen with the next
 one peeking in, and a swipe snaps to the next column. The title bar gives its
-room to search, whose results span the bar. The column headers, or the title
-bar while the board is hidden, start after bb's floating sidebar toggle. While
-bb's sidebar drawer is open the board steps aside, and
-comes back when it closes. On touch screens, buttons and toggles are larger
+room to search, whose results span the bar. While bb's sidebar drawer is open
+the board steps aside, and comes back when it closes. While the on-screen
+keyboard is up for a field outside the board, such as the thread composer,
+the keyboard covers the board instead of pushing bb's page up, so the
+composer stays right above it; typing in the board's own search lifts the
+board onto the keyboard. On touch screens, buttons and toggles are larger
 and text fields use 16px text, so iOS doesn't zoom into them.
 
 ### omp icon

@@ -1,3 +1,5 @@
+/** bb's provider id for omp. */
+export const OMP_PROVIDER_ID = "acp-omp";
 /** omp's brand tint. */
 const OMP_TINT = "#f84fcc";
 

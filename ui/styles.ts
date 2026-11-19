@@ -125,8 +125,10 @@ export const ELEVATION = {
   rest: "shadow-[0_1px_1px_0_rgb(0_0_0/0.05),0_1px_3px_-1px_rgb(0_0_0/0.08)]",
   /** A hovered or selected card. */
   raised: "shadow-[0_1px_2px_0_rgb(0_0_0/0.08),0_2px_6px_-2px_rgb(0_0_0/0.12)]",
-  /** What floats over the board or the page: dropdowns and the board itself, docked under bb's top edge. */
+  /** What floats over the board or the page: the title bar's dropdowns. */
   float: "shadow-[0_2px_6px_-2px_rgb(0_0_0/0.15),0_12px_32px_-12px_rgb(0_0_0/0.35)]",
+  /** The board itself, docked along bb's bottom edge and casting up over bb's page. */
+  floatUp: "shadow-[0_-2px_6px_-2px_rgb(0_0_0/0.15),0_-12px_32px_-12px_rgb(0_0_0/0.35)]",
   /** The Radar dialog. */
   modal: "shadow-[0_24px_80px_-16px_rgb(0_0_0/0.5)]",
 } as const;
@@ -162,8 +164,6 @@ export function cardFrame(border: keyof typeof CARD_BORDER = "rest"): string {
 export const CARD_INSET = "pl-[7px] pr-[9px]";
 /** The column header and the title bar start on the cards' content edge: the column's 6px padding plus CARD_INSET. */
 export const COLUMN_INSET = "pl-[13px]";
-export const LEAD_INSET = "pl-[max(13px,calc(var(--board-lead,0px)_+_8px))]";
-export const COLUMN_HEADER_INSET = `${COLUMN_INSET} max-sm:pl-[max(13px,calc(var(--board-lead,0px)_+_8px))] [section:first-child>&]:pl-[max(13px,calc(var(--board-lead,0px)_+_8px))]`;
 /** Every card's side padding: 6px at the start, where the mark's circle sits as far in as from the top, 8px at the end. */
 export const CARD_PAD_X = "pl-1.5 pr-2";
 /** Every small chip (a card's category, review risk, Archived, a follow-up already set): 16px, square-ish corners. */

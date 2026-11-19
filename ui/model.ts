@@ -31,9 +31,10 @@ export type BoardStatus = Status;
 export type BoardState = z.infer<(typeof rpcContract)["board_list"]["output"]>;
 
 export const CLOCK_TICK_MS = 15_000;
-export const TOP_BOARD_CLASS = `${PLUGIN_SLUG}-top-docked`;
-export const TOP_BOARD_INSET_VAR = `--${PLUGIN_SLUG}-top-inset`;
-export const TOP_BOARD_ATTR = `data-${PLUGIN_SLUG}-board`;
+/** On `<html>` while the board is docked along bb's bottom edge; app.tsx pads bb's page by the inset below. */
+export const BOARD_DOCKED_CLASS = `${PLUGIN_SLUG}-bottom-docked`;
+export const BOARD_INSET_VAR = `--${PLUGIN_SLUG}-bottom-inset`;
+export const BOARD_ATTR = `data-${PLUGIN_SLUG}-board`;
 /** dataTransfer type of a dragged card, carrying its thread id; only the Parked column accepts it. */
 export const THREAD_DRAG_TYPE = `application/x-${PLUGIN_SLUG}-thread`;
 const COLUMNS: BoardColumn[] = ["queue", "wip", "done", "parked"];

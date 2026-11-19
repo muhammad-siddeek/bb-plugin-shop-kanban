@@ -1,10 +1,10 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { CSSProperties, KeyboardEvent, PointerEvent } from "react";
 import { PLUGIN_NAME } from "../brand";
-import { TOP_BOARD_ATTR, TOP_BOARD_CLASS, TOP_BOARD_INSET_VAR, type BoardTask } from "./model";
+import { BOARD_ATTR, BOARD_DOCKED_CLASS, BOARD_INSET_VAR, type BoardTask } from "./model";
 import { useBoard, useRemote, useReviews, useWork, useRadar } from "./hooks";
 import { CountBadge, IconButton } from "./primitives";
-import { COLUMN_INSET, ELEVATION, LEAD_INSET, STATUS_META, type Dropdown } from "./styles";
+import { COLUMN_INSET, ELEVATION, STATUS_META, type Dropdown } from "./styles";
 import { BoardView } from "./column";
 import { ThreadSearch } from "./search";
 import { SystemMonitor } from "./system";
@@ -22,11 +22,12 @@ function ShopifyMark({ className }: { className: string }) {
 
 const DEFAULT_PANEL_MIN_HEIGHT = 320;
 const PANEL_MIN_HEIGHT = 240;
+/** Resize-grip keys and how far each moves the board's top edge, the way it points; Home/End jump to the limits. */
 const KEY_STEPS: Partial<Record<string, number>> = {
-  ArrowDown: 24,
-  ArrowUp: -24,
-  PageDown: 96,
-  PageUp: -96,
+  ArrowUp: 24,
+  ArrowDown: -24,
+  PageUp: 96,
+  PageDown: -96,
   Home: -Infinity,
   End: Infinity,
 };
@@ -34,56 +35,39 @@ const BAR_ROW = "relative flex h-9 shrink-0 items-center gap-2 pr-1.5 pointer-co
 const BAR_ROOM = 56;
 // Under bb's floating sidebar toggle (z-44) and bb's menus and dialogs (z-50).
 const BOARD_LAYER = "z-[43]";
-const BOARD_MARK = { [TOP_BOARD_ATTR]: "" };
+const BOARD_MARK = { [BOARD_ATTR]: "" };
+const SIDEBAR_GAP = '[data-sidebar="gap"]';
 
-function maxPanelHeight(): number {
-  return Math.max(PANEL_MIN_HEIGHT, Math.round(window.innerHeight * 0.9));
+function maxPanelHeight(viewportHeight: number): number {
+  return Math.max(PANEL_MIN_HEIGHT, Math.round(viewportHeight * 0.9));
 }
 
-function clampPanelHeight(value: number): number {
-  return Math.min(Math.max(value, PANEL_MIN_HEIGHT), maxPanelHeight());
+function clampPanelHeight(value: number, viewportHeight: number): number {
+  return Math.min(Math.max(value, PANEL_MIN_HEIGHT), maxPanelHeight(viewportHeight));
 }
 
-interface BbChrome {
-  left: number;
-  top: number;
-  lead: number;
-}
-
-const CHROME_SELECTORS = {
-  gap: '[data-sidebar="gap"]',
-  titleBar: '[data-testid="app-window-title-bar"]',
-  toggle: '[data-testid="app-sidebar-trigger-overlay"], [data-testid="app-desktop-sidebar-trigger"]',
-} as const;
-
-function useBbChrome(): BbChrome {
-  const [chrome, setChrome] = useState<BbChrome>({ left: 0, top: 0, lead: 0 });
+/**
+ * Right edge of bb's left sidebar, in px (0 when it is collapsed or hidden, e.g. on phones). The open board starts
+ * here so the sidebar's footer stays reachable. bb's in-flow `[data-sidebar="gap"]` spacer tracks the sidebar's
+ * width through collapse, rail mode, resizing and their animations.
+ */
+function useSidebarEdge(): number {
+  const [edge, setEdge] = useState(0);
   useEffect(() => {
-    const found: Record<keyof typeof CHROME_SELECTORS, Element | null> = { gap: null, titleBar: null, toggle: null };
-    const keys = Object.keys(CHROME_SELECTORS) as (keyof typeof CHROME_SELECTORS)[];
+    let gap: Element | null = null;
     const measure = () => {
-      const gap = found.gap?.getBoundingClientRect();
-      const titleBar = found.titleBar?.getBoundingClientRect();
-      const toggle = found.toggle?.getBoundingClientRect();
-      const left = gap ? Math.max(0, Math.round(gap.right)) : 0;
-      const top = titleBar ? Math.max(0, Math.round(titleBar.bottom)) : 0;
-      const lead = toggle && toggle.width > 0 && toggle.bottom > top ? Math.max(0, Math.round(toggle.right) - left) : 0;
-      setChrome((prev) => (prev.left === left && prev.top === top && prev.lead === lead ? prev : { left, top, lead }));
+      const right = gap ? Math.max(0, Math.round(gap.getBoundingClientRect().right)) : 0;
+      setEdge(right);
     };
     const observer = new ResizeObserver(measure);
     const refind = (): boolean => {
-      let changed = false;
-      for (const key of keys) {
-        const current = found[key];
-        if (current?.isConnected) continue;
-        const next = document.querySelector(CHROME_SELECTORS[key]);
-        if (next === current) continue;
-        if (current) observer.unobserve(current);
-        if (next) observer.observe(next);
-        found[key] = next;
-        changed = true;
-      }
-      return changed;
+      if (gap?.isConnected) return false;
+      const next = document.querySelector(SIDEBAR_GAP);
+      if (next === gap) return false;
+      if (gap) observer.unobserve(gap);
+      if (next) observer.observe(next);
+      gap = next;
+      return true;
     };
     // At most once a frame: bb's page mutates on every streamed token.
     let frame = 0;
@@ -105,7 +89,7 @@ function useBbChrome(): BbChrome {
       window.removeEventListener("resize", measure);
     };
   }, []);
-  return chrome;
+  return edge;
 }
 
 function BoardStatus({ tasks }: { tasks: readonly BoardTask[] }) {
@@ -125,7 +109,7 @@ function BoardStatus({ tasks }: { tasks: readonly BoardTask[] }) {
 }
 
 // bb's own soft-keyboard test: a text field has focus and the visual viewport is at least this much
-// shorter than when typing began. iOS shrinks only the visual viewport; Android's resizes-content
+// shorter than its full height. iOS shrinks only the visual viewport; Android's resizes-content
 // shrinks the layout too, and both show up here.
 const KEYBOARD_MIN_INSET = 80;
 
@@ -139,71 +123,87 @@ function isTextEntry(target: EventTarget | null): boolean {
   );
 }
 
-/**
- * True while the soft keyboard is up for a field outside the board. bb then sizes its shell to the
- * space above the keyboard from the top of the screen, so the board must leave the layout.
- */
-function useKeyboardOutsideBoard(root: HTMLElement | null): boolean {
-  const [typing, setTyping] = useState(false);
+interface SoftKeyboard {
+  /** The keyboard's top edge in the layout viewport, where `position: fixed` places the board. */
+  top: number;
+  /**
+   * How far the keyboard reaches up over the layout viewport's bottom: its height on iOS, which only shrinks the
+   * visual viewport; 0 on Android, whose resizes-content shrinks the layout viewport to the space above it.
+   */
+  overlap: number;
+  /** The field being typed in is the board's own (its search). */
+  forBoard: boolean;
+}
+
+/** The on-screen keyboard while it is up, or null. */
+function useSoftKeyboard(root: HTMLElement | null): SoftKeyboard | null {
+  const [keyboard, setKeyboard] = useState<SoftKeyboard | null>(null);
   useEffect(() => {
     const viewport = window.visualViewport;
     if (!viewport || !root) return;
-    let baseline: number | null = null;
+    // The viewport's full height: the tallest seen at this width, so it holds even when the field already had focus
+    // before the keyboard rose (bb autofocuses its composer, and tapping it then fires no focus event). A new width
+    // (rotation) starts over.
+    let width = viewport.width;
+    let fullHeight = viewport.height;
     const update = () => {
+      if (viewport.width !== width) {
+        width = viewport.width;
+        fullHeight = viewport.height;
+      }
+      fullHeight = Math.max(fullHeight, viewport.height);
       const active = document.activeElement;
-      setTyping(
-        baseline !== null &&
-          isTextEntry(active) &&
-          !root.contains(active) &&
-          baseline - viewport.height >= KEYBOARD_MIN_INSET,
+      let next: SoftKeyboard | null = null;
+      if (isTextEntry(active) && fullHeight - viewport.height >= KEYBOARD_MIN_INSET) {
+        const top = Math.round(viewport.offsetTop + viewport.height);
+        next = { top, overlap: Math.max(0, document.documentElement.clientHeight - top), forBoard: root.contains(active) };
+      }
+      setKeyboard((prev) =>
+        prev?.top === next?.top && prev?.overlap === next?.overlap && prev?.forBoard === next?.forBoard ? prev : next,
       );
     };
-    const handleFocusIn = (event: FocusEvent) => {
-      if (!isTextEntry(event.target)) return;
-      baseline ??= viewport.height;
-      update();
-    };
-    const handleFocusOut = (event: FocusEvent) => {
-      // Moving between fields keeps the keyboard, and the baseline taken before it opened.
-      if (isTextEntry(event.relatedTarget)) return;
-      baseline = null;
-      update();
-    };
     viewport.addEventListener("resize", update);
-    document.addEventListener("focusin", handleFocusIn);
+    viewport.addEventListener("scroll", update);
+    document.addEventListener("focusin", update);
+    // Moving between fields keeps the keyboard; the next focusin updates it.
+    const handleFocusOut = (event: FocusEvent) => {
+      if (!isTextEntry(event.relatedTarget)) update();
+    };
     document.addEventListener("focusout", handleFocusOut);
     return () => {
       viewport.removeEventListener("resize", update);
-      document.removeEventListener("focusin", handleFocusIn);
+      viewport.removeEventListener("scroll", update);
+      document.removeEventListener("focusin", update);
       document.removeEventListener("focusout", handleFocusOut);
     };
   }, [root]);
-  return typing;
+  return keyboard;
 }
 
-export function TopBoardOverlay() {
+export function BoardOverlay() {
   const [open, setOpen] = useState(true);
-  const [panelHeight, setPanelHeight] = useState(() =>
-    clampPanelHeight(Math.max(DEFAULT_PANEL_MIN_HEIGHT, Math.round(window.innerHeight * 0.48))),
-  );
+  // The height the user chose; drawn clamped to the current window, so a window that shrinks for a while (Android's
+  // keyboard) gives the board its height back afterwards.
+  const [panelHeight, setPanelHeight] = useState(() => Math.max(DEFAULT_PANEL_MIN_HEIGHT, Math.round(window.innerHeight * 0.48)));
   const [viewportHeight, setViewportHeight] = useState(() => window.innerHeight);
   const [root, setRoot] = useState<HTMLElement | null>(null);
   const resizeCleanupRef = useRef<() => void>(() => {});
-  const chrome = useBbChrome();
-  const keyboardOpen = useKeyboardOutsideBoard(root);
+  const sidebarEdge = useSidebarEdge();
+  const keyboard = useSoftKeyboard(root);
   const api = useBoard();
   const reviews = useReviews();
   const work = useWork();
   const remote = useRemote();
   const radar = useRadar();
   const tasks = api.board?.tasks ?? [];
+  const height = clampPanelHeight(panelHeight, viewportHeight);
 
   const startResize = (event: PointerEvent<HTMLDivElement>) => {
     event.preventDefault();
     resizeCleanupRef.current();
 
     const startY = event.clientY;
-    const startHeight = panelHeight;
+    const startHeight = height;
     const previousCursor = document.body.style.cursor;
     const previousUserSelect = document.body.style.userSelect;
 
@@ -211,7 +211,7 @@ export function TopBoardOverlay() {
     document.body.style.userSelect = "none";
 
     const handlePointerMove = (moveEvent: globalThis.PointerEvent) => {
-      setPanelHeight(clampPanelHeight(startHeight + moveEvent.clientY - startY));
+      setPanelHeight(clampPanelHeight(startHeight + startY - moveEvent.clientY, window.innerHeight));
     };
     const stopResize = () => {
       window.removeEventListener("pointermove", handlePointerMove);
@@ -232,61 +232,82 @@ export function TopBoardOverlay() {
     const step = KEY_STEPS[event.key];
     if (step === undefined) return;
     event.preventDefault();
-    setPanelHeight((height) => clampPanelHeight(height + step));
+    setPanelHeight(clampPanelHeight(height + step, viewportHeight));
   };
 
   useEffect(() => () => resizeCleanupRef.current(), []);
 
   useEffect(() => {
-    const handleResize = () => {
-      setViewportHeight(window.innerHeight);
-      setPanelHeight((height) => clampPanelHeight(height));
-    };
+    const handleResize = () => setViewportHeight(window.innerHeight);
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
   }, []);
 
+  // While the keyboard is up for a field outside the board (the thread composer), the board drops below the
+  // keyboard's top edge and the keyboard covers it. bb's page loses its inset, so bb's own keyboard handling sees
+  // its usual layout and keeps the composer right above the keyboard.
+  const underKeyboard = keyboard !== null && !keyboard.forBoard;
+
   useLayoutEffect(() => {
     if (!root) return;
     const html = document.documentElement;
-    const pad = () => html.style.setProperty(TOP_BOARD_INSET_VAR, `${chrome.top + root.offsetHeight}px`);
+    const pad = () => html.style.setProperty(BOARD_INSET_VAR, `${underKeyboard ? 0 : root.offsetHeight}px`);
     const observer = new ResizeObserver(pad);
     observer.observe(root);
     pad();
-    html.classList.add(TOP_BOARD_CLASS);
+    html.classList.add(BOARD_DOCKED_CLASS);
     return () => {
       observer.disconnect();
-      html.classList.remove(TOP_BOARD_CLASS);
-      html.style.removeProperty(TOP_BOARD_INSET_VAR);
+      html.classList.remove(BOARD_DOCKED_CLASS);
+      html.style.removeProperty(BOARD_INSET_VAR);
     };
-  }, [root, chrome.top]);
+  }, [root, underKeyboard]);
 
-  // Hidden rather than unmounted, so a search in progress survives; the zero height drops the inset.
-  const frame = {
-    top: `${chrome.top}px`,
-    left: `${chrome.left}px`,
-    "--board-lead": `${chrome.lead}px`,
-    ...(keyboardOpen ? { display: "none" } : null),
-  } as CSSProperties;
+  // Open, the board starts beside bb's sidebar; hidden, its title bar spans the whole window.
+  const frame: CSSProperties = { left: `${open ? sidebarEdge : 0}px` };
+  // Typing in the board's own search lifts it onto the keyboard, no taller than the room above it.
+  const boardHeight = keyboard?.forBoard ? Math.min(height, keyboard.top) : height;
+  if (open) frame.height = `${boardHeight}px`;
+  if (keyboard) {
+    // The keyboard covers the home indicator's strip.
+    frame.paddingBottom = 0;
+    if (keyboard.forBoard) frame.bottom = `${keyboard.overlap}px`;
+    else {
+      frame.top = `${keyboard.top}px`;
+      frame.bottom = "auto";
+    }
+  }
   const dropdown: Dropdown = open
-    ? { side: "above", maxHeight: panelHeight - BAR_ROOM }
-    : { side: "below", maxHeight: viewportHeight - chrome.top - BAR_ROOM };
+    ? { side: "below", maxHeight: boardHeight - BAR_ROOM }
+    : { side: "above", maxHeight: (keyboard?.top ?? viewportHeight) - BAR_ROOM };
 
   return (
     <div
       ref={setRoot}
       {...BOARD_MARK}
-      className={`fixed right-0 ${BOARD_LAYER} flex flex-col border-b border-border bg-background/90 pt-[env(safe-area-inset-top)] ${ELEVATION.float} backdrop-blur-md`}
-      style={open ? { ...frame, height: `${panelHeight}px` } : frame}
+      className={`fixed bottom-0 right-0 ${BOARD_LAYER} flex flex-col border-t border-border bg-background/90 pb-[env(safe-area-inset-bottom)] ${ELEVATION.floatUp} backdrop-blur-md`}
+      style={frame}
     >
       {open ? (
-        <div className="min-h-0 flex-1">
-          <BoardView api={api} reviews={reviews} work={work} remote={remote} radar={radar} />
+        <div
+          role="separator"
+          aria-orientation="horizontal"
+          aria-label={`Resize ${PLUGIN_NAME} board panel`}
+          aria-valuemin={PANEL_MIN_HEIGHT}
+          aria-valuemax={maxPanelHeight(viewportHeight)}
+          aria-valuenow={height}
+          tabIndex={0}
+          className="group absolute inset-x-0 -top-2 z-10 flex h-4 cursor-row-resize touch-none items-center justify-center focus:outline-none pointer-coarse:-top-3 pointer-coarse:h-6"
+          onPointerDown={startResize}
+          onKeyDown={handleResizeKeyDown}
+        >
+          <span aria-hidden className="pointer-events-none absolute inset-x-0 top-1/2 h-px -translate-y-1/2 transition-colors duration-150 group-hover:bg-muted-foreground/50 group-focus-visible:bg-muted-foreground/50" />
+          <span aria-hidden className="relative h-1 w-9 rounded-full bg-muted-foreground/50 transition-all duration-150 ease-out group-hover:w-14 group-hover:bg-muted-foreground group-active:w-16 group-focus-visible:w-14 group-focus-visible:bg-muted-foreground group-focus-visible:ring-2 group-focus-visible:ring-ring/60 group-focus-visible:ring-offset-1 group-focus-visible:ring-offset-background" />
         </div>
       ) : null}
 
-      {/* Stays mounted while hidden, so a search in progress survives. */}
-      <div className={`${BAR_ROW} ${open ? `border-t border-border ${COLUMN_INSET}` : LEAD_INSET}`}>
+      {/* Stays mounted while the columns are hidden, so a search in progress survives. */}
+      <div className={`${BAR_ROW} ${COLUMN_INSET} ${open ? "border-b border-border" : ""}`}>
         <ShopifyMark className="size-4" />
         <BoardStatus tasks={tasks} />
         <div className="ml-1 min-w-0 max-lg:ml-0 max-lg:flex-1">
@@ -294,27 +315,15 @@ export function TopBoardOverlay() {
         </div>
         <div className="ml-auto flex shrink-0 items-center gap-1.5">
           <SystemMonitor dropdown={dropdown} />
-          <IconButton icon={open ? "ChevronUp" : "ChevronDown"} label={open ? "Hide board" : "Show board"} onClick={() => setOpen(!open)} />
+          <IconButton icon={open ? "ChevronDown" : "ChevronUp"} label={open ? "Hide board" : "Show board"} onClick={() => setOpen(!open)} />
         </div>
         {/* Matches the columns' scrollbar gutter, so the bar ends where the cards do. */}
         <span aria-hidden className="-ml-2 box-content h-px shrink-0 overflow-y-hidden [scrollbar-gutter:stable] [scrollbar-width:thin] max-sm:-ml-1.5" />
       </div>
 
       {open ? (
-        <div
-          role="separator"
-          aria-orientation="horizontal"
-          aria-label={`Resize ${PLUGIN_NAME} board panel`}
-          aria-valuemin={PANEL_MIN_HEIGHT}
-          aria-valuemax={maxPanelHeight()}
-          aria-valuenow={panelHeight}
-          tabIndex={0}
-          className="group absolute inset-x-0 -bottom-2 z-10 flex h-4 cursor-row-resize touch-none items-center justify-center [app-region:no-drag] [-webkit-app-region:no-drag] focus:outline-none pointer-coarse:-bottom-3 pointer-coarse:h-6"
-          onPointerDown={startResize}
-          onKeyDown={handleResizeKeyDown}
-        >
-          <span aria-hidden className="pointer-events-none absolute inset-x-0 top-1/2 h-px -translate-y-1/2 transition-colors duration-150 group-hover:bg-muted-foreground/50 group-focus-visible:bg-muted-foreground/50" />
-          <span aria-hidden className="relative h-1 w-9 rounded-full bg-muted-foreground/50 transition-all duration-150 ease-out group-hover:w-14 group-hover:bg-muted-foreground group-active:w-16 group-focus-visible:w-14 group-focus-visible:bg-muted-foreground group-focus-visible:ring-2 group-focus-visible:ring-ring/60 group-focus-visible:ring-offset-1 group-focus-visible:ring-offset-background" />
+        <div className="min-h-0 flex-1">
+          <BoardView api={api} reviews={reviews} work={work} remote={remote} radar={radar} />
         </div>
       ) : null}
     </div>

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { DragEvent, ReactElement } from "react";
-import { experimental_Icon as Icon, experimental_NewThreadComposer as NewThreadComposer, experimental_useSidebarThreads, useBbContext, useBbNavigate, type NewThreadRequest } from "@get-bb/plugin-sdk/app";
+import { experimental_Icon as Icon, experimental_NewThreadComposer as NewThreadComposer, experimental_useSidebarThreads, useBbContext, useBbNavigate, useSdk, type NewThreadRequest } from "@get-bb/plugin-sdk/app";
 import { PLUGIN_SLUG } from "../brand";
 import { CLOCK_TICK_MS, THREAD_DRAG_TYPE, groupTasksByColumn, shortNameFromPrompt, type BoardColumn, type BoardState, type BoardTask } from "./model";
 import { useNow, usePending, type BoardApi, type RemoteApi, type ReviewsApi, type WorkApi, type RadarApi } from "./hooks";
@@ -10,17 +10,13 @@ import { ReviewGroup } from "./reviews";
 import { WipLimitControl } from "./wip-limit";
 import { WorkGroup, useWorkItems } from "./work";
 import { CountBadge, GroupHeader, Spinner, keyForBox } from "./primitives";
-import { ACCENT_HOVER_TEXT, ALERT_BANNER, COLUMN_HEADER_INSET, DASHED_SLOT, ELEVATION, EMPTY_NOTE, LEAD_INSET, STATUS_META, TYPE, UNREAD_BADGE } from "./styles";
+import { ACCENT_HOVER_TEXT, ALERT_BANNER, COLUMN_INSET, DASHED_SLOT, ELEVATION, EMPTY_NOTE, STATUS_META, TYPE, UNREAD_BADGE } from "./styles";
 import { RadarPanel } from "./radar";
+import { OMP_PROVIDER_ID } from "./provider-icons";
 
 const SCROLL_TO_LATEST_SELECTOR = 'button[aria-label="Scroll to latest event"]';
 /** Where bb's new-thread composer keeps the board's draft, so closing the form, a reload or a crash doesn't lose it. */
 const DRAFT_KEY = `${PLUGIN_SLUG}:new-thread-draft`;
-/**
- * bb's own New thread page keeps its last-used project here (raw id, no JSON). Seeding the board's composer with it
- * makes the pickers match that page: the composer loads that project's remembered provider/model/reasoning/mode.
- */
-const BB_NEW_THREAD_PROJECT_KEY = "bb.root-compose.project-id";
 /** The Queue column's open tab, kept across reloads. */
 const QUEUE_TAB_KEY = `${PLUGIN_SLUG}:queue-tab`;
 
@@ -189,17 +185,45 @@ function scrollThreadToLatest(threadId: string) {
   window.requestAnimationFrame(tick);
 }
 
+/** omp's default model from the last lookup, so a reopened form seeds it on mount instead of re-seeding a moment later. */
+let knownOmpDefaultModel: string | undefined;
+
+/** The model bb's catalog marks as omp's default; undefined until the catalog answers. */
+function useOmpDefaultModel(projectId: string | undefined, onError: (cause: unknown) => void): string | undefined {
+  const sdk = useSdk();
+  const [model, setModel] = useState(knownOmpDefaultModel);
+  const reportRef = useRef(onError);
+  reportRef.current = onError;
+  useEffect(() => {
+    if (!projectId) return;
+    const controller = new AbortController();
+    sdk.providers.models({ providerId: OMP_PROVIDER_ID, projectId, signal: controller.signal }).then(
+      (catalog) => {
+        knownOmpDefaultModel = catalog.models.find((entry) => entry.isDefault)?.model;
+        setModel(knownOmpDefaultModel);
+      },
+      (cause) => {
+        if (!controller.signal.aborted) reportRef.current(cause);
+      },
+    );
+    return () => controller.abort();
+  }, [sdk, projectId]);
+  return model;
+}
+
 /**
  * bb's own new-thread composer (prompt, provider/model/reasoning picker, project, environment, branch and
- * permission mode), so a board thread starts exactly like one from bb's New thread page.
+ * permission mode), so a board thread starts exactly like one from bb's New thread page. It opens on no project
+ * (bb's personal project) and omp on omp's default model; the user can change any of them.
  */
-function AddTaskForm({ defaultProjectId, onAdd, onClose, onError }: {
-  defaultProjectId: string | undefined;
+function AddTaskForm({ onAdd, onClose, onError }: {
   onAdd: (request: NewThreadRequest) => Promise<void>;
   onClose: () => void;
   onError: (cause: unknown) => void;
 }) {
   const [focusRequest] = useState(Date.now);
+  const personalProjectId = experimental_useSidebarThreads().projects.find((project) => project.isPersonal)?.id;
+  const ompModel = useOmpDefaultModel(personalProjectId, onError);
   const submit = async (request: NewThreadRequest) => {
     try {
       await onAdd(request);
@@ -227,7 +251,9 @@ function AddTaskForm({ defaultProjectId, onAdd, onClose, onError }: {
         draftKey={DRAFT_KEY}
         placeholder="What should the new thread do?"
         focusRequest={focusRequest}
-        {...(defaultProjectId ? { defaultProjectId } : {})}
+        {...(personalProjectId ? { defaultProjectId: personalProjectId } : {})}
+        defaultProviderId={OMP_PROVIDER_ID}
+        {...(ompModel ? { defaultModel: ompModel } : {})}
         onSubmit={submit}
       />
       {/* Floats inside the box's top-right corner, over the composer. */}
@@ -322,7 +348,7 @@ function BoardColumnView({ column, title, tasks, count, renderCard, dragging, dr
       <span className={`pointer-events-none absolute inset-x-0 top-0 h-[2px] ${meta.accent}`} aria-hidden />
       {/* Text starts on the cards' content edge (column padding + card border + padding), and the stable gutter
           mirrors the scroller's so the header's end lines up with the cards' right edge. */}
-      <header className={`flex h-8 shrink-0 items-center gap-1.5 overflow-hidden border-b border-border/60 ${COLUMN_HEADER_INSET} pr-1.5 pt-0.5 [scrollbar-gutter:stable] [scrollbar-width:thin]`}>
+      <header className={`flex h-8 shrink-0 items-center gap-1.5 overflow-hidden border-b border-border/60 ${COLUMN_INSET} pr-1.5 pt-0.5 [scrollbar-gutter:stable] [scrollbar-width:thin]`}>
         {tabs ?? (
           <>
             <h2 className={`truncate ${TYPE.heading} leading-none ${meta.title}`}>{title.toUpperCase()}</h2>
@@ -543,7 +569,7 @@ export function BoardView({ api, reviews, work, remote, radar }: { api: BoardApi
       remote={column.id === "wip" ? <RemoteSection remote={remote} now={now} /> : null}
       addForm={
         column.id === "queue" && adding ? (
-          <AddTaskForm defaultProjectId={readStored(BB_NEW_THREAD_PROJECT_KEY) || undefined} onAdd={addTask} onClose={() => setAdding(false)} onError={report} />
+          <AddTaskForm onAdd={addTask} onClose={() => setAdding(false)} onError={report} />
         ) : null
       }
     />
@@ -552,7 +578,7 @@ export function BoardView({ api, reviews, work, remote, radar }: { api: BoardApi
   return (
     <div className="flex h-full min-h-0 flex-col">
       {error ? (
-        <div role="alert" className={`flex shrink-0 items-center gap-2 ${LEAD_INSET} pr-3 py-1.5 ${ALERT_BANNER} ${TYPE.body} leading-4`}>
+        <div role="alert" className={`flex shrink-0 items-center gap-2 ${COLUMN_INSET} pr-3 py-1.5 ${ALERT_BANNER} ${TYPE.body} leading-4`}>
           <Icon name="AlertCircle" className="size-4 shrink-0" aria-hidden />
           <span className="min-w-0 flex-1 truncate">{error}</span>
         </div>
