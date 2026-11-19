@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { Forge, ForgePr } from "../contract";
+import type { Forge, ForgePr, ForgePrProgress } from "../contract";
 import { failure, parseOutput, run, type RunResult } from "./run";
 
 // Pull requests through the forge CLIs the user already signed in to: `dt` for Delta, `gh` for GitHub. Both speak
@@ -8,13 +8,6 @@ import { failure, parseOutput, run, type RunResult } from "./run";
 const CLI: Record<Forge, string> = { delta: "dt", github: "gh" };
 /** Reviews read per pull request; the API lists them oldest first and cannot sort. */
 const REVIEWS_PAGE = 100;
-/** Diff kept per file and per pull request: enough for a model's first read, not for a review. */
-const PATCH_FILE_MAX = 2_000;
-const PATCH_TOTAL_MAX = 12_000;
-/** Lockfiles, snapshots and generated dumps say little about intent and would crowd out the real change. */
-const NOISY_PATH =
-  /(?:^|\/)(?:[^/]*\.lock|package-lock\.json|pnpm-lock\.yaml|go\.sum|schema\.json|schema\.graphql|[^/]*\.snap|[^/]*\.min\.(?:js|css))$/;
-
 const userSchema = z
   .object({
     login: z.string(),
@@ -47,44 +40,15 @@ const searchSchema = z
   })
   .loose();
 
-const pullSchema = z
-  .object({
-    head: z.object({ sha: z.string() }).loose(),
-    body: z.string().nullish(),
-    additions: z.number().nullish(),
-    deletions: z.number().nullish(),
-    changed_files: z.number().nullish(),
-  })
-  .loose();
-
-const filesSchema = z.array(
-  z
-    .object({
-      filename: z.string(),
-      status: z.string().nullish(),
-      additions: z.number().nullish(),
-      deletions: z.number().nullish(),
-      patch: z.string().nullish(),
-    })
-    .loose(),
-);
-
 /** Chronological, oldest first. */
 const reviewsSchema = z.array(
   z
     .object({
       user: z.object({ id: z.number() }).loose().nullish(),
       state: z.string(),
-      commit_id: z.string().nullish(),
     })
     .loose(),
 );
-
-/**
- * The signed-in user's id per forge, read once. Ids, not logins: Delta's `/user` says `name` where its reviews
- * say `name@shopify.com`.
- */
-const myIds = new Map<Forge, number>();
 
 type ApiResult<T> = { ok: true; value: T } | { ok: false; error: string; missing: boolean };
 
@@ -109,10 +73,6 @@ async function api<T>(forge: Forge, repo: string | null, endpoint: string, schem
   if (result.code !== 0) return { ok: false, ...failed(command, result) };
   const parsed = parseOutput(`${command} api`, result.stdout, schema);
   return parsed.ok ? parsed : { ...parsed, missing: false };
-}
-
-function clip(text: string, max: number): string {
-  return text.length <= max ? text : `${text.slice(0, max)}\n…`;
 }
 
 export async function prSearch(input: { forge: Forge; repo: string | null; query: string; limit: number }, signal: AbortSignal) {
@@ -151,67 +111,90 @@ export async function prSearch(input: { forge: Forge; repo: string | null; query
   return { prs, total: result.value.total_count, error: null, missing: false };
 }
 
-/** The signed-in user's id; null when it cannot be read. */
-async function myId(forge: Forge, repo: string, signal: AbortSignal): Promise<number | null> {
-  const known = myIds.get(forge);
-  if (known !== undefined) return known;
-  const result = await api(forge, repo, forge === "delta" ? "/api/v3/user" : "user", z.object({ id: z.number() }).loose(), signal);
-  if (!result.ok) return null;
-  myIds.set(forge, result.value.id);
-  return result.value.id;
-}
+const progressPullSchema = z
+  .object({
+    head: z.object({ sha: z.string() }).loose(),
+    user: z.object({ id: z.number() }).loose().nullish(),
+    mergeable_state: z.string().nullish(),
+    requested_reviewers: z.array(z.unknown()).nullish(),
+    requested_teams: z.array(z.unknown()).nullish(),
+  })
+  .loose();
 
-/** Commit of the user's latest submitted review that still stands: pending drafts and dismissed reviews don't count. */
-async function reviewedSha(forge: Forge, repo: string, base: string, signal: AbortSignal): Promise<string | null> {
-  const [me, reviews] = await Promise.all([myId(forge, repo, signal), api(forge, repo, `${base}/reviews?per_page=${REVIEWS_PAGE}`, reviewsSchema, signal)]);
-  if (me === null || !reviews.ok) return null;
-  const mine = reviews.value.filter((review) => review.user?.id === me && review.commit_id && review.state !== "PENDING" && review.state !== "DISMISSED");
-  return mine.at(-1)?.commit_id ?? null;
-}
+/** The combined commit status. With no statuses at all GitHub still says `pending`, so `total_count` decides. */
+const combinedStatusSchema = z
+  .object({
+    state: z.string(),
+    total_count: z.number().nullish(),
+    statuses: z.array(z.object({ context: z.string(), state: z.string() }).loose()).nullish(),
+  })
+  .loose();
 
-export async function prDetail(input: { forge: Forge; repo: string; number: number }, signal: AbortSignal) {
+const checkRunsSchema = z
+  .object({
+    check_runs: z.array(z.object({ name: z.string(), status: z.string(), conclusion: z.string().nullish() }).loose()),
+  })
+  .loose();
+
+/** Check run conclusions that fail the head, as GitHub's own rollup counts them. */
+const FAILED_CONCLUSIONS: Record<string, true> = { failure: true, timed_out: true, cancelled: true, action_required: true, startup_failure: true };
+/** Delta's review gate is a check run that stays in progress until reviewers approve: a review, not CI. */
+const DELTA_REVIEW_GATE = "reviews";
+
+export async function prProgress(input: { forge: Forge; repo: string; number: number }, signal: AbortSignal) {
   const base = `repos/${input.repo}/pulls/${input.number}`;
-  const [pull, files, reviewed] = await Promise.all([
-    api(input.forge, input.repo, base, pullSchema, signal),
-    api(input.forge, input.repo, `${base}/files?per_page=100`, filesSchema, signal),
-    reviewedSha(input.forge, input.repo, base, signal),
+  const [pull, reviews] = await Promise.all([
+    api(input.forge, input.repo, base, progressPullSchema, signal),
+    api(input.forge, input.repo, `${base}/reviews?per_page=${REVIEWS_PAGE}`, reviewsSchema, signal),
   ]);
-  if (!pull.ok) return { detail: null, error: pull.error };
-  let budget = PATCH_TOTAL_MAX;
-  const rows = (files.ok ? files.value : []).map((file) => {
-    const patch = file.patch && budget > 0 && !NOISY_PATH.test(file.filename) ? clip(file.patch, Math.min(PATCH_FILE_MAX, budget)) : null;
-    if (patch) budget -= patch.length;
-    return {
-      path: file.filename,
-      status: file.status ?? null,
-      additions: file.additions ?? null,
-      deletions: file.deletions ?? null,
-      patch,
-    };
-  });
-  return {
-    detail: {
-      headSha: pull.value.head.sha,
-      reviewedSha: reviewed,
-      body: clip((pull.value.body ?? "").trim(), 8_000),
-      additions: pull.value.additions ?? null,
-      deletions: pull.value.deletions ?? null,
-      changedFiles: pull.value.changed_files ?? null,
-      files: rows,
-    },
-    // Without the file list the summary still has the description and size.
-    error: files.ok ? null : files.error,
-  };
-}
+  if (!pull.ok) return { progress: null, error: pull.error };
+  const sha = pull.value.head.sha;
+  const commit = `repos/${input.repo}/commits/${sha}`;
+  const [status, checks] = await Promise.all([
+    api(input.forge, input.repo, `${commit}/status`, combinedStatusSchema, signal),
+    api(input.forge, input.repo, `${commit}/check-runs?per_page=100`, checkRunsSchema, signal),
+  ]);
 
-export async function prReview(
-  input: { forge: Forge; repo: string; number: number; verdict: "approve" | "request_changes"; body: string },
-  signal: AbortSignal,
-) {
-  const command = CLI[input.forge];
-  const args = ["pr", "review", String(input.number), "-R", input.repo, input.verdict === "approve" ? "--approve" : "--request-changes"];
-  const body = input.body.trim();
-  if (body) args.push("--body", body);
-  const result = await run(command, args, 60_000, signal);
-  return { error: result.code === 0 ? null : failed(command, result).error };
+  // Each reviewer's latest standing verdict; comments leave it as it was, a dismissal clears it.
+  const author = pull.value.user?.id ?? null;
+  const verdicts = new Map<number, string>();
+  for (const review of reviews.ok ? reviews.value : []) {
+    const id = review.user?.id;
+    if (id === undefined || id === author) continue;
+    if (review.state === "APPROVED" || review.state === "CHANGES_REQUESTED") verdicts.set(id, review.state);
+    else if (review.state === "DISMISSED") verdicts.delete(id);
+  }
+  const standing = [...verdicts.values()];
+
+  const failing: string[] = [];
+  let running = false;
+  let any = false;
+  if (status.ok && (status.value.total_count ?? status.value.statuses?.length ?? 0) > 0) {
+    any = true;
+    for (const entry of status.value.statuses ?? []) {
+      if (entry.state === "failure" || entry.state === "error") failing.push(entry.context);
+      else if (entry.state === "pending") running = true;
+    }
+  }
+  for (const check of checks.ok ? checks.value.check_runs : []) {
+    if (input.forge === "delta" && check.name === DELTA_REVIEW_GATE) continue;
+    any = true;
+    if (check.status !== "completed") running = true;
+    else if (check.conclusion && FAILED_CONCLUSIONS[check.conclusion]) failing.push(check.name);
+  }
+  const ci: ForgePrProgress["ci"] = failing.length > 0 ? "failure" : running ? "pending" : any ? "success" : "none";
+
+  return {
+    progress: {
+      headSha: sha,
+      mergeState: pull.value.mergeable_state ?? null,
+      approvals: standing.filter((state) => state === "APPROVED").length,
+      changesRequested: standing.filter((state) => state === "CHANGES_REQUESTED").length,
+      pendingReviewers: (pull.value.requested_reviewers?.length ?? 0) + (pull.value.requested_teams?.length ?? 0),
+      ci,
+      failing: [...new Set(failing)].slice(0, 3),
+    },
+    // Without reviews or CI the verdict is a guess; say why so the list header can.
+    error: !reviews.ok ? reviews.error : !status.ok ? status.error : !checks.ok ? checks.error : null,
+  };
 }

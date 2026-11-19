@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { CSSProperties, KeyboardEvent, PointerEvent } from "react";
 import { PLUGIN_NAME } from "../brand";
 import { BOARD_ATTR, BOARD_DOCKED_CLASS, BOARD_INSET_VAR, type BoardTask } from "./model";
-import { useBoard, useRemote, useReviews, useWork, useRadar } from "./hooks";
+import { useBoard, useRemote, useWork, useRadar } from "./hooks";
 import { CountBadge, IconButton } from "./primitives";
 import { COLUMN_INSET, ELEVATION, STATUS_META, type Dropdown } from "./styles";
 import { BoardView } from "./column";
@@ -191,7 +191,6 @@ export function BoardOverlay() {
   const sidebarEdge = useSidebarEdge();
   const keyboard = useSoftKeyboard(root);
   const api = useBoard();
-  const reviews = useReviews();
   const work = useWork();
   const remote = useRemote();
   const radar = useRadar();
@@ -323,7 +322,7 @@ export function BoardOverlay() {
 
       {open ? (
         <div className="min-h-0 flex-1">
-          <BoardView api={api} reviews={reviews} work={work} remote={remote} radar={radar} />
+          <BoardView api={api} work={work} remote={remote} radar={radar} />
         </div>
       ) : null}
     </div>

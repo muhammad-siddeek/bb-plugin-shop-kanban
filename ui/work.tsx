@@ -1,7 +1,8 @@
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
-import { prRef, type WorkItem, type WorkList, type WorkMark, type WorkState } from "./model";
+import type { WorkItem, WorkList, WorkMark, WorkStage, WorkState } from "./model";
 import { usePending, type WorkApi } from "./hooks";
-import { Age, CappedList, ForgeLink, GroupHeader, IconMark, listProblems, RowActions, useBbLinks, useRowAction } from "./primitives";
+import { TaskStatusMark } from "./card";
+import { Age, CappedList, ForgeLink, GroupHeader, IconMark, Spinner, listProblems, Mark, RowActions, useBbLinks, useRowAction } from "./primitives";
 import {
   ACCENT_BADGE,
   ACCENT_TEXT,
@@ -10,22 +11,21 @@ import {
   ONE_LINE_AGE,
   ONE_LINE_PAD,
   ROW_ACTION,
-  TWO_LINE_META,
-  TWO_LINE_META_ROW,
-  TWO_LINE_PAD,
   TYPE,
+  UNREAD_BADGE,
   cardFrame,
   cardTitle,
 } from "./styles";
 
-// Work lists in the Queue column: Open and Shipped in the Out tab (one line each), Assigned at the bottom of the Queue
-// tab (two lines).
-// The title opens a new-thread draft that takes the item further (land it, measure and demo it, or work the
-// issue); the forge link opens it on its forge, and on shipped pull requests the toggles mark it measured or demoed.
+// Work lists, one line each. Outgoing PRs, in the Queue column above Parked: the user's open pull requests,
+// each with a status mark that says whose move it is (red like a blocked thread when it waits on the user) and where
+// it stands. Shipped, in the Queue column's Out tab. The title opens a new-thread draft that takes the item its next
+// step (fix CI, answer review, merge, measure and demo it); the forge link opens it on its forge, and on shipped pull
+// requests the toggles mark it measured or demoed.
 
 const LIST_META: Record<WorkList, { title: string; hint: string; empty: string; mark: string; tone: string }> = {
   open: {
-    title: "Open",
+    title: "Outgoing PRs",
     hint: "Your open pull requests, drafts included",
     empty: "No open pull requests.",
     mark: "GitPullRequest",
@@ -38,130 +38,155 @@ const LIST_META: Record<WorkList, { title: string; hint: string; empty: string; 
     mark: "GitMerge",
     tone: ACCENT_TEXT.emerald,
   },
-  assigned: {
-    title: "Assigned",
-    hint: "Open issues assigned to you",
-    empty: "No issues assigned to you.",
-    mark: "CircleDot",
-    tone: ACCENT_TEXT.amber,
-  },
 };
 const FOLLOW_UPS: { mark: "measured" | "demoed"; label: string }[] = [
   { mark: "measured", label: "Measured" },
   { mark: "demoed", label: "Demoed" },
 ];
 
-/** The seed of a new thread that takes the item further. */
+/** Outgoing order: what waits on the user first, then what they can merge, then what waits on others, then drafts. */
+const TONE_ORDER: Record<WorkStage["tone"], number> = { you: 0, ready: 1, waiting: 2, idle: 3 };
+/** A stage line's text per tone: the user's move in the hue of its mark, everything else quiet. */
+export const STAGE_TEXT: Record<WorkStage["tone"], string> = {
+  you: `font-medium ${ACCENT_TEXT.rose}`,
+  ready: `font-medium ${ACCENT_TEXT.emerald}`,
+  waiting: "text-muted-foreground",
+  idle: "text-muted-foreground",
+};
+
+/**
+ * An open pull request's leading mark, labeled with where it stands: the board's red blocked mark when it waits on
+ * the user, a green merge disc when they can merge it, the Working petals while CI runs, an hourglass on reviewers.
+ */
+export function StageMark({ stage }: { stage: WorkStage }) {
+  switch (stage.step) {
+    case "conflict":
+    case "ci_failing":
+    case "changes_requested":
+    case "behind":
+    case "no_reviewers":
+      return (
+        <Mark label={stage.label} disc="bg-rose-500 text-[10px] font-bold leading-none text-white">
+          !
+        </Mark>
+      );
+    case "ready":
+      return <IconMark label={stage.label} icon="GitMerge" fallback="Check" disc={UNREAD_BADGE.emerald} />;
+    case "ci_running":
+      return <TaskStatusMark status="wip" unread={false} />;
+    case "in_review":
+      return <IconMark label={stage.label} icon="Hourglass" fallback="Clock" tone={ACCENT_TEXT.amber} />;
+    case "draft":
+      return <IconMark label={stage.label} icon="GitPullRequestDraft" fallback="GitPullRequest" tone="text-muted-foreground/50" />;
+    case "unknown":
+      return (
+        <Mark label={stage.label}>
+          <Spinner />
+        </Mark>
+      );
+  }
+}
+
+/** The seed of a new thread that takes the item its next step. */
 function draftPrompt(item: WorkItem): string {
   const ref = `${item.url} ("${item.title}")`;
   if (item.list === "shipped") {
     const merged = item.mergedAt ? ` It merged on ${item.mergedAt.slice(0, 10)}.` : "";
     return `Help me measure the impact of my pull request ${ref} and demo it.${merged} Find the metrics, dashboards or experiments it should move and compare them before and after it shipped, then outline a short demo of the change.`;
   }
-  if (item.kind === "issue") {
-    return `Look into the issue ${ref}, which is assigned to me: summarize what it asks for, then propose how to resolve it.`;
+  switch (item.stage?.step) {
+    case "ci_failing":
+      return `CI is failing on my pull request ${ref} (${item.stage.label.replace(/^CI failing · /u, "")}): read the failing checks' logs, find the cause and fix it.`;
+    case "changes_requested":
+      return `Reviewers requested changes on my pull request ${ref}: read every unresolved review comment, and address each one or tell me why not.`;
+    case "conflict":
+      return `My pull request ${ref} has a merge conflict with its base branch: rebase it, resolve the conflicts and tell me what you had to decide.`;
+    case "behind":
+      return `My pull request ${ref} is behind its base branch: update it and make sure CI still passes.`;
+    case "ready":
+      return `My pull request ${ref} is approved: check it is still green and safe to ship, tell me anything that blocks the merge, and how to roll it out.`;
+    case "no_reviewers":
+      return `My pull request ${ref} has no reviewers yet: find who owns the code it changes and suggest who should review it.`;
+    default:
+      return `Help me land my pull request ${ref}${item.draft ? ", still a draft" : ""}: read its review comments, CI checks and merge readiness, and tell me what is left before it can merge.`;
   }
-  return `Help me land my pull request ${ref}${item.draft ? ", still a draft" : ""}: read its review comments, CI checks and merge readiness, and tell me what is left before it can merge.`;
 }
 
-function WorkRow({ item, now, onMark }: {
-  item: WorkItem;
-  now: number;
-  onMark: (item: WorkItem, mark: WorkMark, on: boolean) => Promise<unknown>;
-}) {
-  const links = useBbLinks();
-  const { attempt, view: error } = useRowAction();
-  const meta = LIST_META[item.list];
-  const at = (item.list === "shipped" ? item.mergedAt : null) ?? item.updatedAt;
-  const draftMark = item.kind === "pr" && item.draft;
-  const noun = item.kind === "issue" ? "issue" : "pull request";
-  const followUps =
-    item.list === "shipped"
-      ? FOLLOW_UPS.map((followUp) => {
-          const on = item[followUp.mark];
-          return (
-            <button
-              key={followUp.mark}
-              type="button"
-              aria-pressed={on}
-              onClick={() => void attempt(() => onMark(item, followUp.mark, !on))}
-              className={`${ROW_ACTION} gap-0.5 px-1 ${TYPE.meta} font-medium ${on ? ACCENT_BADGE.emerald : "hover:bg-accent hover:text-foreground"}`}
-            >
-              {on ? <Icon name="Check" className="size-3" aria-hidden /> : null}
-              {followUp.label}
-            </button>
-          );
-        })
-      : null;
-  const mark = (
-    <IconMark
-      label={draftMark ? "Draft pull request" : meta.hint}
-      icon={draftMark ? "GitPullRequestDraft" : meta.mark}
-      fallback={item.kind === "issue" ? "AlertCircle" : "GitPullRequest"}
-      tone={draftMark ? "text-muted-foreground/50" : meta.tone}
-    />
-  );
-  const titleButton = (
+/** The title: opens a new-thread draft that takes the item its next step. */
+function titleButton(item: WorkItem, compose: (prompt: string) => void) {
+  return (
     <button
       type="button"
-      onClick={() => links.compose(draftPrompt(item))}
+      onClick={() => compose(draftPrompt(item))}
       className={`flex h-[18px] w-full min-w-0 items-center rounded-sm text-left ${cardTitle()} leading-[18px] text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60`}
     >
       <span className="min-w-0 truncate">{item.title}</span>
     </button>
   );
+}
 
-  // Out (open and shipped pull requests): one line. The forge link and the follow-up toggles join archive on hover;
-  // a follow-up already set stays as a badge so the row says what is left.
-  if (item.list !== "assigned") {
-    const done = item.list === "shipped" ? FOLLOW_UPS.filter((followUp) => item[followUp.mark]) : [];
-    return (
-      <article className={`group relative ${cardFrame()} ${ONE_LINE_PAD}`}>
-        <div className="flex h-5 items-center gap-2">
-          {mark}
-          <div className="min-w-0 flex-1">{titleButton}</div>
-          {done.map((followUp) => (
-            <span key={followUp.mark} className={`${CHIP} gap-0.5 ${ACCENT_BADGE.emerald}`}>
-              <Icon name="Check" className="size-2.5" aria-hidden />
-              {followUp.label}
-            </span>
-          ))}
-          {draftMark ? <span className={`shrink-0 ${TYPE.meta} text-muted-foreground/80`}>draft</span> : null}
-          <Age at={at} now={now} className={ONE_LINE_AGE} />
-        </div>
-        {error}
-        <RowActions
-          centered
-          label={`Archive ${noun}`}
-          onArchive={() => void attempt(() => onMark(item, "archived", true))}
-        >
-          {followUps}
-          <ForgeLink forge={item.forge} onClick={() => links.openUrl(item.url)} />
-        </RowActions>
-      </article>
-    );
-  }
-
+/** An open pull request in Outgoing PRs: the stage mark, title, where it stands and age; forge link and archive on hover. */
+function InFlightRow({ item, now, onMark }: { item: WorkItem; now: number; onMark: (item: WorkItem, mark: WorkMark, on: boolean) => Promise<unknown> }) {
+  const links = useBbLinks();
+  const { attempt, view: error } = useRowAction();
+  const meta = LIST_META[item.list];
+  const stage = item.stage;
   return (
-    <article className={`group relative ${cardFrame()} ${TWO_LINE_PAD}`}>
-      <div className="flex items-start gap-2">
-        {mark}
-        <div className="min-w-0 flex-1">
-          {titleButton}
-          <div className={TWO_LINE_META_ROW}>
-            <span className={TWO_LINE_META}>
-              <Age at={at} now={now} after=" · " />
-              {prRef(item)}
-            </span>
-            <ForgeLink forge={item.forge} onClick={() => links.openUrl(item.url)} />
-          </div>
-          {error}
-        </div>
+    <article className={`group relative ${cardFrame()} ${ONE_LINE_PAD}`}>
+      <div className="flex h-5 items-center gap-2">
+        {stage ? <StageMark stage={stage} /> : <IconMark label={meta.hint} icon={meta.mark} tone={meta.tone} />}
+        <div className="min-w-0 flex-1">{titleButton(item, links.compose)}</div>
+        {stage ? <span className={`max-w-[45%] shrink-0 truncate ${TYPE.meta} ${STAGE_TEXT[stage.tone]}`}>{stage.label}</span> : null}
+        <Age at={item.updatedAt} now={now} className={ONE_LINE_AGE} />
       </div>
-      <RowActions
-        label={`Archive ${noun}`}
-        onArchive={() => void attempt(() => onMark(item, "archived", true))}
-      />
+      {error}
+      <RowActions centered label="Archive pull request" onArchive={() => void attempt(() => onMark(item, "archived", true))}>
+        <ForgeLink forge={item.forge} onClick={() => links.openUrl(item.url)} />
+      </RowActions>
+    </article>
+  );
+}
+
+/** A shipped pull request in Out: one line, the follow-up toggles beside the forge link on hover. */
+function ShippedRow({ item, now, onMark }: { item: WorkItem; now: number; onMark: (item: WorkItem, mark: WorkMark, on: boolean) => Promise<unknown> }) {
+  const links = useBbLinks();
+  const { attempt, view: error } = useRowAction();
+  const meta = LIST_META.shipped;
+  const followUps = FOLLOW_UPS.map((followUp) => {
+    const on = item[followUp.mark];
+    return (
+      <button
+        key={followUp.mark}
+        type="button"
+        aria-pressed={on}
+        onClick={() => void attempt(() => onMark(item, followUp.mark, !on))}
+        className={`${ROW_ACTION} gap-0.5 px-1 ${TYPE.meta} font-medium ${on ? ACCENT_BADGE.emerald : "hover:bg-accent hover:text-foreground"}`}
+      >
+        {on ? <Icon name="Check" className="size-3" aria-hidden /> : null}
+        {followUp.label}
+      </button>
+    );
+  });
+  // A follow-up already set stays as a badge so the row says what is left.
+  const done = FOLLOW_UPS.filter((followUp) => item[followUp.mark]);
+  return (
+    <article className={`group relative ${cardFrame()} ${ONE_LINE_PAD}`}>
+      <div className="flex h-5 items-center gap-2">
+        <IconMark label={meta.hint} icon={meta.mark} fallback="GitPullRequest" tone={meta.tone} />
+        <div className="min-w-0 flex-1">{titleButton(item, links.compose)}</div>
+        {done.map((followUp) => (
+          <span key={followUp.mark} className={`${CHIP} gap-0.5 ${ACCENT_BADGE.emerald}`}>
+            <Icon name="Check" className="size-2.5" aria-hidden />
+            {followUp.label}
+          </span>
+        ))}
+        <Age at={item.mergedAt ?? item.updatedAt} now={now} className={ONE_LINE_AGE} />
+      </div>
+      {error}
+      <RowActions centered label="Archive pull request" onArchive={() => void attempt(() => onMark(item, "archived", true))}>
+        {followUps}
+        <ForgeLink forge={item.forge} onClick={() => links.openUrl(item.url)} />
+      </RowActions>
     </article>
   );
 }
@@ -194,8 +219,10 @@ export function useWorkItems(work: WorkApi): WorkItems {
     const merged = { ...item, measured: marks.measured ?? item.measured, demoed: marks.demoed ?? item.demoed };
     return merged.list === "shipped" && merged.measured && merged.demoed ? [] : [merged];
   });
-  const byList: Record<WorkList, WorkItem[]> = { open: [], shipped: [], assigned: [] };
+  const byList: Record<WorkList, WorkItem[]> = { open: [], shipped: [] };
   for (const item of items) byList[item.list].push(item);
+  // Stable: within a tone, the server's newest-update-first order holds.
+  byList.open.sort((a, b) => TONE_ORDER[a.stage?.tone ?? "waiting"] - TONE_ORDER[b.stage?.tone ?? "waiting"]);
 
   const mark = async (item: WorkItem, kind: WorkMark, on: boolean) => {
     changeLocal(item.id, (marks) => ({ ...marks, [kind]: on }));
@@ -213,6 +240,12 @@ export function useWorkItems(work: WorkApi): WorkItems {
   return { state, error: work.error, lists: state?.lists ?? [], byList, mark };
 }
 
+/** A header pill counting what waits on the user: red like the blocked mark. Nothing at zero. */
+export function NeedsYouBadge({ count }: { count: number }) {
+  if (count === 0) return null;
+  return <span className={`inline-flex h-4 shrink-0 items-center rounded-full px-1.5 ${TYPE.badge} leading-none ${UNREAD_BADGE.rose}`}>{count} need you</span>;
+}
+
 export function WorkGroup({ list, work, now }: { list: WorkList; work: WorkItems; now: number }) {
   const { state } = work;
   if (!state || !work.lists.includes(list)) return null;
@@ -222,21 +255,24 @@ export function WorkGroup({ list, work, now }: { list: WorkList; work: WorkItems
     [work.error, state.error],
     state.sources.filter((source) => source.list === list),
   );
+  const needsYou = items.filter((item) => item.stage?.tone === "you").length;
 
   return (
-    <div className="space-y-1">
-      <GroupHeader
-        title={meta.title}
-        // Assigned draws no count: its cards already say how many issues wait.
-        count={list === "assigned" ? null : items.length}
-        refreshing={state.refreshing}
-        problems={problems}
-      />
+    <div role="group" aria-label={meta.title} className="space-y-1">
+      <GroupHeader title={meta.title} count={items.length} refreshing={state.refreshing} problems={problems}>
+        {list === "open" ? <NeedsYouBadge count={needsYou} /> : null}
+      </GroupHeader>
       {items.length === 0 ? (
         <p className={EMPTY_NOTE}>{state.refreshedAt === null ? "Reading pull requests…" : meta.empty}</p>
       ) : null}
       <CappedList items={items}>
-        {(item) => <WorkRow key={`${item.list}:${item.id}`} item={item} now={now} onMark={work.mark} />}
+        {(item) =>
+          list === "shipped" ? (
+            <ShippedRow key={`${item.list}:${item.id}`} item={item} now={now} onMark={work.mark} />
+          ) : (
+            <InFlightRow key={`${item.list}:${item.id}`} item={item} now={now} onMark={work.mark} />
+          )
+        }
       </CappedList>
     </div>
   );

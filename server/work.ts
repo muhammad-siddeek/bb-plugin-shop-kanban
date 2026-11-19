@@ -1,7 +1,8 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
-import type { Forge, ForgePr } from "../contract";
+import type { Forge, ForgePr, ForgePrProgress } from "../contract";
 import {
+  CALL_TIMEOUT_MS,
   INVALID_LINE,
   NO_HOST,
   createPoller,
@@ -14,25 +15,27 @@ import {
   type ForgeSearch,
   type SearchKind,
 } from "./forge-search";
-import { hostClient, indexHostId } from "./hosts";
+import { hostClient, indexHostId, type HostClient } from "./hosts";
 import type { WorkItem, WorkList, WorkMark, WorkSource, WorkState } from "./schema";
-import { coalesced } from "./text";
+import { prStage } from "./stage";
+import { coalesced, errorMessage } from "./text";
 
-// Work lists in the Queue column's tabs: the user's open pull requests and their recently merged ones (Out),
-// and issues assigned to them (In, beside the review queue). Read through the forge CLIs on the user's
-// persistent host from searches in settings. Merging is as close to deployed as the forges say, so a shipped pull
-// request stays listed until the user marks its impact measured and its change demoed, or archives it. Marks live
-// in KV.
+// Work in flight: the user's open pull requests with where each stands (review verdicts, CI, merge state), in the
+// Queue column above Parked; recently merged pull requests in the Queue column's Out tab. Read
+// through the forge CLIs on the user's persistent host from searches in settings. Merging is as close to deployed as
+// the forges say, so a shipped pull request stays listed until the user marks its impact measured and its change
+// demoed, or archives it. Marks live in KV.
 
 const MARKS_KEY = "work-v1";
 /** Newest matches read per search. */
 const SEARCH_LIMIT = 30;
+/** Open pull requests whose progress is read at once; each read is four forge calls. */
+const PROGRESS_CONCURRENCY = 4;
 const LIST_KIND: Record<WorkList, SearchKind> = {
   open: { is: "pr", state: "open" },
   shipped: { is: "pr", state: "merged" },
-  assigned: { is: "issue", state: "open" },
 };
-const LIST_ORDER: WorkList[] = ["open", "shipped", "assigned"];
+const LIST_ORDER: WorkList[] = ["open", "shipped"];
 const LINE_SYNTAX =
   "One search per line: `delta: <query>` reads Delta through `dt` (shop/world unless the query names a `repo:`), `github: <query>` reads GitHub through `gh`, in GitHub search syntax.";
 
@@ -44,11 +47,34 @@ const marksSchema = z.object({
   demoed: z.record(z.string(), z.number()).catch({}),
 });
 type Marks = z.infer<typeof marksSchema>;
-type Values = { outgoingSearches: string; shippedSearches: string; shippedDays: number; assignedSearches: string };
-const SETTING_KEYS = ["outgoingSearches", "shippedSearches", "shippedDays", "assignedSearches"] as const satisfies readonly (keyof Values)[];
+type Values = { outgoingSearches: string; shippedSearches: string; shippedDays: number };
+const SETTING_KEYS = ["outgoingSearches", "shippedSearches", "shippedDays"] as const satisfies readonly (keyof Values)[];
 
 function failedSource(search: { line: string; list: WorkList }, error: string, missing: boolean): WorkSource {
   return { search: search.line, list: search.list, count: 0, total: 0, error, missing };
+}
+
+/**
+ * Each open pull request's progress, PROGRESS_CONCURRENCY reads at a time. A read that fails keeps the last one known,
+ * and says why as a failed source of the Open list.
+ */
+async function readProgress(host: HostClient, hostId: string, prs: Entry[], known: Map<string, ForgePrProgress>) {
+  const next = new Map<string, ForgePrProgress>();
+  const failures: WorkSource[] = [];
+  let index = 0;
+  const worker = async () => {
+    while (index < prs.length) {
+      const pr = prs[index++];
+      const result = await host
+        .call("pr_progress", { forge: pr.forge, repo: pr.repo, number: pr.number }, { hostId, timeoutMs: CALL_TIMEOUT_MS })
+        .catch((cause: unknown) => ({ progress: null, error: errorMessage(cause) }));
+      const progress = result.progress ?? known.get(pr.id);
+      if (progress) next.set(pr.id, progress);
+      if (result.error) failures.push(failedSource({ line: `Status of ${pr.repo}#${pr.number}`, list: "open" }, result.error, false));
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(PROGRESS_CONCURRENCY, prs.length) }, worker));
+  return { progress: next, failures };
 }
 
 /** `YYYY-MM-DD` of `days` days ago, UTC: the cutoff for shipped searches. */
@@ -65,7 +91,7 @@ function configuredSearches(values: Values, now: number) {
   const invalid: WorkSource[] = [];
   const lists: WorkList[] = [];
   const days = Math.max(1, Math.round(values.shippedDays));
-  const settingOf: Record<WorkList, string> = { open: values.outgoingSearches, shipped: values.shippedSearches, assigned: values.assignedSearches };
+  const settingOf: Record<WorkList, string> = { open: values.outgoingSearches, shipped: values.shippedSearches };
   for (const list of LIST_ORDER) {
     const lines = searchLines(settingOf[list]);
     if (lines.length > 0) lists.push(list);
@@ -86,8 +112,8 @@ export function createWorkLists(bb: BbPluginApi) {
   const settings = bb.settings.define({
     outgoingSearches: {
       type: "string",
-      label: "Out: your open pull requests",
-      description: `Listed under Open in the Queue column's Out tab, drafts included. ${LINE_SYNTAX} \`is:pr is:open\` is implied. Leave empty to hide Open.`,
+      label: "Queue: outgoing PRs",
+      description: `Listed under Outgoing PRs in the Queue column, above Parked, drafts included, each with where it stands (reviews, CI, merge state). ${LINE_SYNTAX} \`is:pr is:open\` is implied. Leave empty to hide them.`,
       default: "delta: author:@me\ngithub: author:@me",
       experimental_multiline: true,
     },
@@ -105,13 +131,6 @@ export function createWorkLists(bb: BbPluginApi) {
       default: 30,
       experimental_schema: z.number().int().min(1).max(365),
     },
-    assignedSearches: {
-      type: "string",
-      label: "In: issues assigned to you",
-      description: `Listed under Assigned in the Queue tab's In section. ${LINE_SYNTAX} \`is:issue is:open\` is implied; Delta has no issues. Leave empty to hide Assigned.`,
-      default: "github: assignee:@me",
-      experimental_multiline: true,
-    },
   });
   const host = hostClient(bb);
   const store = marksStore(bb, MARKS_KEY, marksSchema);
@@ -119,6 +138,8 @@ export function createWorkLists(bb: BbPluginApi) {
   let entries: Entry[] = [];
   let sources: WorkSource[] = [];
   let hostId: string | null = null;
+  /** Open pull requests' progress by id, from the last refresh that read it. */
+  let progress = new Map<string, ForgePrProgress>();
   const poller = createPoller(runRefresh, changed, 10_000);
 
   async function runRefresh(): Promise<boolean> {
@@ -146,7 +167,8 @@ export function createWorkLists(bb: BbPluginApi) {
     const searched = results.map(({ search, result }): WorkSource => {
       const found =
         result.error === null
-          ? result.prs.map((pr) => ({ ...pr, id: prId(search.forge, pr), forge: search.forge, list: search.list }))
+          ? // A query that names `is:issue` still lists only its pull requests.
+            result.prs.flatMap((pr) => (pr.kind === "pr" ? [{ ...pr, id: prId(search.forge, pr), forge: search.forge, list: search.list }] : []))
           : // Keep what this search listed last time instead of flickering it away on a transient failure.
             entries.filter((entry) => entry.lines.includes(search.line) && entry.list === search.list);
       for (const pr of found) {
@@ -164,12 +186,20 @@ export function createWorkLists(bb: BbPluginApi) {
     const sortTime = (entry: Entry) => Date.parse((entry.list === "shipped" ? entry.mergedAt : null) ?? entry.updatedAt) || 0;
     entries = [...next.values()].sort((a, b) => sortTime(b) - sortTime(a));
     sources = [...searched, ...invalid];
-    return searched.some((source) => source.error !== null && !source.missing);
+    // The lists show now, their pull requests "Reading status…" until the first progress read lands.
+    changed();
+    const marks = await store.load();
+    const open = entries.filter((entry) => entry.list === "open" && !(entry.id in marks.archived));
+    const read = await readProgress(host, target, open, progress);
+    progress = read.progress;
+    sources = [...searched, ...read.failures, ...invalid];
+    return [...searched, ...read.failures].some((source) => source.error !== null && !source.missing);
   }
 
   function item(entry: Entry, marks: Marks): WorkItem {
-    const { lines, bot, headSha, ...rest } = entry;
-    return { ...rest, measured: entry.id in marks.measured, demoed: entry.id in marks.demoed };
+    const { lines, bot, headSha, kind, ...rest } = entry;
+    const stage = entry.list === "open" ? prStage(progress.get(entry.id) ?? null, entry.draft) : null;
+    return { ...rest, measured: entry.id in marks.measured, demoed: entry.id in marks.demoed, stage };
   }
 
   function hidden(entry: Entry, marks: Marks): boolean {

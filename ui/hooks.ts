@@ -5,8 +5,8 @@ import { errorMessage, type RemoteState, type WorkMark } from "./model";
 import type { RadarState } from "../server/radar-schema";
 
 const BOARD_REFRESH_MS = 1000;
-/** The review queue and work lists re-read on the server's change signal; this clock only backs it up. */
-const REVIEWS_POLL_MS = 60_000;
+/** Work, remote and radar lists re-read on the server's change signal; this clock only backs it up. */
+const LIST_POLL_MS = 60_000;
 const READ_STALL_MS = 60_000;
 const STALLED = "The plugin server is not answering; still retrying.";
 
@@ -74,7 +74,7 @@ export function usePoll<T>(read: () => Promise<T>, intervalMs: number, stallMs =
   return { value, error, report, refetch };
 }
 
-type ListMethod = "board_list" | "reviews_list" | "work_list" | "remote_list" | "radar_list";
+type ListMethod = "board_list" | "work_list" | "remote_list" | "radar_list";
 
 /** One of the server's lists: `usePoll` on its `method`, also reading on the server's `channel` signal. */
 function useServerList<Method extends ListMethod>(method: Method, intervalMs: number, channel: string) {
@@ -129,31 +129,9 @@ export function useNow(intervalMs: number): number {
 
 export type BoardApi = ReturnType<typeof useBoard>;
 
-export type ReviewVerdict = "approve" | "request_changes";
-
-/** The review queue; `error` is why the last list read failed. */
-export function useReviews() {
-  const { rpc, value: state, error } = useServerList("reviews_list", REVIEWS_POLL_MS, "reviews-changed");
-
-  return useMemo(
-    () => ({
-      state,
-      error,
-      /** Marks read; resolves to the prompt that seeds a thread explaining the pull request. */
-      draft: async (id: string) => (await rpc.call("reviews_draft", { id })).prompt,
-      markRead: (id: string) => rpc.call("reviews_mark_read", { id }),
-      archive: (id: string) => rpc.call("reviews_archive", { id }),
-      submit: (id: string, verdict: ReviewVerdict, body: string) => rpc.call("reviews_submit", { id, verdict, body }),
-    }),
-    [rpc, state, error],
-  );
-}
-
-export type ReviewsApi = ReturnType<typeof useReviews>;
-
 /** The work lists; `error` is why the last list read failed. */
 export function useWork() {
-  const { rpc, value: state, error } = useServerList("work_list", REVIEWS_POLL_MS, "work-changed");
+  const { rpc, value: state, error } = useServerList("work_list", LIST_POLL_MS, "work-changed");
   return useMemo(
     () => ({ state, error, mark: (id: string, mark: WorkMark, on: boolean) => rpc.call("work_mark", { id, mark, on }) }),
     [rpc, state, error],
@@ -166,12 +144,12 @@ export type WorkApi = ReturnType<typeof useWork>;
 export type RemoteApi = { state: RemoteState | null; error: string | null };
 
 export function useRemote(): RemoteApi {
-  const { value: state, error } = useServerList("remote_list", REVIEWS_POLL_MS, "remote-changed");
+  const { value: state, error } = useServerList("remote_list", LIST_POLL_MS, "remote-changed");
   return useMemo(() => ({ state, error }), [state, error]);
 }
 
 export function useRadar(): RadarApi {
-  const { rpc, value: state, error, refetch } = useServerList("radar_list", REVIEWS_POLL_MS, "radar-changed");
+  const { rpc, value: state, error, refetch } = useServerList("radar_list", LIST_POLL_MS, "radar-changed");
   return useMemo(() => ({
     state, error, refetch,
     refresh: async () => { try { await rpc.call("radar_execute", { action: "scan" }); } finally { refetch(); } },

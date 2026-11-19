@@ -15,7 +15,7 @@ export const CALL_TIMEOUT_MS = 35_000;
 export const INVALID_LINE = "Start the line with delta: or github:";
 /**
  * Marks kept per kind, newest first. One KV value holds every kind and KV caps values at 256KB: three full kinds
- * take ~110KB, leaving the review queue room for the summaries of every listed pull request.
+ * take ~110KB.
  */
 const MARKS_MAX = 500;
 /** Searches re-run once the last run is this old. */

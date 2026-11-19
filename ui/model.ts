@@ -5,9 +5,6 @@ import type {
   BoardSession,
   BoardTask,
   Column,
-  ReviewCard,
-  ReviewScope,
-  ReviewState,
   RemoteState,
   SearchResponse,
   Status,
@@ -17,6 +14,7 @@ import type {
   WorkList,
   WorkMark,
   WorkSource,
+  WorkStage,
   WorkState,
   rpcContract,
 } from "../server/schema";
@@ -24,7 +22,7 @@ import type {
 // Shared board types, constants, and pure helpers.
 
 // Type-only re-exports of the server's schema types; keeps zod out of the browser bundle.
-export type { AiUsage, BoardSession, BoardTask, RemoteState, ReviewCard, ReviewScope, ReviewState, SearchResponse, SystemProcesses, SystemStats, WorkItem, WorkList, WorkMark, WorkSource, WorkState };
+export type { AiUsage, BoardSession, BoardTask, RemoteState, SearchResponse, SystemProcesses, SystemStats, WorkItem, WorkList, WorkMark, WorkSource, WorkStage, WorkState };
 export type RemoteItem = RemoteState["items"][number];
 export type BoardColumn = Column;
 export type BoardStatus = Status;
@@ -64,11 +62,6 @@ export function parseTime(value: string | number | null): number | null {
   if (value === null) return null;
   const ms = typeof value === "number" ? value : Date.parse(value);
   return Number.isFinite(ms) ? ms : null;
-}
-
-/** A pull request's or issue's short reference: `repo#123`. */
-export function prRef(item: { repo: string; number: number }): string {
-  return `${item.repo.split("/").pop()}#${item.number}`;
 }
 
 /**

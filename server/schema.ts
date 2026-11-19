@@ -126,79 +126,28 @@ const searchResponseSchema = z.object({
   error: z.string().nullable(),
 });
 
-export const reviewRiskSchema = z.enum(["low", "medium", "high"]);
-/** Whose review a pull request asks for: the user's by name, or one of their teams'. Me first. */
-const reviewScopeSchema = z.enum(["me", "team"]);
-
-/** An open pull request waiting on the user's review: a one-card entry in the Queue column's Reviews section. */
-const reviewCardSchema = z.object({
-  /** `<forge>:<owner>/<repo>#<number>` */
-  id: z.string(),
-  forge: forgeInput,
-  repo: z.string(),
-  number: z.number(),
-  url: z.string(),
-  title: z.string(),
-  author: z.string(),
-  bot: z.boolean(),
-  draft: z.boolean(),
-  createdAt: z.string(),
-  updatedAt: z.string(),
-  /** Null until the pull request's details are read. */
-  additions: z.number().nullable(),
-  deletions: z.number().nullable(),
-  changedFiles: z.number().nullable(),
-  /** The model's first read: risk and up to three sentences (what, why, what could break). */
-  risk: reviewRiskSchema.nullable(),
-  summary: z.string().nullable(),
-  /** A summary for the current head is being written. */
-  summarizing: z.boolean(),
-  /** Not opened from the board since its head commit last moved. */
-  unread: z.boolean(),
-  /** The user reviewed an older head: commits landed since their review. */
-  rereview: z.boolean(),
-  /** Me when a search for the user found it, otherwise Team. */
-  scope: reviewScopeSchema,
-});
-
-/** One configured search: what it found, and why it failed. */
-const reviewSourceSchema = z.object({
-  search: z.string(),
-  scope: reviewScopeSchema,
-  /** Open matches read, before archived and already-reviewed ones are hidden. */
-  count: z.number(),
-  /** Every open match, the user's own reviews included. */
-  total: z.number(),
-  error: z.string().nullable(),
-  /** Cannot run here: no connected persistent host, or the forge's CLI is not installed or not signed in. Shown quietly. */
-  missing: z.boolean(),
-});
-
-const reviewStateSchema = z.object({
-  /** Scopes with at least one search line, Me first; none turns the queue off. */
-  scopes: z.array(reviewScopeSchema),
-  /** Most recently updated first; archived and reviewed ones are left out. */
-  reviews: z.array(reviewCardSchema),
-  sources: z.array(reviewSourceSchema),
-  refreshing: z.boolean(),
-  refreshedAt: z.number().nullable(),
-  /** An unexpected failure of the whole refresh. */
-  error: z.string().nullable(),
-});
+/**
+ * The board's pull request lists: `open`, the user's open pull requests, drafts included, in the Queue column above
+ * Parked; `shipped`, their recently merged ones not yet both measured and demoed, in its Out tab.
+ */
+const workListSchema = z.enum(["open", "shipped"]);
 
 /**
- * The Queue column's pull request lists beside Reviews: `open`, the user's open pull requests, drafts included;
- * `shipped`, their recently merged ones not yet both measured and demoed; `assigned`, open issues assigned to them.
+ * Where an open pull request stands and whose move it is: `you` waits on the user (drawn like a blocked thread),
+ * `ready` can merge, `waiting` is on reviewers or CI, `idle` is a draft. `label` is the row's status.
  */
-const workListSchema = z.enum(["open", "shipped", "assigned"]);
+const workStageSchema = z.object({
+  step: z.enum(["unknown", "draft", "conflict", "ci_failing", "changes_requested", "ci_running", "ready", "behind", "in_review", "no_reviewers"]),
+  tone: z.enum(["you", "ready", "waiting", "idle"]),
+  label: z.string(),
+});
 
-/** A pull request or issue in one of the work lists. */
+/** A pull request in one of the work lists. */
 const workItemSchema = z.object({
   /** `<forge>:<owner>/<repo>#<number>` */
   id: z.string(),
   list: workListSchema,
   forge: forgeInput,
-  kind: z.enum(["pr", "issue"]),
   repo: z.string(),
   number: z.number(),
   url: z.string(),
@@ -212,6 +161,8 @@ const workItemSchema = z.object({
   /** Shipped only: the user marked its impact measured, or its change demoed. */
   measured: z.boolean(),
   demoed: z.boolean(),
+  /** Open only: where it stands. */
+  stage: workStageSchema.nullable(),
 });
 
 const workSourceSchema = z.object({
@@ -228,7 +179,7 @@ const workSourceSchema = z.object({
 const workStateSchema = z.object({
   /** Lists with at least one search line; a list without one is hidden. */
   lists: z.array(workListSchema),
-  /** Open and assigned: most recently updated first. Shipped: most recently merged first. */
+  /** Open: most recently updated first. Shipped: most recently merged first. */
   items: z.array(workItemSchema),
   sources: z.array(workSourceSchema),
   refreshing: z.boolean(),
@@ -356,7 +307,7 @@ const aiUsageSchema = z.object({
 });
 export type AiUsage = z.infer<typeof aiUsageSchema>;
 
-const reviewRefSchema = z.object({ id: z.string().min(1).max(300) });
+const workRefSchema = z.object({ id: z.string().min(1).max(300) });
 const okSchema = z.object({ ok: z.boolean() });
 
 export const rpcContract = {
@@ -392,24 +343,9 @@ export const rpcContract = {
   /** Set the working limit (null: none); messages that would start another card past it wait in their thread's queue. */
   board_set_wip_limit: { input: z.object({ limit: z.number().int().min(0).max(WIP_LIMIT_MAX).nullable() }), output: wipLimitSchema },
   board_search: { input: z.object({ query: z.string().trim().min(1).max(200) }), output: searchResponseSchema },
-  reviews_list: { input: z.null(), output: reviewStateSchema },
-  /** Mark read and return the prompt that seeds a new thread explaining the pull request. */
-  reviews_draft: { input: reviewRefSchema, output: z.object({ prompt: z.string() }) },
-  reviews_mark_read: { input: reviewRefSchema, output: okSchema },
-  /** Hide a pull request from the queue for good. */
-  reviews_archive: { input: reviewRefSchema, output: okSchema },
-  /** Approve, or request changes with a reason, as the user; the pull request then leaves the queue. */
-  reviews_submit: {
-    input: z.object({
-      id: reviewRefSchema.shape.id,
-      verdict: z.enum(["approve", "request_changes"]),
-      body: z.string().trim().max(10_000),
-    }),
-    output: okSchema,
-  },
   work_list: { input: z.null(), output: workStateSchema },
   /** Set or clear a mark on a work item. */
-  work_mark: { input: z.object({ id: reviewRefSchema.shape.id, mark: workMarkSchema, on: z.boolean() }), output: okSchema },
+  work_mark: { input: z.object({ id: workRefSchema.shape.id, mark: workMarkSchema, on: z.boolean() }), output: okSchema },
   remote_list: { input: z.null(), output: remoteStateSchema },
   /** The bb server machine's CPU, memory, swap, disk and battery; reading starts a sampler that idles once reads stop. */
   system_stats: { input: z.null(), output: systemStatsSchema },
@@ -439,14 +375,10 @@ export type StoredTask = z.infer<typeof storedTaskSchema>;
 export type BoardTask = z.infer<typeof boardTaskSchema>;
 export type BoardSession = z.infer<typeof boardSessionSchema>;
 export type SearchResponse = z.infer<typeof searchResponseSchema>;
-export type ReviewRisk = z.infer<typeof reviewRiskSchema>;
-export type ReviewScope = z.infer<typeof reviewScopeSchema>;
-export type ReviewCard = z.infer<typeof reviewCardSchema>;
-export type ReviewSource = z.infer<typeof reviewSourceSchema>;
-export type ReviewState = z.infer<typeof reviewStateSchema>;
 export type WorkList = z.infer<typeof workListSchema>;
 export type WorkMark = z.infer<typeof workMarkSchema>;
 export type WorkItem = z.infer<typeof workItemSchema>;
 export type WorkSource = z.infer<typeof workSourceSchema>;
 export type WorkState = z.infer<typeof workStateSchema>;
+export type WorkStage = z.infer<typeof workStageSchema>;
 export type RemoteState = z.infer<typeof remoteStateSchema>;

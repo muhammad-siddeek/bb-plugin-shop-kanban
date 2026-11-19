@@ -23,7 +23,6 @@ import { createLabeler } from "./server/labeler";
 import { createThreadReader } from "./server/threads";
 import { createSearchIndex } from "./server/search";
 import { createRemoteWork } from "./server/remote";
-import { createReviewQueue } from "./server/reviews";
 import { createWipLimit } from "./server/wip-limit";
 import { createWorkLists } from "./server/work";
 import { createSystemMonitor } from "./server/system";
@@ -83,7 +82,6 @@ export default async function plugin(bb: BbPluginApi) {
   const reader = createThreadReader(bb);
   const sessions = createSessionInfo(bb, reader);
   const search = createSearchIndex(bb, reader);
-  const reviews = createReviewQueue(bb, labels);
   const work = createWorkLists(bb);
   const remote = createRemoteWork(bb);
   const wip = createWipLimit(bb, reader, publishBoardChanged);
@@ -397,11 +395,6 @@ export default async function plugin(bb: BbPluginApi) {
     board_mark_unread: ({ threadId }) => markRead(threadId, false),
     board_set_wip_limit: ({ limit }) => wip.setLimit(limit),
     board_search: ({ query }) => search.search(query),
-    reviews_list: () => reviews.list(),
-    reviews_draft: ({ id }) => reviews.draft(id),
-    reviews_mark_read: ({ id }) => reviews.markRead(id),
-    reviews_archive: ({ id }) => reviews.archive(id),
-    reviews_submit: ({ id, verdict, body }) => reviews.submit(id, verdict, body),
     work_list: () => work.list(),
     work_mark: ({ id, mark, on }) => work.mark(id, mark, on),
     remote_list: () => remote.list(),
@@ -468,7 +461,6 @@ export default async function plugin(bb: BbPluginApi) {
   bb.onDispose(() => {
     labels.dispose();
     search.dispose();
-    reviews.dispose();
     work.dispose();
     remote.dispose();
     wip.dispose();

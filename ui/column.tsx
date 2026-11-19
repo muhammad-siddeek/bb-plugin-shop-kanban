@@ -3,10 +3,9 @@ import type { DragEvent, ReactElement } from "react";
 import { experimental_Icon as Icon, experimental_NewThreadComposer as NewThreadComposer, experimental_useSidebarThreads, useBbContext, useBbNavigate, useSdk, type NewThreadRequest } from "@get-bb/plugin-sdk/app";
 import { PLUGIN_SLUG } from "../brand";
 import { CLOCK_TICK_MS, THREAD_DRAG_TYPE, groupTasksByColumn, shortNameFromPrompt, type BoardColumn, type BoardState, type BoardTask } from "./model";
-import { useNow, usePending, type BoardApi, type RemoteApi, type ReviewsApi, type WorkApi, type RadarApi } from "./hooks";
+import { useNow, usePending, type BoardApi, type RemoteApi, type WorkApi, type RadarApi } from "./hooks";
 import { TaskCard } from "./card";
 import { RemoteSection } from "./remote";
-import { ReviewGroup } from "./reviews";
 import { WipLimitControl } from "./wip-limit";
 import { WorkGroup, useWorkItems } from "./work";
 import { CountBadge, GroupHeader, Spinner, keyForBox } from "./primitives";
@@ -20,7 +19,7 @@ const DRAFT_KEY = `${PLUGIN_SLUG}:new-thread-draft`;
 /** The Queue column's open tab, kept across reloads. */
 const QUEUE_TAB_KEY = `${PLUGIN_SLUG}:queue-tab`;
 
-/** The Queue column's tabs: queued threads (with Parked and incoming work below them), and work going out from the user. */
+/** The Queue column's tabs: queued threads (with Parked below them), Radar, and shipped work going out from the user. */
 type QueueTab = "queue" | "radar" | "outgoing";
 const QUEUE_TABS: { id: QueueTab; label: string }[] = [
   { id: "queue", label: "Queue" },
@@ -307,7 +306,7 @@ function DoneTasks({ tasks, renderCard }: { tasks: BoardTask[]; renderCard: (tas
   );
 }
 
-function BoardColumnView({ column, title, tasks, count, renderCard, dragging, drop, onStartAdding, headerControl, tabs, body, addForm, incoming, parked, remote }: {
+function BoardColumnView({ column, title, tasks, count, renderCard, dragging, drop, onStartAdding, headerControl, tabs, body, addForm, inFlight, parked, remote }: {
   column: BoardColumn;
   title: string;
   tasks: BoardTask[];
@@ -327,8 +326,8 @@ function BoardColumnView({ column, title, tasks, count, renderCard, dragging, dr
   body: ReactElement | null;
   /** The new-thread form; non-null only while it is open. */
   addForm: ReactElement | null;
-  /** Incoming work at the bottom of Queue, below Parked. */
-  incoming: ReactElement | null;
+  /** The user's open pull requests, in the Queue column between its threads and Parked. */
+  inFlight: ReactElement | null;
   /** The Queue column's Parked section: idle threads set aside to come back to, and what a card dropped there does. */
   parked: { tasks: BoardTask[]; onDrop: (threadId: string) => void } | null;
   /** The Working column's Remote section, under its cards. */
@@ -381,9 +380,9 @@ function BoardColumnView({ column, title, tasks, count, renderCard, dragging, dr
               <p className={EMPTY_NOTE}>No threads</p>
             ) : null}
             {column === "done" ? <DoneTasks tasks={tasks} renderCard={renderCard} /> : tasks.map(renderCard)}
+            {inFlight}
             {parked ? <ParkedSection tasks={parked.tasks} dragging={dragging} onDrop={parked.onDrop} renderCard={renderCard} /> : null}
             {remote}
-            {incoming}
           </>
         )}
       </div>
@@ -391,7 +390,7 @@ function BoardColumnView({ column, title, tasks, count, renderCard, dragging, dr
   );
 }
 
-export function BoardView({ api, reviews, work, remote, radar }: { api: BoardApi; reviews: ReviewsApi; work: WorkApi; remote: RemoteApi; radar: RadarApi }) {
+export function BoardView({ api, work, remote, radar }: { api: BoardApi; work: WorkApi; remote: RemoteApi; radar: RadarApi }) {
   const context = useBbContext();
   const selectedThreadId = context.threadId;
   const navigate = useBbNavigate();
@@ -497,28 +496,23 @@ export function BoardView({ api, reviews, work, remote, radar }: { api: BoardApi
     writeStored(QUEUE_TAB_KEY, tab);
   };
   const tasksIn = (column: BoardColumn) => grouped.get(column) ?? [];
-  // Out shows while its lists load, and once Open or Shipped has a search configured; Queue always shows.
-  const outgoingShown = !workItems.state || workItems.lists.includes("open") || workItems.lists.includes("shipped");
+  // Out shows while its lists load, and once Shipped has a search configured; Queue always shows.
+  const outgoingShown = !workItems.state || workItems.lists.includes("shipped");
   const tabCounts: Record<QueueTab, number> = {
     queue: tasksIn("queue").length,
     radar: radar.state?.unread ?? 0,
-    outgoing: workItems.byList.open.length + workItems.byList.shipped.length,
+    outgoing: workItems.byList.shipped.length,
   };
   const tabs = QUEUE_TABS.filter((tab) => tab.id !== "outgoing" || outgoingShown).map((tab) => ({ ...tab, count: tabCounts[tab.id] }));
   const queueTab = chosenTab === "outgoing" && !outgoingShown ? "queue" : chosenTab;
-  // Incoming shows while its lists load, and once Reviews or Assigned has a search configured.
-  const incomingShown = !reviews.state || !workItems.state || reviews.state.scopes.includes("me") || workItems.lists.includes("assigned");
-  const incomingSection = incomingShown ? (
-    <section aria-label="In" className="space-y-2 pt-1">
-      <ReviewGroup reviews={reviews} now={now} />
-      <WorkGroup list="assigned" work={workItems} now={now} />
-    </section>
+  // Outgoing PRs show once their search is configured.
+  const inFlightSection = workItems.lists.includes("open") ? (
+    <div className="pt-1">
+      <WorkGroup list="open" work={workItems} now={now} />
+    </div>
   ) : null;
   const queueBody = queueTab === "outgoing" ? (
-    <div className="space-y-2">
-      <WorkGroup list="open" work={workItems} now={now} />
-      <WorkGroup list="shipped" work={workItems} now={now} />
-    </div>
+    <WorkGroup list="shipped" work={workItems} now={now} />
   ) : queueTab === "radar" ? <RadarPanel api={radar} now={now} onQueued={() => { selectTab("queue"); refetch(); }} /> : null;
 
   const renderCard = (task: BoardTask) => (
@@ -564,7 +558,7 @@ export function BoardView({ api, reviews, work, remote, radar }: { api: BoardApi
       }
       tabs={column.id === "queue" ? <QueueTabs tabs={tabs} active={queueTab} onSelect={selectTab} /> : null}
       body={column.id === "queue" ? queueBody : null}
-      incoming={column.id === "queue" ? incomingSection : null}
+      inFlight={column.id === "queue" ? inFlightSection : null}
       parked={column.id === "queue" ? { tasks: tasksIn("parked"), onDrop: dropPark } : null}
       remote={column.id === "wip" ? <RemoteSection remote={remote} now={now} /> : null}
       addForm={

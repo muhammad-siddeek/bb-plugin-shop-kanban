@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { experimental_defineHostEntry } from "@get-bb/plugin-sdk/host";
 import { z } from "zod";
 import { hostContract } from "./contract";
-import { prDetail, prReview, prSearch } from "./host/forge";
+import { prProgress, prSearch } from "./host/forge";
 import { failure, parseOutput, run } from "./host/run";
 import { remoteWork } from "./host/remote";
 import { ompSpend, piSpend } from "./host/spend";
@@ -125,8 +125,7 @@ export default experimental_defineHostEntry({
     omp_spend: async ({ sessionIds }) => ({ spends: await ompSpend(sessionIds) }),
     pi_spend: async ({ sessionIds }) => ({ spends: await piSpend(sessionIds) }),
     pr_search: (input, context) => prSearch(input, context.signal),
-    pr_detail: (input, context) => prDetail(input, context.signal),
-    pr_review: (input, context) => prReview(input, context.signal),
+    pr_progress: (input, context) => prProgress(input, context.signal),
     remote_work: (_input, context) => remoteWork(context.signal),
   },
 });

@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.30.0
+
+- Your open pull requests move from the Out tab to **Outgoing PRs**, in the
+  Queue tab between its threads and Parked, one line each with whose move it
+  is: the red blocked mark when it waits on you (merge conflict, CI failing
+  with the failing checks named, changes requested, behind its base branch,
+  no reviewers requested), a green merge disc once approved, the working
+  petals while CI runs, an hourglass while it awaits reviews. The ones
+  waiting on you come first and the header counts `N need you`. The title
+  drafts a thread for that next step.
+- The Out tab keeps only Shipped.
+- The review queue and Assigned issues are gone, with their
+  `reviewSearchesMe`, `reviewSearchesTeam` and `assignedSearches` settings.
+
 ## 0.29.0
 
 - The board docks along the bottom of bb instead of the top, with its title

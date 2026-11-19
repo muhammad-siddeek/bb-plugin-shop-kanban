@@ -19,7 +19,7 @@ export const forgeInput = z.enum(["delta", "github"]);
 export type Forge = z.infer<typeof forgeInput>;
 const repoInput = z.string().regex(/^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/);
 const prNumberInput = z.number().int().min(1).max(Number.MAX_SAFE_INTEGER);
-/** A pull request or issue as a search lists it. Delta's pull request rows carry the head commit; GitHub's need `pr_detail`. */
+/** A pull request or issue as a search lists it. Delta's pull request rows carry the head commit; GitHub's don't. */
 const forgePrSchema = z
   .object({
     kind: z.enum(["pr", "issue"]),
@@ -40,31 +40,26 @@ const forgePrSchema = z
   })
   .strict();
 export type ForgePr = z.infer<typeof forgePrSchema>;
-const forgePrDetailSchema = z
+/**
+ * Where an open pull request stands: its merge state as the forge reports it (`clean`, `blocked`, `dirty`, `behind`,
+ * `unstable`, `unknown`...), the reviewers' latest standing verdicts, reviews still requested, and CI on its head.
+ */
+const forgePrProgressSchema = z
   .object({
-    headSha: z.string().nullable(),
-    /** Commit of the signed-in user's latest standing review; null when they left none, or it could not be read. */
-    reviewedSha: z.string().nullable(),
-    /** Clipped description. */
-    body: z.string(),
-    additions: z.number().nullable(),
-    deletions: z.number().nullable(),
-    changedFiles: z.number().nullable(),
-    /** The first page of changed files; `patch` is clipped, and null for lockfiles and generated dumps. */
-    files: z.array(
-      z
-        .object({
-          path: z.string(),
-          status: z.string().nullable(),
-          additions: z.number().nullable(),
-          deletions: z.number().nullable(),
-          patch: z.string().nullable(),
-        })
-        .strict(),
-    ),
+    headSha: z.string(),
+    mergeState: z.string().nullable(),
+    /** Reviewers other than the author whose latest standing review approves, or requests changes. */
+    approvals: z.number(),
+    changesRequested: z.number(),
+    /** Users and teams whose review is still requested. */
+    pendingReviewers: z.number(),
+    /** Commit statuses and check runs on the head together: any failure wins, then anything still running. */
+    ci: z.enum(["success", "failure", "pending", "none"]),
+    /** Names of up to three failing checks. */
+    failing: z.array(z.string()),
   })
   .strict();
-export type ForgePrDetail = z.infer<typeof forgePrDetailSchema>;
+export type ForgePrProgress = z.infer<typeof forgePrProgressSchema>;
 
 /**
  * A River session or Torrent ticket the user is part of that is live: an agent working it (`wip`), or it waiting on
@@ -186,23 +181,10 @@ export const hostContract = defineRpcContract({
       .object({ prs: z.array(forgePrSchema), total: z.number(), error: z.string().nullable(), missing: z.boolean() })
       .strict(),
   },
-  /** A pull request's head, size, description and a clipped diff of its first changed files. */
-  pr_detail: {
+  /** Where an open pull request stands: merge state, review verdicts and CI on its head. */
+  pr_progress: {
     input: z.object({ forge: forgeInput, repo: repoInput, number: prNumberInput }).strict(),
-    output: z.object({ detail: forgePrDetailSchema.nullable(), error: z.string().nullable() }).strict(),
-  },
-  /** Approve, or request changes with `body` as the reason, as the CLI's signed-in user. */
-  pr_review: {
-    input: z
-      .object({
-        forge: forgeInput,
-        repo: repoInput,
-        number: prNumberInput,
-        verdict: z.enum(["approve", "request_changes"]),
-        body: z.string().max(10_000),
-      })
-      .strict(),
-    output: z.object({ error: z.string().nullable() }).strict(),
+    output: z.object({ progress: forgePrProgressSchema.nullable(), error: z.string().nullable() }).strict(),
   },
   /** The user's live Torrent tickets and the River sessions they have spoken in this week that are live. */
   remote_work: {

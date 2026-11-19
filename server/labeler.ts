@@ -130,7 +130,7 @@ export function createLabeler(bb: BbPluginApi, onChange: () => void) {
 
   /**
    * Runs the labeler model on `hostId` and returns its reply; throws when the labeler is off, the CLI fails or
-   * the host is unreachable. Shared with the review queue, which writes its pull request summaries with the same model.
+   * the host is unreachable.
    */
   async function complete(hostId: string, system: string, prompt: string, timeoutMs: number): Promise<string> {
     const { command, models } = config(await settings.get());
@@ -301,5 +301,5 @@ export function createLabeler(bb: BbPluginApi, onChange: () => void) {
     boardIds = threadIds;
   }
 
-  return { load, view, forget, complete, dispose, setBoard };
+  return { load, view, forget, dispose, setBoard };
 }

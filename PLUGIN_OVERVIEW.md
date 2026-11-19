@@ -6,8 +6,8 @@
 - Queue and Working cards are two rows: status, a `[category] intent` title and what the thread, its child threads and subagents spent (`~` if estimated); then context-window fill (amber at 70%, red at 90%), a one-line summary and its age. Hover a card for its status, full summary, model, tokens and cost.
 - Clicking a thread opens it at the latest message. The New thread form keeps your draft across reloads and crashes.
 - The title-bar search finds any thread by what was said in it, archived threads included. Beside it, chips show CPU, memory, disk and battery, each with a popover of the heaviest apps, and, for Shopify accounts only, today's Shopify AI proxy spend, with a popover charting the last 7 days.
-- The bottom of Queue, below Parked, lists pull requests requested of you by name on Delta and GitHub (`reviewSearchesMe`), then issues assigned to you. Each review has a risk chip, a title that drafts a thread asking what changed and how risky it is, and links to open, approve (click twice), or request changes. Archive hides one for good; reviewed ones return as `re-review` when new commits land.
-- The Out tab lists your open pull requests and ones merged in the last 30 days, until you mark them Measured and Demoed.
+- Outgoing PRs, in Queue between its threads and Parked, list your open pull requests on Delta and GitHub, one line each, with whose move it is: red when it waits on you (conflict, CI failing, changes requested, behind, no reviewers), green once approved, quiet while it waits on reviewers or CI. The ones waiting on you come first, and the title drafts a thread for the next step.
+- The Out tab lists your pull requests merged in the last 30 days, until you mark them Measured and Demoed.
 - Radar sits between Queue and Out. Its red badge counts unresolved opportunities and techniques. Opportunities draft an implementation in bb's full composer; only submission marks them read and creates a board thread. Techniques open their Slack source and archive. Discovery resumes durable source checkpoints; three ranker/reviewer rounds order the complete inbox by impact and availability to own. Discovery, scoring, watch, backlog, feedback and weekday hourly scans run inside the plugin on its selected persistent host, without Slack delivery; the old Radar checkout is not needed after importing its data.
 
 ## For agents
@@ -23,10 +23,10 @@ Titles, summaries, and the Blocked-or-Done call come from a small model. The plu
 - bb 0.47 or later.
 - For model-written labels: a pi-compatible CLI on each host that runs threads.
 - For thread search: [qmd](https://github.com/tobi/qmd) (`npm install -g @tobilu/qmd`) on a connected persistent host.
-- For the review queue and work lists: `dt` (Delta) and/or `gh` (GitHub), signed in, on that same host.
+- For Outgoing PRs and Shipped: `dt` (Delta) and/or `gh` (GitHub), signed in, on that same host.
 - For Working's Remote section (Shopify only): `gcloud`, signed in with your Shopify account, on that same host.
 - For Radar discovery (Shopify only): the signed-in `dev` CLI on the selected persistent host; enable `radarEnabled` for the daily 08:00 America/Toronto scan.
 
-Each is optional: without a labeler threads keep heuristic titles, search shows how to install qmd, and review searches and the Remote section that can't run are skipped quietly.
+Each is optional: without a labeler threads keep heuristic titles, search shows how to install qmd, and pull request searches and the Remote section that can't run are skipped quietly.
 
 If you replace bb's omp agent with a custom ACP agent entry, the plugin draws bb's omp mark for it in omp's pink (`#f84fcc`) instead of a generic toolbox glyph, in bb's sidebar and pickers as well as on the board.

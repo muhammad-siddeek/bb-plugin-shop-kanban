@@ -22,11 +22,10 @@ thread (see Parked) and starting a waiting one (see Working limit).
   A thread that errored and then got a follow-up stays here while the
   follow-up waits to send, not Blocked in Working. Queue's header has three
   tabs, kept across reloads: **Queue** (these threads), **Radar** (discovered
-  opportunities and techniques), and **Out** (your open and recently merged
-  pull requests). Out disappears when its settings are empty.
-  Incoming work sits at the bottom of Queue, below Parked, with
-  pull requests requested of you by name and issues assigned to you. Reviews
-  and Assigned appear directly, without an In heading or combined badge.
+  opportunities and techniques), and **Out** (your recently merged pull
+  requests). Out disappears when its settings are empty.
+  Your open pull requests sit under Queue's threads as **Outgoing PRs**,
+  above Parked (see Work lists).
 - **Working**: the thread or one of its descendants has a turn in progress,
   background work included. Blocked threads sit at the top of Working as red cards: the
   thread is idle and needs you (a pending interaction, an error, or a last
@@ -172,9 +171,8 @@ reloads.
 - Cards have no colored edge; the status mark carries the state, and the
   content starts 6px in from the card's left border (8px on the right).
 - Anything unread is a solid circle with a white mark: a Done thread's check,
-  a new review request's pull-request icon, a Radar recommendation's bolt or
-  bulb. Unread counts (the Done column, the Radar tab, Recommendations, and
-  Reviews' `N new`) are solid pills with white numbers.
+  a Radar recommendation's bolt or bulb. Unread counts (the Done column, the
+  Radar tab and Recommendations) are solid pills with white numbers.
 - The board draws with a closed set of colors: four hues, each with one
   meaning (sky queued or new, amber working or warning, red blocked, errors
   or removing, green done or approving), and bb's theme greys for the rest.
@@ -329,114 +327,60 @@ qmd --index shop-kanban search "redis timeout"   # same index from a terminal
 | --------------- | ------- | ------------------------------------------------------ |
 | `searchCommand` | `qmd`   | qmd CLI to run. Leave empty to turn thread search off. |
 
-## Review queue
+## Work lists
 
-Open pull requests waiting on your review are the **Reviews** list, first in
-the Queue tab's **In** section, newest update first. Only requests of you by
-name (Me) are shown; there is no Team toggle. `reviewSearchesMe` lists one
-search per line. Empty it to hide Reviews. Team search configuration is
-retained but team requests are not displayed on the board.
+Your pull requests sit in the Queue column, one line each:
 
-Each pull request is a two-line card:
+- **Outgoing PRs** (the Queue tab, between its threads and Parked): your open
+  pull requests, drafts included. Each starts with a mark for whose move it
+  is: the red blocked mark when it waits on you (merge conflict, CI failing,
+  with the failing checks' names, changes requested, behind its base branch,
+  no reviewers requested), a green merge disc when it is approved
+  (`Approved · ready to merge`, or `Approved · merge blocked`), the working
+  petals while CI runs, an hourglass while it is `Awaiting N reviews`, and
+  the draft icon on drafts. Its status follows the title in the same hue.
+  The ones waiting on you come first, then the ones you can merge, then the
+  rest, newest update first within each; the header counts `N need you` in
+  red. The title drafts a thread for the next step: fix CI, answer the
+  review comments, resolve the conflict, update the branch, find reviewers,
+  or check it is safe to merge.
+- **Shipped** (the Out tab): your pull requests merged within `shippedDays`.
+  Merging is as close to deployed as the forges tell, so each stays until you
+  press both **Measured** and **Demoed** (on hover; one already set stays as
+  a badge), or archive it. The title drafts a thread that finds the metrics,
+  dashboards or experiments it should move, compares them before and after it
+  shipped, and outlines a short demo.
 
-- **Line 1**: a risk chip (`LOW`, `MED`, `HIGH`) and the title. Clicking the
-  title opens bb's new-thread screen with a drafted, unsent prompt that asks
-  the agent to explain the pull request: what changed, why, and how risky it
-  is, starting from the model's first read.
-- **Line 2**: age, author and number, then three actions:
-  - **Delta** or **GitHub** opens the pull request in your browser.
-  - **✓** approves. A first click turns it into `Approve?`; a second click
-    within 3 seconds submits.
-  - **✕** opens a one-line reason box; Enter requests changes with that
-    reason, Esc closes it.
-- **Archive** (on hover, top right) hides the pull request for good.
-
-New cards are blue and bold until you open them from the board (draft or
-forge link); a push of new commits marks them new again. Approving or
-requesting changes removes the card at once. A pull request you reviewed,
-from the board or anywhere else, stays hidden until commits land after your
-review; it then comes back marked `re-review`, and its draft asks what changed
-since the commit you reviewed. Errors show on the card, and failed searches
-as an amber icon in the list header. A search that can't run here, because
-no persistent host is connected or `dt` or `gh` is missing or signed out, is
-skipped quietly. The list shows 8 cards with a "Show more" button.
+Rows show the age at the end and, on hover, a **Delta** or **GitHub** link
+that opens the pull request in your browser and **Archive**, which hides it
+for good. Marks and archives are kept in plugin storage (500 per kind).
 
 The searches run through the forge CLIs you already signed in to, `dt` for
 Delta and `gh` for GitHub, on the same connected persistent host as thread
-search: 8 seconds after the plugin loads, when either setting changes, every
-5 minutes (every minute after a failed search), and whenever the board reads
-the queue and the last search is over a minute old. Opening the board, or
-coming back to it after waking the machine, picks up new requests within one
-search round. The 5 minutes count time asleep, so a machine that wakes from a
-long sleep searches within 30 seconds. Reviews are submitted
-as those CLIs' signed-in user. Each line is GitHub search syntax prefixed by
-its forge:
+search: 10 seconds after the plugin loads, when a setting changes, every 5
+minutes (every minute after a failed search), and when the board reads the
+lists and the last search is over a minute old. The 5 minutes count time
+asleep, so a machine that wakes from a long sleep searches within 30 seconds.
+Each line is GitHub search syntax prefixed by its forge; a Delta line without
+`repo:` searches `shop/world`, and blank lines and `#` comments are skipped.
+A search that can't run here, because no persistent host is connected or
+`dt` or `gh` is missing or signed out, is skipped quietly; other failures
+show as an amber icon in the list header. Each list shows 8 rows with a
+"Show more" button.
 
-- `is:pr is:open` is implied, and GitHub lines skip archived repositories.
-- A Delta line without `repo:` searches `shop/world`.
-- By name: Delta's `review-requested:@me` matches only requests of you by
-  name. GitHub's also matches your teams' requests; its
-  `user-review-requested:@me` is the by-name half.
-- Teams: Delta's `team-review-requested:@me` matches every team you are on.
-  GitHub rejects `@me` there, so the default uses
-  `review-requested:@me -user-review-requested:@me`. For one team, Delta
-  takes the team slug (`team-review-requested:exp`) and GitHub takes
-  `<org>/<team>`.
-- Blank lines and `#` comments are skipped.
+Each refresh then reads where every open pull request stands, 4 at a time:
+its merge state, each reviewer's latest standing verdict, the reviews still
+requested, and CI on its head commit (commit statuses and check runs).
+Delta's `reviews` check, which stays in progress until reviewers approve,
+counts as review, not CI. A read that fails keeps the last status known and
+says why in the header; until the first read lands a row says `Reading
+status...`.
 
-```sh
-# Team: only ExP's requests on Delta
-bb plugin config shop-kanban set reviewSearchesTeam 'delta: team-review-requested:exp -author:@me -is:draft'
-```
-
-The first read (`[risk] what. why. what could break.`, three sentences at
-most) comes from the labeler model (`labelerCommand` and `labelerModels`),
-given the description, the size and a clipped diff of the first changed
-files, without lockfiles and generated files. It is written once per head
-commit and kept in plugin storage. With `labelerCommand` empty, cards show no
-risk chip and drafts carry no first read.
-
-| Setting              | Default                                                                                                              | Meaning                                                          |
-| -------------------- | -------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| `reviewSearchesMe`   | Delta and GitHub requests of you by name, drafts and your own PRs excluded                                           | Searches for Me, one per line. Leave empty to hide Me.           |
-| `reviewSearchesTeam` | Delta requests of any of your teams, GitHub requests of your teams but not of you by name; drafts and your own PRs excluded | Searches for Team, one per line. Leave empty to hide Team. |
-
-## Work lists
-
-Pull requests and issues of yours sit in the Queue column's tabs, drawn like
-review cards, newest update first:
-
-- **Open** (Out): your open pull requests, one line each, drafts marked with
-  the draft icon. The title drafts a thread that reads the review comments, CI
-  checks and merge readiness and says what is left before it can merge.
-- **Shipped** (Out): your pull requests merged within `shippedDays`, one line
-  each. Merging is as close to deployed as the forges tell, so each stays
-  until you press both **Measured** and **Demoed** (on hover; one already set
-  stays as a badge), or archive it.
-  The title drafts a thread that finds the metrics, dashboards or experiments
-  it should move, compares them before and after it shipped, and outlines a
-  short demo.
-- **Assigned** (In, below Reviews): open issues assigned to you. The
-  title drafts a thread that summarizes the issue and proposes how to
-  resolve it.
-
-Out rows show the age at the end and, on hover, a **Delta** or **GitHub**
-link that opens it in your browser; Assigned has them on its second line with
-the number. **Archive** (on hover, top right) hides one
-for good. Marks and archives are kept in plugin storage (500 per kind). The
-searches run like review searches: through `dt` and `gh` on the connected
-persistent host, 10 seconds after the plugin loads, when a setting changes,
-every 5 minutes (every minute after a failed search), and when the board
-reads the lists and the last search is over a minute old. Each list shows 8
-cards with a "Show more" button. Delta has no issues, so Assigned reads only
-GitHub.
-
-| Setting            | Default                                   | Meaning                                                                                               |
-| ------------------ | ----------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| `outgoingSearches` | `delta: author:@me`, `github: author:@me` | Searches for Open, one per line; `is:pr is:open` implied. Leave empty to hide Open.                   |
-| `shippedSearches`  | `delta: author:@me`, `github: author:@me` | Searches for Shipped; `is:pr is:merged` and a `merged:>=` cutoff implied. Leave empty to hide Shipped. |
-| `shippedDays`      | `30`                                      | Days a merged pull request stays in Shipped.                                                          |
-| `assignedSearches` | `github: assignee:@me`                    | Searches for Assigned; `is:issue is:open` implied. Leave empty to hide Assigned.                      |
+| Setting            | Default                                   | Meaning                                                                                                     |
+| ------------------ | ----------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `outgoingSearches` | `delta: author:@me`, `github: author:@me` | Searches for Outgoing PRs, one per line; `is:pr is:open` implied. Leave empty to hide them.                 |
+| `shippedSearches`  | `delta: author:@me`, `github: author:@me` | Searches for Shipped; `is:pr is:merged` and a `merged:>=` cutoff implied. Leave empty to hide Shipped.       |
+| `shippedDays`      | `30`                                      | Days a merged pull request stays in Shipped.                                                                |
 
 ## Agent tools
 
@@ -464,7 +408,7 @@ bb shop-kanban remove <thread-id> [--json]   # archives the thread; exits 1 if n
 From the bb plugin store, or from this repository:
 
 ```sh
-bb plugin install git:https://github.com/muhammad-siddeek/bb-plugin-shop-kanban.git@^0.28.0
+bb plugin install git:https://github.com/muhammad-siddeek/bb-plugin-shop-kanban.git@^0.30.0
 ```
 
 ## Development

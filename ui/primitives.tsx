@@ -213,7 +213,7 @@ export function CappedList<T>({ items, children }: { items: readonly T[]; childr
 
 /**
  * A card's leading mark: a 16px frame whose 1px top and bottom margins make it as tall as the 18px title line, so it
- * centers on the title in every row, and pull request, issue and thread cards line up in the column. On a `disc` (a
+ * centers on the title in every row, and pull request and thread cards line up in the column. On a `disc` (a
  * solid or tinted circle) it holds a 10px glyph; bare, a 14px one.
  */
 export function Mark({ label, disc, children }: { label: string; disc?: string; children: ReactNode }) {
