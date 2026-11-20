@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.31.0
+
+- Every dollar figure is a whole number, rounded up: cards, the title bar,
+  tooltips and the Shopify AI popover (`$0.29` reads `$1`, `$53.10` reads
+  `$54`). There are no more cents or `<$0.01`.
+- The Shopify AI popover shows Today, the last 7 days, the last hour and the
+  daily average side by side, each with its token count under the price
+  (input, cached input included, plus output, over every model). Each graph
+  bar's screen-reader label gives that day's tokens too.
+- The board's four hues are bb's own colors: amber is bb's warning orange, red
+  its destructive red, green its success green, and queued a blue at the same
+  weight, so the board matches bb's badges and follows bb's theme. Solid marks
+  and unread pills reach 3:1 on light (Tailwind's amber, green and sky didn't),
+  and on dark their numbers are bb's canvas color instead of white.
+- The labeler asks for card badges (the `[category]` in a title) of at most 11
+  characters, preferring one short name ("checkout", "infra") over two words.
+  Every card relabels once to pick it up.
+- The Working column has no slot dots. Its header counts working threads in
+  an amber badge like the other columns, the picker reads `Max 3` or
+  `No limit`, and threads waiting for a slot are a blue badge beside it. The
+  picker opens the board's own menu instead of the system's: a check on the
+  current limit, arrow keys, Enter and Escape.
+
 ## 0.30.1
 
 - Radar opportunities are one line, like techniques: the bolt, the title and

@@ -534,6 +534,8 @@ export function BoardView({ api, work, remote, radar }: { api: BoardApi; work: W
   );
 
   const unreadDone = tasksIn("done").filter((task) => task.unread).length;
+  // Threads holding a working slot; Blocked ones sit in the column too but don't count against the limit.
+  const working = tasksIn("wip").filter((task) => task.status === "wip").length;
 
   const renderColumn = (column: { id: BoardColumn; title: string }) => (
     <BoardColumnView
@@ -541,7 +543,7 @@ export function BoardView({ api, work, remote, radar }: { api: BoardApi; work: W
       column={column.id}
       title={column.title}
       tasks={tasksIn(column.id)}
-      count={column.id === "wip" ? null : column.id === "done" ? unreadDone : tasksIn(column.id).length}
+      count={column.id === "wip" ? working : column.id === "done" ? unreadDone : tasksIn(column.id).length}
       renderCard={renderCard}
       dragging={draggingId !== null}
       drop={column.id === "wip" && draggingStartable ? { label: "Drop to start now", icon: "Play", onDrop: startTask } : null}
@@ -550,7 +552,7 @@ export function BoardView({ api, work, remote, radar }: { api: BoardApi; work: W
         column.id === "wip" && board ? (
           <WipLimitControl
             limit={board.wipLimit.limit}
-            working={tasksIn("wip").filter((task) => task.status === "wip").length}
+            working={working}
             waiting={board.wipLimit.waiting}
             onChange={setWipLimit}
           />

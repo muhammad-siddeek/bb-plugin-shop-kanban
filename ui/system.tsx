@@ -3,7 +3,7 @@ import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
 import type { rpcContract } from "../server/schema";
 import { usePoll } from "./hooks";
-import { formatMoney, type AiUsage, type SystemProcesses, type SystemStats } from "./model";
+import { formatMoney, formatTokens, type AiUsage, type SystemProcesses, type SystemStats } from "./model";
 import { useOutsideClose } from "./primitives";
 import { ACCENT_BADGE, ACCENT_TEXT, POPOVER, POPOVER_SIDE, TYPE, type Dropdown } from "./styles";
 
@@ -388,7 +388,7 @@ export function SystemMonitor({ dropdown }: { dropdown: Dropdown }) {
         ? chip(
             "ai",
             <StripChip glyph={<WalletGlyph className="size-3 shrink-0" />} label={formatMoney(aiUsage.todayCost)} level={spendLevel(aiUsage.todayCost)} okBackground="bg-emerald-500/15" dim={Boolean(aiUsage.error)} />,
-            `Shopify AI spend today ${formatMoney(aiUsage.todayCost, "USD", true)}`,
+            `Shopify AI spend today ${formatMoney(aiUsage.todayCost)}${aiUsage.todayTokens != null ? `, ${formatTokens(aiUsage.todayTokens)}` : ""}`,
           )
         : null}
 
@@ -562,7 +562,7 @@ function SpendChart({ days }: { days: AiUsage["days"] }) {
             const at = Date.parse(`${day.date}T12:00:00Z`);
             const isToday = index === days.length - 1;
             const level = spendLevel(day.cost);
-            const label = `${LONG_DATE.format(at)}: ${formatMoney(day.cost, "USD", true)}${isToday ? " so far" : ""}`;
+            const label = `${LONG_DATE.format(at)}: ${formatMoney(day.cost)}, ${formatTokens(day.tokens)}${isToday ? " so far" : ""}`;
             return (
               <li key={day.date} className="flex h-full items-end justify-center">
                 <span className="sr-only">{label}</span>
@@ -587,25 +587,26 @@ function SpendChart({ days }: { days: AiUsage["days"] }) {
   );
 }
 
-/** A headline figure in the AI popover: label over amount. */
-function SpendStat({ label, value, level, align = "left" }: { label: string; value: string; level: Level; align?: "left" | "right" }) {
+/** A figure in the AI popover: label over amount, with its token count under it. */
+function SpendStat({ label, value, tokens, level, align = "left" }: { label: string; value: string; tokens: number | null; level: Level; align?: "left" | "right" }) {
   return (
     <div className={`flex min-w-0 flex-col gap-0.5 ${align === "right" ? "items-end" : ""}`}>
       <span className={`${TYPE.label} text-muted-foreground`}>{label}</span>
       <span className={`${TYPE.title} font-semibold tabular-nums ${level === "ok" ? "text-foreground" : VERDICT[level].text}`}>{value}</span>
+      {tokens !== null ? <span className={`${TYPE.meta} tabular-nums text-muted-foreground`}>{formatTokens(tokens)}</span> : null}
     </div>
   );
 }
 
-/** The AI spend popover: today and the last 7 days, the 7 days' graph, and the daily average and last hour. */
+/** The AI spend popover: today, the last 7 days, the last hour and the daily average, then the 7 days' graph. */
 function AiUsageSection({ usage }: { usage: AiUsage }) {
   const level = spendLevel(usage.todayCost);
   // The proxy's own "seven days" is today plus the 7 before it; it stands in, labelled so, until the daily figures load.
   const week =
     usage.weekCost !== null
-      ? { label: "Last 7 days", cost: usage.weekCost, days: 7 }
+      ? { label: "Last 7 days", cost: usage.weekCost, tokens: usage.weekTokens, days: 7 }
       : usage.sevenDaysCost !== null
-        ? { label: "Today + 7 days", cost: usage.sevenDaysCost, days: 8 }
+        ? { label: "Today + 7 days", cost: usage.sevenDaysCost, tokens: usage.sevenDaysTokens, days: 8 }
         : null;
   const average = week ? week.cost / week.days : null;
   return (
@@ -615,8 +616,16 @@ function AiUsageSection({ usage }: { usage: AiUsage }) {
         Shopify AI spend
       </h4>
       <div className="grid grid-cols-2 gap-3">
-        <SpendStat label="Today" value={usage.todayCost !== null ? formatMoney(usage.todayCost, "USD", true) : "—"} level={level} />
-        <SpendStat label={week?.label ?? "Last 7 days"} value={week ? formatMoney(week.cost, "USD", true) : "—"} level={spendLevel(average)} align="right" />
+        <SpendStat label="Today" value={usage.todayCost !== null ? formatMoney(usage.todayCost) : "—"} tokens={usage.todayTokens} level={level} />
+        <SpendStat label={week?.label ?? "Last 7 days"} value={week ? formatMoney(week.cost) : "—"} tokens={week?.tokens ?? null} level={spendLevel(average)} align="right" />
+        <SpendStat label="Last hour" value={usage.hourCost !== null ? formatMoney(usage.hourCost) : "—"} tokens={usage.hourTokens} level="ok" />
+        <SpendStat
+          label="Daily average"
+          value={average !== null ? formatMoney(average) : "—"}
+          tokens={week?.tokens != null ? week.tokens / week.days : null}
+          level={spendLevel(average)}
+          align="right"
+        />
       </div>
       {usage.days.length > 0 ? (
         <SpendChart days={usage.days} />
@@ -626,16 +635,6 @@ function AiUsageSection({ usage }: { usage: AiUsage }) {
         </p>
       )}
       <Detail>
-        {average !== null || usage.hourCost !== null ? (
-          <span className="block">
-            {[
-              average !== null ? `${formatMoney(average, "USD", true)} a day on average` : null,
-              usage.hourCost !== null ? `${formatMoney(usage.hourCost, "USD", true)} last hour` : null,
-            ]
-              .filter(Boolean)
-              .join(" · ")}
-          </span>
-        ) : null}
         {usage.pricingStale ? (
           <span className="block">The proxy has no pricing loaded; costs read $0.</span>
         ) : (

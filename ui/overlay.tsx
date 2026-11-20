@@ -4,7 +4,7 @@ import { PLUGIN_NAME } from "../brand";
 import { BOARD_ATTR, BOARD_DOCKED_CLASS, BOARD_INSET_VAR, type BoardTask } from "./model";
 import { useBoard, useRemote, useWork, useRadar } from "./hooks";
 import { CountBadge, IconButton } from "./primitives";
-import { COLUMN_INSET, ELEVATION, STATUS_META, type Dropdown } from "./styles";
+import { BOARD_PALETTE, COLUMN_INSET, ELEVATION, STATUS_META, type Dropdown } from "./styles";
 import { BoardView } from "./column";
 import { ThreadSearch } from "./search";
 import { SystemMonitor } from "./system";
@@ -285,7 +285,7 @@ export function BoardOverlay() {
       ref={setRoot}
       {...BOARD_MARK}
       className={`fixed bottom-0 right-0 ${BOARD_LAYER} flex flex-col border-t border-border bg-background/90 pb-[env(safe-area-inset-bottom)] ${ELEVATION.floatUp} backdrop-blur-md`}
-      style={frame}
+      style={{ ...BOARD_PALETTE, ...frame }}
     >
       {open ? (
         <div

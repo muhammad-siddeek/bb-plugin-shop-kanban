@@ -16,7 +16,7 @@ export interface RadarService {
   importData(source: string, hostId?: string): Promise<{ dataDir: string }>;
 }
 
-export function opportunityPrompt(opportunity: RadarDigest["watch"]["opportunities"][number]): string {
+function opportunityPrompt(opportunity: RadarDigest["watch"]["opportunities"][number]): string {
   return [
     `Implement the best solution below to solve this problem: ${opportunity.problem}`,
     `Recommended solution: ${opportunity.solutions[0].idea}`,

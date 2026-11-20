@@ -90,31 +90,32 @@ export function formatShortAge(ms: number, now: number): string {
   return new Date(ms).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
-/** Built once per currency and precision: every card formats its cost on each render. */
+/** Built once per currency: every card formats its cost on each render. */
 const moneyFormats = new Map<string, Intl.NumberFormat>();
 
 /**
- * Money, one rule everywhere. `exact` (tooltips, popovers, totals someone reads closely) always has cents.
- * Otherwise (card footers, the title bar chip) cents show only under $10, where they change the reading:
- * "$4.30", "$53", "$418". Anything under a cent reads "<$0.01".
+ * Money, one rule everywhere: whole units, rounded up, so any spend reads at least "$1" ("$0.29" → "$1",
+ * "$53.10" → "$54"). Rounding to a millionth first keeps a float sum a hair over a whole amount from reading one more.
  */
-export function formatMoney(amount: number, currency = "USD", exact = false): string {
-  const tiny = amount > 0 && amount < 0.01;
-  const value = tiny ? 0.01 : amount;
-  const digits = exact || value < 10 ? 2 : 0;
-  const key = `${currency}:${digits}`;
-  let text: string;
+export function formatMoney(amount: number, currency = "USD"): string {
+  const value = Math.ceil(Math.round(amount * 1e6) / 1e6);
   try {
-    let formatter = moneyFormats.get(key);
+    let formatter = moneyFormats.get(currency);
     if (!formatter) {
-      formatter = new Intl.NumberFormat(undefined, { style: "currency", currency, minimumFractionDigits: digits, maximumFractionDigits: digits });
-      moneyFormats.set(key, formatter);
+      formatter = new Intl.NumberFormat(undefined, { style: "currency", currency, minimumFractionDigits: 0, maximumFractionDigits: 0 });
+      moneyFormats.set(currency, formatter);
     }
-    text = formatter.format(value);
+    return formatter.format(value);
   } catch {
-    text = `${value.toFixed(digits)} ${currency}`;
+    return `${value} ${currency}`;
   }
-  return tiny ? `<${text}` : text;
+}
+
+const TOKEN_FORMAT = new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 });
+
+/** A token count, compact: "322K tokens", "5.8B tokens". */
+export function formatTokens(tokens: number): string {
+  return `${TOKEN_FORMAT.format(tokens)} ${tokens === 1 ? "token" : "tokens"}`;
 }
 
 export function errorMessage(cause: unknown): string {

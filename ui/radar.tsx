@@ -6,7 +6,7 @@ import { PLUGIN_SLUG } from "../brand";
 import { usePending, type RadarApi } from "./hooks";
 import { errorMessage, formatShortAge, parseTime } from "./model";
 import { Age, CappedList, GroupHeader, IconMark, Mark, RowActions, Spinner, keyForBox, useRowAction } from "./primitives";
-import { ACCENT_TEXT, ALERT_BANNER, CARD_INSET, ELEVATION, EMPTY_NOTE, ONE_LINE_AGE, ONE_LINE_PAD, ROW_ACTION, TYPE, UNREAD_BADGE, cardFrame, cardTitle } from "./styles";
+import { ACCENT_TEXT, ALERT_BANNER, BOARD_PALETTE, CARD_INSET, ELEVATION, EMPTY_NOTE, ONE_LINE_AGE, ONE_LINE_PAD, ROW_ACTION, TYPE, UNREAD_BADGE, cardFrame, cardTitle } from "./styles";
 import type { RadarItem, RadarState } from "../server/radar-schema";
 
 type RadarDraft = { item: RadarItem; prompt: string | null; error: string | null };
@@ -176,6 +176,8 @@ function OpportunityModal({ draft, onRetry, onSubmit, onClose, onQueued }: {
     <div
       data-bb-plugin={PLUGIN_SLUG}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 max-sm:p-2"
+      // A portal outside the board, so it carries the board's palette itself.
+      style={BOARD_PALETTE}
       onPointerDown={(event) => {
         if (event.target === event.currentTarget) close();
       }}

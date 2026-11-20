@@ -1,65 +1,21 @@
+import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
+import { createPortal } from "react-dom";
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
-import { ACCENT_TEXT, TYPE } from "./styles";
+import { PLUGIN_SLUG } from "../brand";
+import { CountBadge } from "./primitives";
+import { ACCENT_TEXT, BOARD_PALETTE, ELEVATION, STATUS_META, TYPE } from "./styles";
 
 const LIMIT_CHOICES = [0, 1, 2, 3, 4, 5];
-/** Past this many marks a row stops reading at a glance; a count shows instead. */
-const MAX_MARKS = 6;
+/** The menu's gap from the picker, and its least room from the viewport's edges. */
+const MENU_GAP = 6;
+const MENU_MARGIN = 8;
 
-/** A thread working past the limit: the slot dot with a hole punched through it, a pixel smaller. */
-function OverLimitMark() {
-  return (
-    <svg viewBox="0 0 16 16" className="size-[7px] shrink-0 text-amber-500" fill="currentColor" fillRule="evenodd" aria-hidden>
-      <path d="M8 0a8 8 0 1 0 0 16A8 8 0 1 0 8 0zm0 4.8a3.2 3.2 0 1 0 0 6.4 3.2 3.2 0 1 0 0-6.4z" />
-    </svg>
-  );
-}
+type Placement = { right: number; top?: number; bottom?: number; maxHeight: number };
 
 /**
- * Working threads against the limit, in the Working column's header: one amber dot per working thread in a slot, a
- * ring per free slot, and a warning mark per thread over the limit, all one row of marks; then `working/limit` and
- * `+N waiting`. With no limit every working thread is a dot. Past MAX_MARKS the marks give way to counts.
+ * The Working column's limit picker, in the column's amber: the limit, opening a menu of choices, after a
+ * queued-colored count of threads waiting for a slot. The working count is the column header's badge.
  */
-export function WorkingMeter({ limit, working, waiting }: {
-  limit: number | null;
-  /** Working threads holding a slot: not Blocked. */
-  working: number;
-  waiting: number;
-}) {
-  const slots = Math.max(limit ?? 0, working);
-  const marks = slots <= MAX_MARKS;
-  const over = limit !== null && working > limit;
-  const count = limit === null ? (marks ? null : `${working} working`) : marks ? `${working}/${limit}` : `${working}/${limit} working`;
-  const label = [
-    limit === null ? `${working} working, no limit` : `${working} of ${limit} working${over ? `, ${working - limit} over the limit` : ""}`,
-    waiting ? `${waiting} waiting` : null,
-  ].filter(Boolean).join(", ");
-  return (
-    <span className="inline-flex shrink-0 items-center gap-1.5">
-      {(marks ? slots > 0 : over) ? (
-        <span className="flex items-center gap-[3px]" aria-hidden>
-          {marks ? (
-            Array.from({ length: slots }, (_, slot) =>
-              slot >= working ? (
-                <span key={slot} className="size-2 rounded-full border border-amber-500/70" />
-              ) : limit !== null && slot >= limit ? (
-                <OverLimitMark key={slot} />
-              ) : (
-                <span key={slot} className="size-2 rounded-full bg-amber-500" />
-              ),
-            )
-          ) : over ? (
-            <OverLimitMark />
-          ) : null}
-        </span>
-      ) : null}
-      {count ? <span className="tabular-nums" aria-hidden>{count}</span> : null}
-      {waiting > 0 ? <span className="font-medium" aria-hidden>+{waiting} waiting</span> : null}
-      <span className="sr-only">{label}</span>
-    </span>
-  );
-}
-
-/** The Working column's limit picker, in the column's amber: the working meter over a native select for the choice. */
 export function WipLimitControl({ limit, working, waiting, onChange }: {
   limit: number | null;
   /** Working cards holding a slot: not Blocked. */
@@ -68,33 +24,159 @@ export function WipLimitControl({ limit, working, waiting, onChange }: {
   onChange: (limit: number | null) => void;
 }) {
   // A limit set elsewhere (the RPC takes 0 to 50) still shows as the selected choice.
-  const choices = limit === null || LIMIT_CHOICES.includes(limit) ? LIMIT_CHOICES : [...LIMIT_CHOICES, limit].sort((a, b) => a - b);
+  const numbers = limit === null || LIMIT_CHOICES.includes(limit) ? LIMIT_CHOICES : [...LIMIT_CHOICES, limit].sort((a, b) => a - b);
+  const choices: (number | null)[] = [...numbers, null];
+  const label = [
+    limit === null ? `${working} working, no limit` : `${working} of ${limit} working${working > limit ? `, ${working - limit} over the limit` : ""}`,
+    waiting ? `${waiting} waiting` : null,
+  ].filter(Boolean).join(", ");
+
+  const [open, setOpen] = useState(false);
+  const [active, setActive] = useState(0);
+  const [placement, setPlacement] = useState<Placement | null>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLUListElement>(null);
+  const menuId = useId();
+
+  const close = (refocus: boolean) => {
+    setOpen(false);
+    if (refocus) buttonRef.current?.focus();
+  };
+  const choose = (choice: number | null) => {
+    close(true);
+    if (choice !== limit) onChange(choice);
+  };
+  const openMenu = () => {
+    setActive(Math.max(0, choices.indexOf(limit)));
+    setOpen(true);
+  };
+
+  // Below the picker, or above it when there is more room there; right edges aligned. The menu lives in a portal
+  // because the column header clips what overflows it.
+  useLayoutEffect(() => {
+    if (!open) return;
+    const rect = buttonRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const right = Math.max(MENU_MARGIN, window.innerWidth - rect.right);
+    const below = window.innerHeight - rect.bottom - MENU_GAP - MENU_MARGIN;
+    const above = rect.top - MENU_GAP - MENU_MARGIN;
+    setPlacement(
+      below >= 200 || below >= above
+        ? { right, top: rect.bottom + MENU_GAP, maxHeight: below }
+        : { right, bottom: window.innerHeight - rect.top + MENU_GAP, maxHeight: above },
+    );
+    menuRef.current?.focus();
+  }, [open]);
+
+  // Outside presses, scrolling and resizing close it: its place follows the picker only when it opens.
+  useEffect(() => {
+    if (!open) return;
+    const inside = (target: EventTarget | null) =>
+      target instanceof Node && (menuRef.current?.contains(target) || buttonRef.current?.contains(target));
+    const pressOutside = (event: PointerEvent) => {
+      if (!inside(event.target)) close(false);
+    };
+    const moved = (event: Event) => {
+      if (!inside(event.target)) close(false);
+    };
+    const resized = () => close(false);
+    document.addEventListener("pointerdown", pressOutside);
+    document.addEventListener("scroll", moved, true);
+    window.addEventListener("resize", resized);
+    return () => {
+      document.removeEventListener("pointerdown", pressOutside);
+      document.removeEventListener("scroll", moved, true);
+      window.removeEventListener("resize", resized);
+    };
+  }, [open]);
+
+  const onMenuKey = (event: KeyboardEvent) => {
+    const last = choices.length - 1;
+    const keys: Record<string, () => void> = {
+      ArrowDown: () => setActive((index) => (index >= last ? 0 : index + 1)),
+      ArrowUp: () => setActive((index) => (index <= 0 ? last : index - 1)),
+      Home: () => setActive(0),
+      End: () => setActive(last),
+      Enter: () => choose(choices[active]),
+      " ": () => choose(choices[active]),
+      Escape: () => close(true),
+      Tab: () => close(false),
+    };
+    const action = keys[event.key];
+    if (!action) return;
+    if (event.key !== "Tab") event.preventDefault();
+    event.stopPropagation();
+    action();
+  };
+
+  const optionText = (choice: number | null) => (choice === null ? "No limit" : `Max ${choice} working`);
+
   return (
-    <label
-      className={`relative ml-auto inline-flex h-5 shrink-0 cursor-pointer select-none items-center gap-1.5 rounded-md px-1.5 ${TYPE.badge} leading-none ${ACCENT_TEXT.amber} transition-colors hover:bg-amber-500/15 focus-within:ring-2 focus-within:ring-ring/60 pointer-coarse:h-7`}
-    >
-      {limit === null ? (
-        <>
-          <span>No limit</span>
-          <span className="sr-only">{working} working</span>
-        </>
-      ) : (
-        <WorkingMeter limit={limit} working={working} waiting={waiting} />
-      )}
-      <Icon name="ChevronDown" fallback="ChevronUp" className="size-3" aria-hidden />
-      <select
-        aria-label="Working limit"
-        value={limit ?? ""}
-        onChange={(event) => onChange(event.target.value ? Number(event.target.value) : null)}
-        className="absolute inset-0 cursor-pointer appearance-none opacity-0"
+    <span className="ml-auto inline-flex shrink-0 items-center gap-1">
+      {waiting > 0 ? (
+        <span title={`${waiting} waiting for a slot`} aria-hidden>
+          <CountBadge count={waiting} tone={STATUS_META.queue.badge} />
+        </span>
+      ) : null}
+      <button
+        ref={buttonRef}
+        type="button"
+        aria-label={`Working limit: ${label}`}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-controls={open ? menuId : undefined}
+        onClick={() => (open ? close(false) : openMenu())}
+        onKeyDown={(event) => {
+          if (open || (event.key !== "ArrowDown" && event.key !== "ArrowUp")) return;
+          event.preventDefault();
+          openMenu();
+        }}
+        className={`inline-flex h-5 shrink-0 cursor-pointer select-none items-center gap-1.5 rounded-md px-1.5 ${TYPE.badge} leading-none ${ACCENT_TEXT.amber} transition-colors hover:bg-amber-500/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 pointer-coarse:h-7 ${
+          open ? "bg-amber-500/15" : ""
+        }`}
       >
-        {choices.map((choice) => (
-          <option key={choice} value={choice}>
-            Max {choice} working
-          </option>
-        ))}
-        <option value="">No limit</option>
-      </select>
-    </label>
+        <span>{limit === null ? "No limit" : `Max ${limit}`}</span>
+        <Icon name="ChevronDown" fallback="ChevronUp" className="size-3" aria-hidden />
+      </button>
+      {open
+        ? createPortal(
+            <ul
+              ref={menuRef}
+              id={menuId}
+              role="listbox"
+              tabIndex={-1}
+              aria-label="Working limit"
+              aria-activedescendant={`${menuId}-${active}`}
+              data-bb-plugin={PLUGIN_SLUG}
+              onKeyDown={onMenuKey}
+              className={`fixed z-50 min-w-36 overflow-y-auto overscroll-contain rounded-xl border border-border bg-popover p-1 text-popover-foreground outline-none ${ELEVATION.float} [scrollbar-width:thin] ${
+                placement ? "" : "invisible"
+              }`}
+              style={{ ...BOARD_PALETTE, right: placement?.right, top: placement?.top, bottom: placement?.bottom, maxHeight: placement?.maxHeight }}
+            >
+              {choices.map((choice, index) => {
+                const selected = choice === limit;
+                return (
+                  <li
+                    key={choice ?? "none"}
+                    id={`${menuId}-${index}`}
+                    role="option"
+                    aria-selected={selected}
+                    onPointerEnter={() => setActive(index)}
+                    onClick={() => choose(choice)}
+                    className={`flex h-7 cursor-pointer items-center gap-2 rounded-md px-2 ${TYPE.body} transition-colors pointer-coarse:h-9 ${
+                      index === active ? "bg-accent text-accent-foreground" : ""
+                    }`}
+                  >
+                    <span className="min-w-0 flex-1 tabular-nums">{optionText(choice)}</span>
+                    {selected ? <Icon name="Check" className={`size-3.5 shrink-0 ${ACCENT_TEXT.amber}`} aria-hidden /> : <span className="size-3.5 shrink-0" aria-hidden />}
+                  </li>
+                );
+              })}
+            </ul>,
+            document.body,
+          )
+        : null}
+    </span>
   );
 }

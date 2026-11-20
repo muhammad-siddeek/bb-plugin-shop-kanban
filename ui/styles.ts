@@ -1,3 +1,4 @@
+import type { CSSProperties } from "react";
 import type { BoardStatus } from "./model";
 
 // The board's visual vocabulary: every class string that more than one component draws with. Tailwind reads these at
@@ -36,11 +37,11 @@ export const TYPE = {
  *   title-bar controls, 32 column headers and dashed slots, 36 the title bar. Touch screens take
  *   28 inside columns, 36 in the title bar and for form fields.
  * - Icons: 10 on a disc or in a chip, 12 beside meta text, 14 for marks and row actions, 16 in banners, dialogs and
- *   the title bar's mark. Dots: 6 for a verdict, 8 in the working meter.
+ *   the title bar's mark. Dots: 6 for a verdict.
  * - Radii: 4 (chips, small controls, focus outlines), 6 (cards, buttons, fields, slots), 12 (popovers, the dialog),
  *   full (pills, discs, dots). Strokes: 1 hairlines, 1.5 small rings and the spinner, 2 focus rings, 3 selection.
  * Offsets that line one thing up with another (CARD_INSET, COLUMN_INSET, a one-line card's 3px pad, the row
- * actions' 5px drop) are derived from these, not new steps; so is glyph geometry (the meter's dot spacing).
+ * actions' 5px drop) are derived from these, not new steps; so is glyph geometry.
  */
 
 /**
@@ -55,12 +56,13 @@ export function cardTitle(unread = false): string {
  * The board's colors, a closed set. Four hues, each with one meaning: sky (queued, new), amber (working, warning),
  * rose (blocked, errors, removing), emerald (done, approving). Everything else is bb's neutral theme (foreground,
  * muted-foreground, border, background, card, popover, muted, accent, ring); no primary, no black but the dialog's scrim.
+ * The hue names are slots for Tailwind's classes: `BOARD_PALETTE` repaints each one's shades with bb's own colors.
  *
  * Every hue and the grey climb one alpha ladder, each step with one job:
  * - /15 tint: badge and chip fills, hover and pressed washes, a drop target's highlight.
  * - /50 line: borders, an unread card's edge, chart thresholds, a drop target still waiting.
- * - /70 edge: lines that carry a state (the queued ring, a free slot) and edges under the pointer or focus.
- * - solid -500: marks, unread pills, meter dots; -600 under the pointer on a solid button.
+ * - /70 edge: lines that carry a state (the queued ring) and edges under the pointer or focus.
+ * - solid -500: marks and unread pills; -600 under the pointer on a solid button.
  * Grey reads about a step heavier than a hue at the same alpha (a grey /50 line measures like the hues' /70 ones), so
  * grey marks and data bars take the line step. Neutral lines: `border-border` for edges, `/60` for dividers inside a
  * surface, and the cards' hairline.
@@ -70,6 +72,28 @@ export function cardTitle(unread = false): string {
  * for glyphs only, never words. Opacity only reveals (0 and 100) or holds back (50: disabled, dragged, stale), and
  * every focus ring is `ring-ring/60`.
  */
+
+/**
+ * bb's status colors behind the four hue slots, so the board matches bb's own badges and follows any bb theme:
+ * amber is bb's warning, rose its destructive, emerald its success; sky is a blue at matching weight (bb has none).
+ * They override Tailwind's `--color-<hue>-<shade>` variables, so every class above stays a literal. Shades in use:
+ * -500 (marks, tints, lines, and accent text on dark), -700 (accent text on light), -800 (badge text on light). Set
+ * as the `style` of every root the board draws under: the board itself and the Radar dialog's portal.
+ */
+export const BOARD_PALETTE = {
+  "--color-sky-500": "light-dark(oklch(58% .14 240),oklch(74% .12 240))",
+  "--color-sky-700": "oklch(50% .12 240)",
+  "--color-sky-800": "oklch(46% .11 240)",
+  "--color-amber-500": "light-dark(var(--warning-text),var(--warning))",
+  "--color-amber-700": "var(--warning-text)",
+  "--color-amber-800": "oklch(50% .13 50)",
+  "--color-rose-500": "light-dark(var(--destructive),var(--destructive-text))",
+  "--color-rose-700": "var(--destructive-text)",
+  "--color-rose-800": "var(--destructive-text)",
+  "--color-emerald-500": "light-dark(var(--success-foreground),var(--success))",
+  "--color-emerald-700": "var(--success-foreground)",
+  "--color-emerald-800": "oklch(48% .13 155)",
+} as CSSProperties;
 
 /**
  * Accent text per hue: the -500 shade on dark, -700 on light, where -500 is too faint to read (about 2:1 on
@@ -98,11 +122,15 @@ export const ACCENT_BADGE = {
   emerald: "bg-emerald-500/15 text-[light-dark(var(--color-emerald-800),var(--color-emerald-500))]",
 } as const;
 
-/** Unread marks and counts: a solid circle or pill with white text, so new things stand out from tinted ones. */
+/**
+ * Unread marks and counts: a solid circle or pill, so new things stand out from tinted ones. Its text is white on
+ * light and bb's canvas on dark, where the marks are light.
+ */
+export const ON_ACCENT_TEXT = "text-[light-dark(#fff,var(--background))]";
 export const UNREAD_BADGE = {
-  sky: "bg-sky-500 text-white",
-  rose: "bg-rose-500 text-white",
-  emerald: "bg-emerald-500 text-white",
+  sky: `bg-sky-500 ${ON_ACCENT_TEXT}`,
+  rose: `bg-rose-500 ${ON_ACCENT_TEXT}`,
+  emerald: `bg-emerald-500 ${ON_ACCENT_TEXT}`,
 } as const;
 
 /** Colors per card state; each column takes those of the state it is named after. Parked is grey. */

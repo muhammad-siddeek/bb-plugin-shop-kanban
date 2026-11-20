@@ -9,6 +9,7 @@ import {
   CHIP,
   EMPTY_NOTE,
   ONE_LINE_AGE,
+  ON_ACCENT_TEXT,
   ONE_LINE_PAD,
   ROW_ACTION,
   TYPE,
@@ -47,7 +48,7 @@ const FOLLOW_UPS: { mark: "measured" | "demoed"; label: string }[] = [
 /** Outgoing order: what waits on the user first, then what they can merge, then what waits on others, then drafts. */
 const TONE_ORDER: Record<WorkStage["tone"], number> = { you: 0, ready: 1, waiting: 2, idle: 3 };
 /** A stage line's text per tone: the user's move in the hue of its mark, everything else quiet. */
-export const STAGE_TEXT: Record<WorkStage["tone"], string> = {
+const STAGE_TEXT: Record<WorkStage["tone"], string> = {
   you: `font-medium ${ACCENT_TEXT.rose}`,
   ready: `font-medium ${ACCENT_TEXT.emerald}`,
   waiting: "text-muted-foreground",
@@ -58,7 +59,7 @@ export const STAGE_TEXT: Record<WorkStage["tone"], string> = {
  * An open pull request's leading mark, labeled with where it stands: the board's red blocked mark when it waits on
  * the user, a green merge disc when they can merge it, the Working petals while CI runs, an hourglass on reviewers.
  */
-export function StageMark({ stage }: { stage: WorkStage }) {
+function StageMark({ stage }: { stage: WorkStage }) {
   switch (stage.step) {
     case "conflict":
     case "ci_failing":
@@ -66,7 +67,7 @@ export function StageMark({ stage }: { stage: WorkStage }) {
     case "behind":
     case "no_reviewers":
       return (
-        <Mark label={stage.label} disc="bg-rose-500 text-[10px] font-bold leading-none text-white">
+        <Mark label={stage.label} disc={`bg-rose-500 text-[10px] font-bold leading-none ${ON_ACCENT_TEXT}`}>
           !
         </Mark>
       );
@@ -241,7 +242,7 @@ export function useWorkItems(work: WorkApi): WorkItems {
 }
 
 /** A header pill counting what waits on the user: red like the blocked mark. Nothing at zero. */
-export function NeedsYouBadge({ count }: { count: number }) {
+function NeedsYouBadge({ count }: { count: number }) {
   if (count === 0) return null;
   return <span className={`inline-flex h-4 shrink-0 items-center rounded-full px-1.5 ${TYPE.badge} leading-none ${UNREAD_BADGE.rose}`}>{count} need you</span>;
 }

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef } from "react";
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
 import { THREAD_DRAG_TYPE, taskActivityTime, taskCardTitle, type BoardStatus, type BoardTask } from "./model";
 import { Age, IconMark, Mark, RowActions, Spinner } from "./primitives";
-import { ACCENT_TEXT, CARD_PAD_X, CHIP, ELEVATION, ICON_ACTION, ONE_LINE_AGE, ONE_LINE_PAD, STATUS_META, TYPE, UNREAD_BADGE, cardFrame, cardTitle } from "./styles";
+import { ACCENT_TEXT, CARD_PAD_X, CHIP, ELEVATION, ICON_ACTION, ON_ACCENT_TEXT, ONE_LINE_AGE, ONE_LINE_PAD, STATUS_META, TYPE, UNREAD_BADGE, cardFrame, cardTitle } from "./styles";
 import { ContextPie, SessionCost } from "./session";
 
 /** A full card's cost and age: 18px lines at the ends of its two rows. */
@@ -111,7 +111,7 @@ export function TaskStatusMark({ status, unread }: { status: BoardStatus; unread
   }
   if (status === "blocked") {
     return (
-      <Mark label="Blocked" disc="bg-rose-500 text-[10px] font-bold leading-none text-white">
+      <Mark label="Blocked" disc={`bg-rose-500 text-[10px] font-bold leading-none ${ON_ACCENT_TEXT}`}>
         !
       </Mark>
     );

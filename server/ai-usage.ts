@@ -34,9 +34,10 @@ const GCLOUD_TIMEOUT_MS = 15_000;
  * The 7-day graph takes past days from the data warehouse's hourly rollup of proxy spend (the layer tokentally reads),
  * cut at local midnight, with today from the proxy. The rollup lands about 90 minutes behind, so the server also
  * records each day's last proxy reading, and a day shows whichever is higher: yesterday is whole just after midnight.
- * Read in the background too, so days are recorded while no board is open.
+ * Read in the background too, so days are recorded while no board is open. Each record keeps the day's tokens beside
+ * its cost.
  */
-const DAYS_KEY = "ai-spend-days-v1";
+const DAYS_KEY = "ai-spend-days-v2";
 const BACKGROUND_READ_MS = 5 * 60_000;
 /** The graph's days, today included. */
 const GRAPH_DAYS = 7;
@@ -50,9 +51,9 @@ const WAREHOUSE_PROJECT = "shopify-dw";
 /** Realtime signal that the spend read changed outside a poll (the warehouse's days landed late). */
 export const AI_USAGE_CHANGED = "ai-usage-changed";
 const WAREHOUSE_TABLE = "shopify-dw.mart_infrastructure_data.ai_proxy_model_hourly_aggregation";
-/** Daily personal proxy spend over the local days before today. `request_date` is UTC, so it is padded a day. */
+/** Daily personal proxy spend and tokens over the local days before today. `request_date` is UTC, so it is padded a day. */
 const WAREHOUSE_SQL = `
-SELECT FORMAT_DATE('%F', DATE(request_hour, @tz)) AS day, SUM(total_cost_usd) AS cost
+SELECT FORMAT_DATE('%F', DATE(request_hour, @tz)) AS day, SUM(total_cost_usd) AS cost, SUM(total_tokens) AS tokens
 FROM \`${WAREHOUSE_TABLE}\`
 WHERE mode = 'personal' AND LOWER(email) = @email
   AND request_date BETWEEN DATE_SUB(CURRENT_DATE(@tz), INTERVAL ${GRAPH_DAYS} DAY) AND DATE_ADD(CURRENT_DATE(@tz), INTERVAL 1 DAY)
@@ -66,11 +67,20 @@ const GCLOUD_INSTALLS = ["/opt/homebrew/bin/gcloud", "/usr/local/bin/gcloud", jo
 
 type Key = { value: string; expiresAt: number; fromEnv: boolean };
 
+/** Per-model token counts; `input_tokens` already includes cached input and cache writes. */
+type ModelUsage = Record<string, { input_tokens?: number; output_tokens?: number }>;
+
 type UsageResponse = {
   timezone?: string;
   totals?: { hour_cost?: number; today_cost?: number; seven_days_cost?: number };
+  hour?: ModelUsage;
+  today?: ModelUsage;
+  seven_days?: ModelUsage;
   pricing_stale?: boolean;
 };
+
+/** What a day cost and how many tokens it used. */
+type Spend = { cost: number; tokens: number };
 
 /** Run `command`, resolving to its stdout, or rejecting with the first line of what it printed about failing. */
 function runOrExplain(command: string, args: string[], timeout: number): Promise<string> {
@@ -145,8 +155,8 @@ async function gcloudIdentityToken(): Promise<string> {
   throw new Error("No gcloud identity token. Run `gcloud auth login` on the bb machine.");
 }
 
-/** Spend per local day (`YYYY-MM-DD` → USD) on the days before today, from the warehouse. */
-async function warehouseDays(timezone: string): Promise<Record<string, number>> {
+/** Spend per local day (`YYYY-MM-DD` → USD and tokens) on the days before today, from the warehouse. */
+async function warehouseDays(timezone: string): Promise<Record<string, Spend>> {
   const gcloud = await shopifyGcloud();
   if (!gcloud) throw new Error("No Shopify gcloud account to read the data warehouse with.");
   // bq ships beside gcloud in every SDK install.
@@ -168,11 +178,12 @@ async function warehouseDays(timezone: string): Promise<Record<string, number>> 
   );
   const start = out.indexOf("[");
   if (start < 0) throw new Error("bq returned no rows.");
-  const rows = JSON.parse(out.slice(start)) as { day?: unknown; cost?: unknown }[];
-  const days: Record<string, number> = {};
+  const rows = JSON.parse(out.slice(start)) as { day?: unknown; cost?: unknown; tokens?: unknown }[];
+  const days: Record<string, Spend> = {};
   for (const row of rows) {
     const cost = Number(row.cost);
-    if (typeof row.day === "string" && Number.isFinite(cost)) days[row.day] = cost;
+    const tokens = Number(row.tokens);
+    if (typeof row.day === "string" && Number.isFinite(cost) && Number.isFinite(tokens)) days[row.day] = { cost, tokens };
   }
   return days;
 }
@@ -233,36 +244,59 @@ function daysEnding(today: string, count: number): string[] {
   return Array.from({ length: count }, (_, index) => new Date(end - (count - 1 - index) * 86_400_000).toISOString().slice(0, 10));
 }
 
-/** The recorded last reading of each day (`YYYY-MM-DD` → USD spent so far that day). */
-function parseDays(raw: unknown): Record<string, number> {
-  const out: Record<string, number> = {};
+/** The recorded last reading of each day (`YYYY-MM-DD` → USD and tokens used so far that day). */
+function parseDays(raw: unknown): Record<string, Spend> {
+  const out: Record<string, Spend> = {};
   if (!raw || typeof raw !== "object") return out;
-  for (const [day, cost] of Object.entries(raw as Record<string, unknown>)) {
-    if (/^\d{4}-\d{2}-\d{2}$/u.test(day) && typeof cost === "number" && Number.isFinite(cost)) out[day] = cost;
+  for (const [day, spend] of Object.entries(raw as Record<string, unknown>)) {
+    if (!/^\d{4}-\d{2}-\d{2}$/u.test(day) || !spend || typeof spend !== "object") continue;
+    const { cost, tokens } = spend as { cost?: unknown; tokens?: unknown };
+    if (typeof cost === "number" && Number.isFinite(cost) && typeof tokens === "number" && Number.isFinite(tokens)) out[day] = { cost, tokens };
   }
   return out;
 }
 
+/** The fuller of two undercounts of one day: the costlier, or on a tie (free models) the one with more tokens. */
+function fuller(a: Spend, b: Spend): Spend {
+  if (a.cost !== b.cost) return a.cost > b.cost ? a : b;
+  return a.tokens >= b.tokens ? a : b;
+}
+
 /**
  * The graph's 7 days, today's from the proxy and the rest from the warehouse or the recorded readings, whichever
- * is higher (both only ever undercount a day). No graph unless every day is known: a gap would misdraw the week.
+ * is fuller (both only ever undercount a day). No graph unless every day is known: a gap would misdraw the week.
  */
-function withDays(usage: AiUsage, warehouse: Record<string, number> | null, recorded: Record<string, number>, today: string): AiUsage {
-  if (usage.todayCost === null) return usage;
-  const days: { date: string; cost: number | null }[] = daysEnding(today, GRAPH_DAYS).map((date) => {
-    if (date === today) return { date, cost: usage.todayCost };
+function withDays(usage: AiUsage, warehouse: Record<string, Spend> | null, recorded: Record<string, Spend>, today: string): AiUsage {
+  if (usage.todayCost === null || usage.todayTokens === null) return usage;
+  const todaySpend = { cost: usage.todayCost, tokens: usage.todayTokens };
+  const days: ({ date: string } & Spend)[] = [];
+  for (const date of daysEnding(today, GRAPH_DAYS)) {
+    if (date === today) {
+      days.push({ date, ...todaySpend });
+      continue;
+    }
     // A day the warehouse read but has no rows for had no spend.
-    const fromWarehouse = warehouse ? (warehouse[date] ?? 0) : null;
+    const fromWarehouse = warehouse ? (warehouse[date] ?? { cost: 0, tokens: 0 }) : null;
     const fromRecord = recorded[date] ?? null;
-    return { date, cost: fromWarehouse === null && fromRecord === null ? null : Math.max(fromWarehouse ?? 0, fromRecord ?? 0) };
-  });
-  if (days.some((day) => day.cost === null)) return usage;
-  const complete = days as AiUsage["days"];
-  return { ...usage, days: complete, weekCost: complete.reduce((total, day) => total + day.cost, 0) };
+    const spend = fromWarehouse && fromRecord ? fuller(fromWarehouse, fromRecord) : (fromWarehouse ?? fromRecord);
+    if (!spend) return usage;
+    days.push({ date, ...spend });
+  }
+  return {
+    ...usage,
+    days,
+    weekCost: days.reduce((total, day) => total + day.cost, 0),
+    weekTokens: days.reduce((total, day) => total + day.tokens, 0),
+  };
 }
 
 function num(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+/** Input plus output tokens over every model; the proxy's input count already includes cached input. */
+function tokensOf(models: ModelUsage | undefined): number {
+  return Object.values(models ?? {}).reduce((total, model) => total + num(model?.input_tokens) + num(model?.output_tokens), 0);
 }
 
 function toUsage(body: UsageResponse, sampledAt: number): AiUsage {
@@ -270,11 +304,15 @@ function toUsage(body: UsageResponse, sampledAt: number): AiUsage {
     sampledAt,
     timezone: body.timezone ?? "UTC",
     todayCost: num(body.totals?.today_cost),
+    todayTokens: tokensOf(body.today),
     hourCost: num(body.totals?.hour_cost),
+    hourTokens: tokensOf(body.hour),
     sevenDaysCost: num(body.totals?.seven_days_cost),
+    sevenDaysTokens: tokensOf(body.seven_days),
     pricingStale: body.pricing_stale === true,
     days: [],
     weekCost: null,
+    weekTokens: null,
     daysLoading: false,
     daysError: null,
     error: null,
@@ -286,18 +324,18 @@ export function createAiUsage(bb: BbPluginApi) {
   let envKeyRejected = false;
   let cached: { at: number; value: AiUsage; ttl: number } | null = null;
   let pending: Promise<AiUsage> | null = null;
-  let recorded: Promise<Record<string, number>> | null = null;
+  let recorded: Promise<Record<string, Spend>> | null = null;
   let recordWrite: Promise<unknown> = Promise.resolve();
 
-  let warehouse: { at: number; timezone: string; days: Record<string, number> | null; error: string | null } | null = null;
-  let warehousePending: Promise<Record<string, number> | null> | null = null;
+  let warehouse: { at: number; timezone: string; days: Record<string, Spend> | null; error: string | null } | null = null;
+  let warehousePending: Promise<Record<string, Spend> | null> | null = null;
 
   /**
    * The warehouse's past days: the last read straight away (refreshing it in the background once stale), or on the
    * first read, up to WAREHOUSE_FIRST_WAIT_MS of waiting for it. A read that lands later expires the spend cache and
    * signals AI_USAGE_CHANGED, so open boards read again at once.
    */
-  async function readWarehouse(timezone: string): Promise<Record<string, number> | null> {
+  async function readWarehouse(timezone: string): Promise<Record<string, Spend> | null> {
     const last = warehouse?.timezone === timezone ? warehouse : null;
     if (last && Date.now() - last.at < (last.days ? WAREHOUSE_CACHE_MS : WAREHOUSE_ERROR_CACHE_MS)) return last.days;
     warehousePending ??= warehouseDays(timezone)
@@ -327,11 +365,12 @@ export function createAiUsage(bb: BbPluginApi) {
 
   const loadDays = () => (recorded ??= safe(() => bb.storage.kv.get<unknown>(DAYS_KEY)).then(parseDays));
 
-  /** Record `cost` as `day`'s spend so far (a day's spend only grows) and drop days long past. */
-  async function recordDay(day: string, cost: number): Promise<Record<string, number>> {
+  /** Record `spend` as `day`'s so far (a day's spend only grows) and drop days long past. */
+  async function recordDay(day: string, spend: Spend): Promise<Record<string, Spend>> {
     const days = await loadDays();
-    if ((days[day] ?? -1) >= cost) return days;
-    days[day] = cost;
+    const known = days[day];
+    if (known && fuller(known, spend) === known) return days;
+    days[day] = spend;
     const oldest = daysEnding(day, KEEP_DAYS)[0]!;
     for (const past of Object.keys(days)) if (past < oldest) delete days[past];
     recordWrite = recordWrite.then(() => safe(() => bb.storage.kv.set(DAYS_KEY, days)));
@@ -350,7 +389,10 @@ export function createAiUsage(bb: BbPluginApi) {
     const day = dayOf(Date.now(), timezone);
     const [usage, pastDays] = await Promise.all([requestUsage(timezone), readWarehouse(timezone)]);
     // A read that straddled midnight can't tell which day its "today" was: graph it, but don't record it.
-    const recordedDays = dayOf(Date.now(), timezone) === day && usage.todayCost !== null ? await recordDay(day, usage.todayCost) : await loadDays();
+    const recordedDays =
+      dayOf(Date.now(), timezone) === day && usage.todayCost !== null && usage.todayTokens !== null
+        ? await recordDay(day, { cost: usage.todayCost, tokens: usage.todayTokens })
+        : await loadDays();
     const graphed = withDays(usage, pastDays, recordedDays, day);
     if (graphed.days.length > 0) return graphed;
     return { ...graphed, daysLoading: warehousePending !== null, daysError: warehousePending ? null : (warehouse?.error ?? null) };
@@ -390,11 +432,15 @@ export function createAiUsage(bb: BbPluginApi) {
               sampledAt: Date.now(),
               timezone: localTimezone(),
               todayCost: null,
+              todayTokens: null,
               hourCost: null,
+              hourTokens: null,
               sevenDaysCost: null,
+              sevenDaysTokens: null,
               pricingStale: false,
               days: [],
               weekCost: null,
+              weekTokens: null,
               daysLoading: false,
               daysError: null,
               error: message,

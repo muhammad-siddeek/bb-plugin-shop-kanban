@@ -16,12 +16,12 @@ function sessionFacts(session: BoardSession | null) {
   const currency = session?.cost?.currency;
   // Part of the spend is priced from other replies' rates when a harness saved replies without a price.
   const estimated = session?.cost && session.costEstimated > 0;
-  // The footer's figure is compact; its accessible label is exact.
+  // The footer's figure; its accessible label says what it covers.
   const cost = session?.cost ? `${estimated ? "~" : ""}${formatMoney(session.cost.amount, currency)}` : null;
   // The cost covers the thread's descendant threads too; say so when more than one spent.
   const spent = session?.cost
-    ? `${estimated ? "~" : ""}${formatMoney(session.cost.amount, currency, true)} spent${session.costThreads > 1 ? ` across ${session.costThreads} threads` : ""}${
-        estimated ? ` (${formatMoney(session.costEstimated, currency, true)} estimated)` : ""
+    ? `${cost} spent${session.costThreads > 1 ? ` across ${session.costThreads} threads` : ""}${
+        estimated ? ` (${formatMoney(session.costEstimated, currency)} estimated)` : ""
       }`
     : null;
   const used = session?.usedTokens ?? null;

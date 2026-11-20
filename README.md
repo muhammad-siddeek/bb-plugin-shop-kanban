@@ -31,8 +31,8 @@ thread (see Parked) and starting a waiting one (see Working limit).
   thread is idle and needs you (a pending interaction, an error, or a last
   reply that asks a question). The title bar shows two count badges, the
   number of working threads in amber and of blocked threads in red, each gone
-  at zero. The Working limit's meter and waiting messages show only in
-  Working's header.
+  at zero. The Working limit and the waiting count show only in Working's
+  header.
 - **Remote** (a section at the bottom of Working): Shopify River sessions and
   Torrent tickets you're part of that are live, one line each. River sessions
   are those you have spoken in this week (yours or someone else's thread) with
@@ -130,11 +130,10 @@ automations pointing at the old checkout before enabling the plugin schedule.
 ## Working limit
 
 The picker at the top of Working caps how many threads work at once, to keep
-a steady spend rate: Max 0 to Max 5 working, or No limit. It shows one amber
-dot per slot, filled as threads take them (`●●○ 2/3`), with threads over the
-limit as slightly smaller amber dots with a hole, and `+2 waiting`
-while messages wait; the default is no limit, and the choice is kept across
-reloads.
+a steady spend rate: Max 0 to Max 5 working, or No limit. The column header's
+amber badge counts the threads working, and a blue badge beside the picker
+counts messages waiting for a slot; the default is no limit, and the choice
+is kept across reloads.
 
 - A thread holds a slot while it or a descendant has a turn in progress and
   it doesn't wait on you, so Blocked threads don't count.
@@ -159,22 +158,24 @@ reloads.
 
 ## Threads on the board
 
-- A `[category] intent` title, e.g. `[docs site] search page`. The title is
-  written back to the bb sidebar thread title unless you rename the thread
-  yourself.
+- A `[category] intent` title, e.g. `[docs site] search page`. The category
+  is the card's badge; the labeler is asked to keep it to 11 characters. The
+  title is written back to the bb sidebar thread title unless you rename the
+  thread yourself.
 - Queue and Working cards are two rows. The first has the status mark (an
   amber petal spinner while working), the tag and title on one line, and what
   the thread's whole tree has spent; the second has a pie with how full its
   context window is (dim grey, amber at 70%, red at 90%), a one-line summary
   of the latest exchange, and how long ago it was updated (`5m`, `3h`, `2d`);
   Working cards skip the age, so their summary runs to the end of the line.
-  Costs show cents under $10 (`$4.30`, `$53`). Working
+  Costs are whole dollars, rounded up (`$1`, `$54`). Working
   threads refresh these every 5 seconds, idle threads every minute.
 - Cards have no colored edge; the status mark carries the state, and the
   content starts 6px in from the card's left border (8px on the right).
-- Anything unread is a solid circle with a white mark: a Done thread's check,
-  a Radar recommendation's bolt or bulb. Unread counts (the Done column, the
-  Radar tab and Recommendations) are solid pills with white numbers.
+- Anything unread is a solid circle with a contrasting mark: a Done thread's
+  check, a Radar recommendation's bolt or bulb. Unread counts (the Done
+  column, the Radar tab and Recommendations) are solid pills with contrasting
+  numbers.
 - The board draws with a closed set of colors: four hues, each with one
   meaning (sky queued or new, amber working or warning, red blocked, errors
   or removing, green done or approving), and bb's theme greys for the rest.
@@ -182,6 +183,9 @@ reloads.
   washes, 50% for lines, 70% for lines that carry a state (the free working
   slot, edges under the pointer), solid for marks and unread pills.
   Errors are red text in the board's readable shade in both themes.
+- The four hues are bb's own colors (warning orange, destructive red, success
+  green) plus a blue at the same weight for queued, so they follow bb's theme.
+  Solid marks carry white on light and bb's canvas color on dark.
 - Cards open no popup on hover or focus. A tap on a touch screen opens the
   thread.
 - The cost adds up the thread, every descendant thread (hidden and archived

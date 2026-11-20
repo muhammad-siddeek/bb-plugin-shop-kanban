@@ -280,25 +280,30 @@ export type SystemProcesses = z.infer<typeof systemProcessesSchema>;
 
 /**
  * The signed-in user's Shopify AI proxy spend, from the proxy's per-user counter: every tool on the proxy, not just
- * bb threads. Costs are USD; `today` is the bb machine's local calendar day. Figures are null until a read succeeds;
- * after one has, a failed read keeps them and sets `error`.
+ * bb threads. Costs are USD; tokens are input (cached and cache writes included) plus output, over every model.
+ * `today` is the bb machine's local calendar day. Figures are null until a read succeeds; after one has, a failed read
+ * keeps them and sets `error`.
  */
 const aiUsageSchema = z.object({
   sampledAt: z.number(),
   timezone: z.string(),
   todayCost: z.number().nullable(),
+  todayTokens: z.number().nullable(),
   hourCost: z.number().nullable(),
+  hourTokens: z.number().nullable(),
   /** The proxy's "seven days": today plus the 7 days before it, so 8 calendar days. */
   sevenDaysCost: z.number().nullable(),
+  sevenDaysTokens: z.number().nullable(),
   /** The proxy has no pricing loaded, so costs read $0: unknown, not free. */
   pricingStale: z.boolean(),
   /**
    * The last 7 local days, oldest first, ending today; empty unless every day's spend is known. Past days come from
    * the data warehouse (or the server's own readings), today from the proxy.
    */
-  days: z.array(z.object({ date: z.string(), cost: z.number() })),
-  /** The sum of `days`; null without them. */
+  days: z.array(z.object({ date: z.string(), cost: z.number(), tokens: z.number() })),
+  /** The sums of `days`; null without them. */
   weekCost: z.number().nullable(),
+  weekTokens: z.number().nullable(),
   /** No `days` yet because the warehouse read is still running. */
   daysLoading: z.boolean(),
   /** Why there are no `days`, when the warehouse read failed. */
