@@ -271,19 +271,40 @@ function AddTaskForm({ onAdd, onClose, onError }: {
 /** What a column does with a dragged card: Parked parks any idle card, Working starts a Queue card that has a message waiting. */
 type ColumnDrop = { label: string; icon: string; onDrop: (threadId: string) => void };
 
-/** The Queue tab's Parked section: finished threads set aside to come back to later. Takes dragged idle cards. */
-function ParkedSection({ tasks, dragging, onDrop, renderCard }: {
+/** Opens the new-thread form where it stands. */
+function NewThreadButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`${EMPTY_NOTE} w-full transition-colors hover:border-sky-500/50 hover:bg-sky-500/15 ${ACCENT_HOVER_TEXT.sky} focus-visible:border-sky-500/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60`}
+    >
+      <Icon name="Plus" className="size-3.5" aria-hidden />
+      New thread
+    </button>
+  );
+}
+
+/**
+ * The Queue tab's Parked section: threads set aside to come back to later. Takes dragged idle cards, and starts new
+ * threads that wait here, unstarted even with working slots free, until moved to Queue.
+ */
+function ParkedSection({ tasks, dragging, onDrop, renderCard, onStartAdding, addForm }: {
   tasks: BoardTask[];
   dragging: boolean;
   onDrop: (threadId: string) => void;
   renderCard: (task: BoardTask) => ReactElement;
+  onStartAdding: () => void;
+  addForm: ReactElement | null;
 }) {
   const { over, handlers } = useCardDrop(onDrop, dragging, true);
   return (
     <div role="group" aria-label="Parked" className={`space-y-1 rounded-md pt-1 transition-colors ${dropOutline(dragging, over)}`} {...handlers}>
       <GroupHeader title="Parked" count={tasks.length} />
+      {addForm}
       {dragging ? <DropHint over={over} icon="Pause" label="Drop to park" /> : null}
-      {tasks.length === 0 && !dragging ? <p className={EMPTY_NOTE}>Drag a finished thread here to come back to it later</p> : null}
+      {/* Like Queue, an empty Parked shows just its New thread button. */}
+      {!addForm && !dragging ? <NewThreadButton onClick={onStartAdding} /> : null}
       {tasks.map(renderCard)}
     </div>
   );
@@ -328,8 +349,11 @@ function BoardColumnView({ column, title, tasks, count, renderCard, dragging, dr
   addForm: ReactElement | null;
   /** The user's open pull requests, in the Queue column between its threads and Parked. */
   inFlight: ReactElement | null;
-  /** The Queue column's Parked section: idle threads set aside to come back to, and what a card dropped there does. */
-  parked: { tasks: BoardTask[]; onDrop: (threadId: string) => void } | null;
+  /**
+   * The Queue column's Parked section: idle threads set aside to come back to, what a card dropped there does, and its
+   * own new-thread form for threads that wait there unstarted.
+   */
+  parked: { tasks: BoardTask[]; onDrop: (threadId: string) => void; onStartAdding: () => void; addForm: ReactElement | null } | null;
   /** The Working column's Remote section, under its cards. */
   remote: ReactElement | null;
 }) {
@@ -368,20 +392,13 @@ function BoardColumnView({ column, title, tasks, count, renderCard, dragging, dr
             {addForm}
             {awaitingDrop ? <DropHint over={over} icon={drop.icon} label={drop.label} /> : null}
             {onStartAdding && !adding ? (
-              <button
-                type="button"
-                onClick={onStartAdding}
-                className={`${EMPTY_NOTE} w-full transition-colors hover:border-sky-500/50 hover:bg-sky-500/15 ${ACCENT_HOVER_TEXT.sky} focus-visible:border-sky-500/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60`}
-              >
-                <Icon name="Plus" className="size-3.5" aria-hidden />
-                New thread
-              </button>
+              <NewThreadButton onClick={onStartAdding} />
             ) : tasks.length === 0 && !adding && !awaitingDrop ? (
               <p className={EMPTY_NOTE}>No threads</p>
             ) : null}
             {column === "done" ? <DoneTasks tasks={tasks} renderCard={renderCard} /> : tasks.map(renderCard)}
             {inFlight}
-            {parked ? <ParkedSection tasks={parked.tasks} dragging={dragging} onDrop={parked.onDrop} renderCard={renderCard} /> : null}
+            {parked ? <ParkedSection tasks={parked.tasks} dragging={dragging} onDrop={parked.onDrop} renderCard={renderCard} onStartAdding={parked.onStartAdding} addForm={parked.addForm} /> : null}
             {remote}
           </>
         )}
@@ -431,7 +448,8 @@ export function BoardView({ api, domain, work, remote, radar }: {
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const draggingStartable = board?.tasks.some((task) => task.threadId === draggingId && task.startable) ?? false;
   const now = useNow(CLOCK_TICK_MS);
-  const [adding, setAdding] = useState(false);
+  /** Where the new-thread form is open: Queue starts the thread (as the working limit allows), Parked holds it. */
+  const [adding, setAdding] = useState<"queue" | "parked" | null>(null);
 
   const archiveTask = (threadId: string) => {
     rpc.call("board_remove_task", { threadId }).then(refetch, report);
@@ -484,7 +502,7 @@ export function BoardView({ api, domain, work, remote, radar }: {
     rpc.call("board_mark_unread", { threadId }).catch(report);
   };
 
-  const addTask = async (request: NewThreadRequest) => {
+  const addTask = async (request: NewThreadRequest, parked: boolean) => {
     const prompt = request.input.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n").trim();
     await rpc.call("board_spawn_task", {
       shortName: shortNameFromPrompt(prompt || "New thread"),
@@ -492,6 +510,7 @@ export function BoardView({ api, domain, work, remote, radar }: {
       projectId: request.projectId,
       composer: { ...request },
       domain,
+      parked,
     });
     refetch();
   };
@@ -560,7 +579,7 @@ export function BoardView({ api, domain, work, remote, radar }: {
       renderCard={renderCard}
       dragging={draggingId !== null}
       drop={column.id === "wip" && draggingStartable ? { label: "Drop to start now", icon: "Play", onDrop: startTask } : null}
-      onStartAdding={column.id === "queue" ? () => setAdding(true) : null}
+      onStartAdding={column.id === "queue" ? () => setAdding("queue") : null}
       headerControl={
         column.id === "wip" && board ? (
           <WipLimitControl
@@ -574,11 +593,20 @@ export function BoardView({ api, domain, work, remote, radar }: {
       tabs={column.id === "queue" && shopify ? <QueueTabs tabs={tabs} active={queueTab} onSelect={selectTab} /> : null}
       body={column.id === "queue" ? queueBody : null}
       inFlight={column.id === "queue" ? inFlightSection : null}
-      parked={column.id === "queue" ? { tasks: tasksIn("parked"), onDrop: dropPark } : null}
+      parked={
+        column.id === "queue"
+          ? {
+              tasks: tasksIn("parked"),
+              onDrop: dropPark,
+              onStartAdding: () => setAdding("parked"),
+              addForm: adding === "parked" ? <AddTaskForm onAdd={(request) => addTask(request, true)} onClose={() => setAdding(null)} onError={report} /> : null,
+            }
+          : null
+      }
       remote={column.id === "wip" && shopify ? <RemoteSection remote={remote} now={now} /> : null}
       addForm={
-        column.id === "queue" && adding ? (
-          <AddTaskForm onAdd={addTask} onClose={() => setAdding(false)} onError={report} />
+        column.id === "queue" && adding === "queue" ? (
+          <AddTaskForm onAdd={(request) => addTask(request, false)} onClose={() => setAdding(null)} onError={report} />
         ) : null
       }
     />

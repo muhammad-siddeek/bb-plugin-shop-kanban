@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.32.1
+
+- Each domain tab's badges count blocked and done threads instead of working
+  and blocked. The tab always keeps room for two two-digit badges, so its
+  width holds as counts come and go.
+- The domain tabs look like tabs: they stand on the title bar's bottom edge,
+  and the open one is a folder tab, outlined on three sides in the columns'
+  fill, joining the board below. The gamepad mark is filled, like the bag.
+- Parked has its own New thread button. A thread started there waits in
+  Parked, unstarted even with working slots free, until it's moved to Queue
+  (then the working limit decides) or started with play.
+
 ## 0.32.0
 
 - The board splits into two domains, one title-bar tab each: the Shopify bag

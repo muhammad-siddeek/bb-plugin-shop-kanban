@@ -24,7 +24,7 @@ import { createLabeler } from "./server/labeler";
 import { createThreadReader } from "./server/threads";
 import { createSearchIndex } from "./server/search";
 import { createRemoteWork } from "./server/remote";
-import { createWipLimit } from "./server/wip-limit";
+import { createWipLimit, parkedSubmission } from "./server/wip-limit";
 import { createWorkLists } from "./server/work";
 import { createSystemMonitor } from "./server/system";
 import { createAiUsage } from "./server/ai-usage";
@@ -86,7 +86,7 @@ export default async function plugin(bb: BbPluginApi) {
   const search = createSearchIndex(bb, reader);
   const work = createWorkLists(bb);
   const remote = createRemoteWork(bb);
-  const wip = createWipLimit(bb, reader, publishBoardChanged);
+  const wip = createWipLimit(bb, reader, publishBoardChanged, async (threadId) => threadId in (await readParked()));
   const system = createSystemMonitor(bb);
   const aiUsage = createAiUsage(bb);
   const radar = createRadar(bb, spawnTask);
@@ -143,6 +143,7 @@ export default async function plugin(bb: BbPluginApi) {
       else delete all[threadId];
       await bb.storage.kv.set(PARKED_KEY, all);
       publishBoardChanged();
+      wip.parkChanged(threadId);
     });
   }
 
@@ -344,9 +345,12 @@ export default async function plugin(bb: BbPluginApi) {
         : { projectId, environment: { type: "project-default" as const }, prompt: input.prompt.trim() }),
       title: titleChain,
       ...(input.parentThreadId ? { parentThreadId: input.parentThreadId } : {}),
+      // Tells the dispatch checkpoint the first message waits, before the thread's Parked entry can be stored.
+      ...(input.parked ? { pluginSubmission: parkedSubmission(bb.pluginId) } : {}),
       pluginMetadata: { boardTask: true, ...common, [domains.metadataKey]: domain },
     } as ThreadSpawnArgs);
     domains.created(thread.id, domain);
+    if (input.parked) await setParked(thread.id, true).catch((error: unknown) => logOnce(`parking a spawned thread failed: ${errorMessage(error)}`));
     onCreated?.(thread.id);
     const task: StoredTask = {
       threadId: thread.id,
@@ -361,8 +365,8 @@ export default async function plugin(bb: BbPluginApi) {
       logOnce(`storing a spawned thread failed: ${errorMessage(error)}`),
     );
     await preferThreadNotifications(task.threadId);
-    // A thread this new can't be parked yet.
-    return materialize(toLiveThread(thread), task, null, (await reader.listDescendants(thread.id)) ?? [], domain);
+    const parkedAt = input.parked ? ((await readParked())[thread.id] ?? null) : null;
+    return materialize(toLiveThread(thread), task, parkedAt, (await reader.listDescendants(thread.id)) ?? [], domain);
   }
 
   async function removeTask(threadId: string, archive = false): Promise<boolean> {

@@ -4,7 +4,7 @@ import { PLUGIN_NAME } from "../brand";
 import { BOARD_ATTR, BOARD_DOCKED_CLASS, BOARD_INSET_VAR, type BoardTask, type Domain } from "./model";
 import { useBoard, useDomain, useRemote, useWork, useRadar } from "./hooks";
 import { CountBadge, IconButton } from "./primitives";
-import { BOARD_PALETTE, COLUMN_INSET, ELEVATION, STATUS_META, type Dropdown } from "./styles";
+import { BOARD_PALETTE, COLUMN_INSET, ELEVATION, STATUS_META, TYPE, type Dropdown } from "./styles";
 import { BoardView } from "./column";
 import { ThreadSearch } from "./search";
 import { SystemMonitor } from "./system";
@@ -20,24 +20,14 @@ function ShopifyMark({ className }: { className: string }) {
   );
 }
 
-/** Lucide's `gamepad-2` (ISC license): bb's icon set has no gamepad. */
+/** Material Icons' `sports_esports` (Apache 2.0), filled like the bag: bb's icon set has no gamepad. */
+const GAMEPAD =
+  "M21.58 16.09l-1.09-7.66C20.21 6.46 18.52 5 16.53 5H7.47C5.48 5 3.79 6.46 3.51 8.43l-1.09 7.66C2.2 17.63 3.39 19 4.94 19c.68 0 1.32-.27 1.8-.75L9 16h6l2.25 2.25c.48.48 1.13.75 1.8.75 1.56 0 2.75-1.37 2.53-2.91zM11 11H9v2H8v-2H6v-1h2V8h1v2h2v1zm4-1c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1zm2 3c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1z";
+
 function GamepadMark({ className }: { className: string }) {
   return (
-    <svg
-      viewBox="0 0 24 24"
-      aria-hidden
-      className={`shrink-0 ${className}`}
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={2}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <line x1="6" x2="10" y1="11" y2="11" />
-      <line x1="8" x2="8" y1="9" y2="13" />
-      <line x1="15" x2="15.01" y1="12" y2="12" />
-      <line x1="18" x2="18.01" y1="10" y2="10" />
-      <path d="M17.32 5H6.68a4 4 0 0 0-3.978 3.59c-.006.052-.01.101-.017.152C2.604 9.416 2 14.456 2 16a3 3 0 0 0 3 3c1 0 1.5-.5 2-1l1.414-1.414A2 2 0 0 1 9.828 16h4.344a2 2 0 0 1 1.414.586L17 18c.5.5 1 1 2 1a3 3 0 0 0 3-3c0-1.545-.604-6.584-.685-7.258-.007-.05-.011-.1-.017-.151A4 4 0 0 0 17.32 5z" />
+    <svg viewBox="0 0 24 24" aria-hidden className={`shrink-0 ${className}`} fill="currentColor" fillRule="evenodd">
+      <path d={GAMEPAD} />
     </svg>
   );
 }
@@ -47,11 +37,14 @@ const DOMAIN_TABS: { id: Domain; label: string; Mark: typeof ShopifyMark }[] = [
   { id: "other", label: "Other", Mark: GamepadMark },
 ];
 
-/** The title bar's domain tabs: each its mark and, while any of its threads work or wait on the user, their counts. */
+/**
+ * The title bar's domain tabs: each its mark and its blocked and done counts. They stand on the bar's bottom edge; the
+ * open one is a folder tab, outlined on three sides and in the columns' fill, covering the edge to join the board.
+ */
 function DomainTabs({ tasks, active, onSelect }: { tasks: readonly BoardTask[]; active: Domain; onSelect: (domain: Domain) => void }) {
   return (
-    // The pad's negative margin keeps the first mark on the columns' content edge, where it sat before tabs.
-    <div role="tablist" aria-label="Domains" className="-ml-1.5 flex shrink-0 items-center gap-0.5">
+    // The negative margin keeps the first mark on the columns' content edge, where it sat before tabs.
+    <div role="tablist" aria-label="Domains" className="-ml-1.5 flex shrink-0 items-end gap-0.5 self-stretch">
       {DOMAIN_TABS.map(({ id, label, Mark }) => {
         const selected = id === active;
         return (
@@ -62,8 +55,10 @@ function DomainTabs({ tasks, active, onSelect }: { tasks: readonly BoardTask[]; 
             aria-selected={selected}
             title={label}
             onClick={() => onSelect(id)}
-            className={`flex h-7 shrink-0 items-center gap-1.5 rounded-md px-1.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 pointer-coarse:h-9 ${
-              selected ? "bg-muted text-foreground" : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+            className={`flex shrink-0 items-center gap-1.5 rounded-t-md border border-b-0 px-[5px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/60 ${
+              selected
+                ? "relative -mb-px h-[calc(2rem+1px)] border-border bg-[color-mix(in_oklab,var(--muted)_50%,var(--background))] text-foreground pointer-coarse:h-[calc(2.5rem+1px)]"
+                : "h-8 border-transparent text-muted-foreground hover:bg-muted/50 hover:text-foreground pointer-coarse:h-10"
             }`}
           >
             <Mark className="size-4" />
@@ -148,16 +143,17 @@ function useSidebarEdge(): number {
   return edge;
 }
 
+/** A domain tab's blocked and done badges. Its slot always fits two two-digit badges, so tabs keep their width. */
 function BoardStatus({ tasks }: { tasks: readonly BoardTask[] }) {
-  const working = tasks.filter((task) => task.status === "wip").length;
   const blocked = tasks.filter((task) => task.status === "blocked").length;
-  if (working + blocked === 0) return null;
-  const label = `${working} working, ${blocked} blocked`;
+  const done = tasks.filter((task) => task.status === "done").length;
+  const label = `${blocked} blocked, ${done} done`;
   return (
-    <span title={label} className="inline-flex shrink-0">
+    // In the badges' own type, so `ch` is their digit width: two badges of two digits (12px padding each) and the gap.
+    <span title={label} className={`inline-flex min-w-[calc(4ch+28px)] shrink-0 ${TYPE.badge}`}>
       <span aria-hidden className="inline-flex items-center gap-1">
-        <CountBadge count={working} tone={STATUS_META.wip.badge} />
         <CountBadge count={blocked} tone={STATUS_META.blocked.badge} />
+        <CountBadge count={done} tone={STATUS_META.done.badge} />
       </span>
       <span className="sr-only">{label}</span>
     </span>

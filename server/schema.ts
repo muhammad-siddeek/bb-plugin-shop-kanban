@@ -350,6 +350,8 @@ export const rpcContract = {
       composer: z.looseObject({ projectId: z.string(), input: z.array(z.unknown()).min(1) }).optional(),
       /** The tab the thread was started from. */
       domain: domainSchema.optional(),
+      /** Create it in Parked: it waits, even with working slots free, until it's moved to Queue or sent now. */
+      parked: z.boolean().optional(),
     }),
     output: boardTaskSchema,
   },

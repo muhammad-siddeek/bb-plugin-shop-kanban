@@ -15,6 +15,8 @@ export type TaskSpawn = {
   composer?: Record<string, unknown>;
   /** The tab it was started from; otherwise its parent's domain, or the open tab's. */
   domain?: Domain;
+  /** Created in Parked: it doesn't start, even with working slots free, until it's moved to Queue or sent now. */
+  parked?: boolean;
 };
 
 type BoardApi = {

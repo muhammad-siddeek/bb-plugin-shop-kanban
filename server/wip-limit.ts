@@ -10,8 +10,18 @@ import type { ThreadReader } from "./threads";
 // sends it once a slot frees. Work inside a working card (steers, follow-ups, child threads) proceeds: the card already holds its slot,
 // and holding a child its parent waits on would stall the card. The user's Send now on a queued row skips the
 // checkpoint by bb's design.
+//
+// The same checkpoint holds a parked thread that hasn't started: a thread created straight into Parked waits as a
+// queued row even with slots free, until it's unparked (then the limit decides) or sent now.
 
 const LIMIT_KEY = "wip-limit-v1";
+/** Why a parked thread's first message waits; also how its row is told apart from those the limit holds. */
+const PARKED_REASON = "Parked: move it to Queue to start it";
+
+/** The `threads.spawn` submission that creates a thread parked, so its first dispatch already waits. */
+export function parkedSubmission(pluginId: string) {
+  return { pluginId, data: { parked: true } };
+}
 /**
  * A card let through this recently counts as working before its thread shows it: bb flips an idle thread a follow-up
  * reaches to active only after the checkpoint's lock releases, so the next message decided could miss it. The grace
@@ -35,7 +45,7 @@ const FREEING_EVENTS = [
   "experimental_thread.parentChanged",
 ] as const satisfies readonly PluginThreadEventName[];
 
-export function createWipLimit(bb: BbPluginApi, reader: ThreadReader, onChange: () => void) {
+export function createWipLimit(bb: BbPluginApi, reader: ThreadReader, onChange: () => void, isParked: (threadId: string) => Promise<boolean>) {
   let limit: number | null = null;
   const loaded = bb.storage.kv
     .get<unknown>(LIMIT_KEY)
@@ -48,6 +58,8 @@ export function createWipLimit(bb: BbPluginApi, reader: ThreadReader, onChange: 
   const admitted = new Map<string, { at: number; threadId: string }>();
   /** Queued rows held by this plugin: row id → thread id. */
   const waiting = new Map<string, string>();
+  /** Threads created parked whose Parked entry isn't stored yet: a recheck in between must still hold them. */
+  const parking = new Set<string>();
 
   function recheck() {
     void bb.experimental_hooks.recheck("message.dispatch").catch(() => undefined);
@@ -77,6 +89,13 @@ export function createWipLimit(bb: BbPluginApi, reader: ThreadReader, onChange: 
 
   bb.experimental_hooks.on("message.dispatch", async (ctx) => {
     if (ctx.attempt === "join-turn") return { action: "proceed" };
+    // Only a thread that hasn't started (bb's `pending`) is held for being parked: a follow-up to a parked thread goes.
+    if (ctx.thread.status === "pending") {
+      const submission = ctx.experimental_submission;
+      const data = submission?.pluginId === bb.pluginId ? submission.data : null;
+      if (data !== null && typeof data === "object" && !Array.isArray(data) && data.parked === true) parking.add(ctx.thread.id);
+      if (parking.has(ctx.thread.id) || (await isParked(ctx.thread.id))) return { action: "wait", reason: PARKED_REASON };
+    }
     await loaded;
     const max = limit;
     if (max === null) return { action: "proceed" };
@@ -102,8 +121,9 @@ export function createWipLimit(bb: BbPluginApi, reader: ThreadReader, onChange: 
     return { action: "proceed" };
   });
 
-  function track(entry: { id: string; threadId: string; waitingOn: { kind: string; pluginId?: string } | null }) {
-    const ours = entry.waitingOn?.kind === "plugin" && entry.waitingOn.pluginId === bb.pluginId;
+  function track(entry: { id: string; threadId: string; waitingOn: { kind: string; pluginId?: string; reason?: string } | null }) {
+    // Rows held for being parked aren't waiting on the limit.
+    const ours = entry.waitingOn?.kind === "plugin" && entry.waitingOn.pluginId === bb.pluginId && !entry.waitingOn.reason?.startsWith(PARKED_REASON);
     const changed = ours !== waiting.has(entry.id);
     if (ours) waiting.set(entry.id, entry.threadId);
     else waiting.delete(entry.id);
@@ -148,6 +168,11 @@ export function createWipLimit(bb: BbPluginApi, reader: ThreadReader, onChange: 
       // A higher limit or none lets held messages go now; a lower one holds only new starts, never working threads.
       recheck();
       return view();
+    },
+    /** A thread's Parked entry was stored or dropped: an unparked thread that hasn't started is decided again now. */
+    parkChanged(threadId: string) {
+      parking.delete(threadId);
+      recheck();
     },
     dispose() {
       clearInterval(timer);

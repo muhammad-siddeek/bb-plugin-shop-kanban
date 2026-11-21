@@ -16,8 +16,8 @@ columns, or up over bb's page while the board is hidden.
 ## Domains
 
 The title bar starts with two tabs, each a separate board: **Shopify** (the
-Shopify bag) and **Other** (a gamepad). Each tab shows its own count badges
-while any of its threads work or wait on you, and clicking one shows the
+Shopify bag) and **Other** (a gamepad). Each tab shows its blocked threads in
+red and its done threads in green, and clicking one shows the
 board if it was hidden. Shopify has every column and section below; Other has
 only its threads in Queue (Parked included), Working and Done, with no Radar,
 Out, Outgoing PRs or Remote. The working limit spans both: its picker counts
@@ -49,7 +49,8 @@ thread (see Parked) and starting a waiting one (see Working limit).
   background work included. Blocked threads sit at the top of Working as red cards: the
   thread is idle and needs you (a pending interaction, an error, or a last
   reply that asks a question). Each domain tab in the title bar counts its
-  working threads in amber and blocked threads in red, each gone at zero. The
+  blocked threads in red and done threads in green, each gone at zero; the tab
+  keeps room for both. The
   Working limit and the waiting count show only in Working's header.
 - **Remote** (a section at the bottom of Working): Shopify River sessions and
   Torrent tickets you're part of that are live, one line each. River sessions
@@ -75,7 +76,10 @@ thread (see Parked) and starting a waiting one (see Working limit).
   card and press the pause button; a card waiting to start has a play button
   there instead, so drag it. The return button on a parked card unparks it.
   Parked cards keep their status (Completed, Asked a question, ...) and leave
-  Parked on their own when the thread starts working again.
+  Parked on their own when the thread starts working again. Parked's own New
+  thread button starts a thread straight into Parked: its first message waits
+  there, even with working slots free, until you move the card to Queue (then
+  the working limit decides) or press play.
 
 ## Radar
 
