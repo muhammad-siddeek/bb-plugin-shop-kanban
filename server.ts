@@ -11,6 +11,7 @@ import {
   STATUS_COLUMN,
   storedTaskSchema,
   type BoardTask,
+  type Domain,
   type Result,
   type Status,
   type StoredTask,
@@ -28,6 +29,7 @@ import { createWorkLists } from "./server/work";
 import { createSystemMonitor } from "./server/system";
 import { createAiUsage } from "./server/ai-usage";
 import { createRadar } from "./server/radar";
+import { createDomains } from "./server/domains";
 
 type ThreadSpawnArgs = Parameters<BbPluginApi["sdk"]["threads"]["spawn"]>[0];
 
@@ -88,6 +90,7 @@ export default async function plugin(bb: BbPluginApi) {
   const system = createSystemMonitor(bb);
   const aiUsage = createAiUsage(bb);
   const radar = createRadar(bb, spawnTask);
+  const domains = createDomains(bb, publishBoardChanged);
   const logOnce = throttledLog(bb, LOG_REPEAT_MS);
 
   function publishBoardChanged() {
@@ -155,6 +158,7 @@ export default async function plugin(bb: BbPluginApi) {
     stored: StoredTask | undefined,
     parkedAt: number | null,
     descendants: LiveThread[],
+    domain: Domain,
   ): Promise<BoardTask> {
     const running = isRunningSelf(thread) || descendants.some(isRunningSelf);
     const [details, all, session] = await Promise.all([
@@ -187,7 +191,7 @@ export default async function plugin(bb: BbPluginApi) {
       statusReason: derived.status === "queue" && wip.isWaiting(thread.id) ? "Waiting to start" : derived.reason,
       startable: derived.status === "queue" && thread.queuedWork === "waiting",
       unread: thread.latestAttentionAt !== null && (thread.lastReadAt === null || thread.latestAttentionAt > thread.lastReadAt),
-      workstream: label.workstream,
+      domain,
       createdAt: stored?.createdAt ?? iso(thread.createdAt),
       updatedAt: iso(Math.max(thread.updatedAt ?? 0, stored ? Date.parse(stored.updatedAt) || 0 : 0) || null),
       lastUserInputAt: details.lastUserInputAt === null ? null : iso(details.lastUserInputAt),
@@ -220,7 +224,7 @@ export default async function plugin(bb: BbPluginApi) {
       }),
       reader.listAllThreads(),
     ]);
-    if (threads === null) return { columns, tasks: [], wipLimit: wip.view() };
+    if (threads === null) return { columns, tasks: [], wipLimit: wip.view(), domain: await domains.view() };
 
     const ids = new Set(threads.map((thread) => thread.id));
     const children = new Map<string, LiveThread[]>();
@@ -245,15 +249,20 @@ export default async function plugin(bb: BbPluginApi) {
     reader.retain(ids);
     sessions.retain(ids);
 
-    const tasks = await Promise.all(
-      roots.map((thread) => materialize(thread, stored[thread.id], parked[thread.id] ?? null, descendantsOf(children, thread.id))),
-    );
+    const cardOf = (thread: LiveThread, domain: Domain) =>
+      materialize(thread, stored[thread.id], parked[thread.id] ?? null, descendantsOf(children, thread.id), domain);
+    // Threads from before domains: the ones Done listed under Other move to the Other tab, the rest stay on Shopify.
+    const domainOf = await domains.assign(threads, async (shopifyLabeled) => {
+      const cards = await Promise.all(roots.filter((thread) => !shopifyLabeled.has(thread.id)).map((thread) => cardOf(thread, "shopify")));
+      return new Set(cards.filter((card) => card.column === "done").map((card) => card.threadId));
+    });
+    const tasks = await Promise.all(roots.map((thread) => cardOf(thread, domainOf.get(thread.id) ?? "shopify")));
 
     // Oldest first (earlier timestamp at the top): working threads by when they started, the rest by last update.
     const sortTime = (task: BoardTask) => Date.parse(task.status === "wip" ? task.createdAt : task.updatedAt) || 0;
     tasks.sort((a, b) => sortTime(a) - sortTime(b));
 
-    return { columns, tasks, wipLimit: wip.view() };
+    return { columns, tasks, wipLimit: wip.view(), domain: await domains.view() };
   }
 
   /** The thread's row; throws when it isn't on the board. */
@@ -265,14 +274,14 @@ export default async function plugin(bb: BbPluginApi) {
 
   /** Park an idle thread, or unpark one; returns its card. A working thread can't be parked. */
   async function parkTask(threadId: string, parked: boolean): Promise<BoardTask> {
-    const [thread, descendants] = await Promise.all([boardThread(threadId), reader.listDescendants(threadId)]);
+    const [thread, descendants, domain] = await Promise.all([boardThread(threadId), reader.listDescendants(threadId), domains.of(threadId)]);
     const children = descendants ?? [];
     if (parked && isWorking(thread, children)) {
       throw new Error(`${thread.title ?? threadId} is working; park it once it settles.`);
     }
     await setParked(threadId, parked);
     const [stored, parkedAll] = await Promise.all([readTasks(), readParked()]);
-    return materialize(thread, stored[threadId], parkedAll[threadId] ?? null, children);
+    return materialize(thread, stored[threadId], parkedAll[threadId] ?? null, children, domain);
   }
 
   /**
@@ -292,13 +301,14 @@ export default async function plugin(bb: BbPluginApi) {
         throw new Error(`bb couldn't send it yet${why ? `: ${why}` : ""}.`);
       }
     }
-    const [live, descendants, stored, parkedAll] = await Promise.all([
+    const [live, descendants, stored, parkedAll, domain] = await Promise.all([
       reader.threadsById([threadId]).then((threads) => threads.get(threadId) ?? thread),
       reader.listDescendants(threadId),
       readTasks(),
       readParked(),
+      domains.of(threadId),
     ]);
-    const card = await materialize(live, stored[threadId], parkedAll[threadId] ?? null, descendants ?? []);
+    const card = await materialize(live, stored[threadId], parkedAll[threadId] ?? null, descendants ?? [], domain);
     // Nothing to send is fine when the card already left Queue (a second click, or a working slot freed meanwhile).
     if (!row && card.status === "queue") throw new Error("Nothing is waiting to be sent in this thread.");
     return card;
@@ -320,6 +330,7 @@ export default async function plugin(bb: BbPluginApi) {
     const parent = await reader.titleChainForParent(input.parentThreadId);
     const titleChain = parent.titleChain ? `${parent.titleChain} > ${shortName}` : shortName;
     const projectId = input.composer ? String(input.composer.projectId) : input.projectId ?? parent.projectId ?? (await defaultProjectId());
+    const domain = input.domain ?? (await domains.forNewThread(input.parentThreadId ?? null));
     const now = nowIso();
     const common = {
       shortName,
@@ -333,8 +344,9 @@ export default async function plugin(bb: BbPluginApi) {
         : { projectId, environment: { type: "project-default" as const }, prompt: input.prompt.trim() }),
       title: titleChain,
       ...(input.parentThreadId ? { parentThreadId: input.parentThreadId } : {}),
-      pluginMetadata: { boardTask: true, ...common },
+      pluginMetadata: { boardTask: true, ...common, [domains.metadataKey]: domain },
     } as ThreadSpawnArgs);
+    domains.created(thread.id, domain);
     onCreated?.(thread.id);
     const task: StoredTask = {
       threadId: thread.id,
@@ -350,7 +362,7 @@ export default async function plugin(bb: BbPluginApi) {
     );
     await preferThreadNotifications(task.threadId);
     // A thread this new can't be parked yet.
-    return materialize(toLiveThread(thread), task, null, (await reader.listDescendants(thread.id)) ?? []);
+    return materialize(toLiveThread(thread), task, null, (await reader.listDescendants(thread.id)) ?? [], domain);
   }
 
   async function removeTask(threadId: string, archive = false): Promise<boolean> {
@@ -394,6 +406,7 @@ export default async function plugin(bb: BbPluginApi) {
     board_mark_read: ({ threadId }) => markRead(threadId, true),
     board_mark_unread: ({ threadId }) => markRead(threadId, false),
     board_set_wip_limit: ({ limit }) => wip.setLimit(limit),
+    board_set_domain: ({ domain }) => domains.setActive(domain),
     board_search: ({ query }) => search.search(query),
     work_list: () => work.list(),
     work_mark: ({ id, mark, on }) => work.mark(id, mark, on),
@@ -414,6 +427,12 @@ export default async function plugin(bb: BbPluginApi) {
     );
   }
 
+  // A thread started outside the board (bb's New thread page, an agent's child thread) joins its domain when created,
+  // not when the board next reads, by which time the user may have switched tabs.
+  on("thread.created", async ({ thread }) => {
+    await domains.claim(thread.id, thread.parentThreadId ?? null);
+  });
+
   on("thread.active", async ({ thread }) => {
     // Working again takes a thread out of Parked; when it settles it goes where its new state says.
     await setParked(thread.id, false);
@@ -428,6 +447,7 @@ export default async function plugin(bb: BbPluginApi) {
 
   on("thread.deleted", async ({ thread }) => {
     reader.forget(thread.id);
+    domains.forget(thread.id);
     await labels.forget(thread.id);
     await removeTask(thread.id);
   });

@@ -14,7 +14,7 @@ afterEach(cleanup);
 const task: BoardTask = {
   threadId: "thread-test", shortName: "[test] Finish task", titleChain: "[test] Finish task", status: "done", column: "done",
   parentThreadId: null, projectId: null, description: null, result: null, note: "Finished", childCount: 0, runningChildCount: 0,
-  statusReason: "Completed", startable: false, unread: false, workstream: "other", createdAt: at, updatedAt: at,
+  statusReason: "Completed", startable: false, unread: false, domain: "shopify", createdAt: at, updatedAt: at,
   lastUserInputAt: at, completedAt: at, missingThread: false, thread: null, session: null,
 };
 const item: WorkItem = {

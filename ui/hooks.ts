@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRealtime, useRpc, type NewThreadRequest } from "@get-bb/plugin-sdk/app";
 import type { rpcContract } from "../server/schema";
-import { errorMessage, type RemoteState, type WorkMark } from "./model";
+import { errorMessage, type Domain, type RemoteState, type WorkMark } from "./model";
 import type { RadarState } from "../server/radar-schema";
 
 const BOARD_REFRESH_MS = 1000;
@@ -116,6 +116,29 @@ export function usePending<State, Value>(state: State | null, pending: (value: V
 export function useBoard() {
   const { rpc, value: board, error, report, refetch } = useServerList("board_list", BOARD_REFRESH_MS, "board-changed");
   return { rpc, board, error, report, refetch };
+}
+
+/**
+ * The open domain tab and a setter. The server keeps it, so threads started outside the board join the tab the user
+ * is looking at; a tab just chosen shows at once, until the server's board agrees or the change fails.
+ */
+export function useDomain({ rpc, board, report, refetch }: BoardApi) {
+  const [chosen, setChosen] = useState<Domain | null>(null);
+  const served = board?.domain ?? null;
+  useEffect(() => {
+    if (chosen !== null && served === chosen) setChosen(null);
+  }, [chosen, served]);
+  const select = useCallback(
+    (domain: Domain) => {
+      setChosen(domain);
+      rpc.call("board_set_domain", { domain }).then(refetch, (cause) => {
+        setChosen(null);
+        report(cause);
+      });
+    },
+    [rpc, refetch, report],
+  );
+  return [chosen ?? served ?? "shopify", select] as const;
 }
 
 export function useNow(intervalMs: number): number {

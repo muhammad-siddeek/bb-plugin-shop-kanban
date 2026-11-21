@@ -1,8 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { CSSProperties, KeyboardEvent, PointerEvent } from "react";
 import { PLUGIN_NAME } from "../brand";
-import { BOARD_ATTR, BOARD_DOCKED_CLASS, BOARD_INSET_VAR, type BoardTask } from "./model";
-import { useBoard, useRemote, useWork, useRadar } from "./hooks";
+import { BOARD_ATTR, BOARD_DOCKED_CLASS, BOARD_INSET_VAR, type BoardTask, type Domain } from "./model";
+import { useBoard, useDomain, useRemote, useWork, useRadar } from "./hooks";
 import { CountBadge, IconButton } from "./primitives";
 import { BOARD_PALETTE, COLUMN_INSET, ELEVATION, STATUS_META, type Dropdown } from "./styles";
 import { BoardView } from "./column";
@@ -14,9 +14,65 @@ const SHOPIFY_BAG =
 
 function ShopifyMark({ className }: { className: string }) {
   return (
-    <svg viewBox="0 0 24 24" role="img" aria-label={PLUGIN_NAME} className={`shrink-0 text-white ${className}`} fill="currentColor">
+    <svg viewBox="0 0 24 24" aria-hidden className={`shrink-0 ${className}`} fill="currentColor">
       <path d={SHOPIFY_BAG} />
     </svg>
+  );
+}
+
+/** Lucide's `gamepad-2` (ISC license): bb's icon set has no gamepad. */
+function GamepadMark({ className }: { className: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      aria-hidden
+      className={`shrink-0 ${className}`}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <line x1="6" x2="10" y1="11" y2="11" />
+      <line x1="8" x2="8" y1="9" y2="13" />
+      <line x1="15" x2="15.01" y1="12" y2="12" />
+      <line x1="18" x2="18.01" y1="10" y2="10" />
+      <path d="M17.32 5H6.68a4 4 0 0 0-3.978 3.59c-.006.052-.01.101-.017.152C2.604 9.416 2 14.456 2 16a3 3 0 0 0 3 3c1 0 1.5-.5 2-1l1.414-1.414A2 2 0 0 1 9.828 16h4.344a2 2 0 0 1 1.414.586L17 18c.5.5 1 1 2 1a3 3 0 0 0 3-3c0-1.545-.604-6.584-.685-7.258-.007-.05-.011-.1-.017-.151A4 4 0 0 0 17.32 5z" />
+    </svg>
+  );
+}
+
+const DOMAIN_TABS: { id: Domain; label: string; Mark: typeof ShopifyMark }[] = [
+  { id: "shopify", label: PLUGIN_NAME, Mark: ShopifyMark },
+  { id: "other", label: "Other", Mark: GamepadMark },
+];
+
+/** The title bar's domain tabs: each its mark and, while any of its threads work or wait on the user, their counts. */
+function DomainTabs({ tasks, active, onSelect }: { tasks: readonly BoardTask[]; active: Domain; onSelect: (domain: Domain) => void }) {
+  return (
+    // The pad's negative margin keeps the first mark on the columns' content edge, where it sat before tabs.
+    <div role="tablist" aria-label="Domains" className="-ml-1.5 flex shrink-0 items-center gap-0.5">
+      {DOMAIN_TABS.map(({ id, label, Mark }) => {
+        const selected = id === active;
+        return (
+          <button
+            key={id}
+            type="button"
+            role="tab"
+            aria-selected={selected}
+            title={label}
+            onClick={() => onSelect(id)}
+            className={`flex h-7 shrink-0 items-center gap-1.5 rounded-md px-1.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 pointer-coarse:h-9 ${
+              selected ? "bg-muted text-foreground" : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+            }`}
+          >
+            <Mark className="size-4" />
+            <span className="sr-only">{label}</span>
+            <BoardStatus tasks={tasks.filter((task) => task.domain === id)} />
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
@@ -191,6 +247,7 @@ export function BoardOverlay() {
   const sidebarEdge = useSidebarEdge();
   const keyboard = useSoftKeyboard(root);
   const api = useBoard();
+  const [domain, selectDomain] = useDomain(api);
   const work = useWork();
   const remote = useRemote();
   const radar = useRadar();
@@ -307,8 +364,14 @@ export function BoardOverlay() {
 
       {/* Stays mounted while the columns are hidden, so a search in progress survives. */}
       <div className={`${BAR_ROW} ${COLUMN_INSET} ${open ? "border-b border-border" : ""}`}>
-        <ShopifyMark className="size-4" />
-        <BoardStatus tasks={tasks} />
+        <DomainTabs
+          tasks={tasks}
+          active={domain}
+          onSelect={(next) => {
+            selectDomain(next);
+            setOpen(true);
+          }}
+        />
         <div className="ml-1 min-w-0 max-lg:ml-0 max-lg:flex-1">
           <ThreadSearch dropdown={dropdown} />
         </div>
@@ -322,7 +385,7 @@ export function BoardOverlay() {
 
       {open ? (
         <div className="min-h-0 flex-1">
-          <BoardView api={api} work={work} remote={remote} radar={radar} />
+          <BoardView api={api} domain={domain} work={work} remote={remote} radar={radar} />
         </div>
       ) : null}
     </div>

@@ -26,8 +26,6 @@ const cardLabelSchema = z.object({
   summarySig: z.string(),
   summary: z.string().nullable(),
   needsInput: z.boolean().nullable(),
-  /** Absent on labels written before the Done column split; refreshed without changing the title. */
-  workstream: z.enum(["shopify", "other"]).optional(),
   /** Title the board last wrote to the bb thread, to tell our renames from the user's. */
   appliedTitle: z.string().optional(),
   /** The title our last rename replaced; seeing it again just means a stale snapshot. */
@@ -223,7 +221,6 @@ export function createLabeler(bb: BbPluginApi, onChange: () => void) {
         summarySig: job.summarySig,
         summary: parsed.summary,
         needsInput: running ? null : parsed.needsInput,
-        workstream: parsed.workstream,
       };
       failures.delete(thread.id);
       persist();
@@ -258,7 +255,7 @@ export function createLabeler(bb: BbPluginApi, onChange: () => void) {
     // A title written before the board could read the whole opening message is a guess: don't show it to the
     // labeler as the title to keep. Labels from before 0.16 carry no firstSig and never saw attached text.
     const firstChanged = labeled?.firstSig !== undefined ? labeled.firstSig !== firstSig : READ_ATTACHMENT.test(details.firstUserPrompt ?? "");
-    const fresh = labeled?.titleSig === titleSig && labeled.summarySig === summarySig && labeled.workstream !== undefined;
+    const fresh = labeled?.titleSig === titleSig && labeled.summarySig === summarySig;
     const failure = failures.get(thread.id);
     const backingOff = failure?.sig === `${titleSig}|${summarySig}` && Date.now() - failure.at < RETRY_MS;
     const worthLabeling = running || Boolean(details.output?.trim()) || Boolean(details.lastUserPrompt);
@@ -273,10 +270,9 @@ export function createLabeler(bb: BbPluginApi, onChange: () => void) {
     const shown = fresh || backingOff ? labeled : undefined;
     const summary = shown?.summary ?? null;
     const needsInput = running ? null : (shown?.needsInput ?? null);
-    const workstream = labeled?.workstream ?? null;
-    if (current?.userTitled && thread.title) return { title: thread.title, summary, needsInput, workstream };
+    if (current?.userTitled && thread.title) return { title: thread.title, summary, needsInput };
     if (title) syncThreadTitle(thread, title, all);
-    return { title, summary, needsInput, workstream };
+    return { title, summary, needsInput };
   }
 
   /**

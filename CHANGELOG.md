@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.32.0
+
+- The board splits into two domains, one title-bar tab each: the Shopify bag
+  (the full board) and a gamepad for everything else, which has only Queue
+  (Parked included), Working and Done: no Radar, Out, Outgoing PRs or Remote.
+  Each tab carries its own working and blocked badges.
+- A thread joins a domain when it is created and never moves: the open tab's,
+  or its parent's for a child thread. Radar submissions always join Shopify.
+  The domain lives in the thread's plugin metadata. On upgrade, the threads
+  Done listed under Other move to the gamepad tab; every other thread stays
+  on Shopify.
+- Done has no Other section, and the labeler no longer classifies threads as
+  Shopify work or other. Instead Done splits by read state: read cards first,
+  then an Unread section, each newest finish first. Done's header counts every
+  card, read and unread; the Unread section counts the unread ones.
+
 ## 0.31.0
 
 - Every dollar figure is a whole number, rounded up: cards, the title bar,

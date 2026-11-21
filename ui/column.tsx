@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { DragEvent, ReactElement } from "react";
 import { experimental_Icon as Icon, experimental_NewThreadComposer as NewThreadComposer, experimental_useSidebarThreads, useBbContext, useBbNavigate, useSdk, type NewThreadRequest } from "@get-bb/plugin-sdk/app";
 import { PLUGIN_SLUG } from "../brand";
-import { CLOCK_TICK_MS, THREAD_DRAG_TYPE, groupTasksByColumn, shortNameFromPrompt, type BoardColumn, type BoardState, type BoardTask } from "./model";
+import { CLOCK_TICK_MS, THREAD_DRAG_TYPE, groupTasksByColumn, shortNameFromPrompt, type BoardColumn, type BoardState, type BoardTask, type Domain } from "./model";
 import { useNow, usePending, type BoardApi, type RemoteApi, type WorkApi, type RadarApi } from "./hooks";
 import { TaskCard } from "./card";
 import { RemoteSection } from "./remote";
@@ -289,17 +289,17 @@ function ParkedSection({ tasks, dragging, onDrop, renderCard }: {
   );
 }
 
-/** Work results on top with no header, then Other; both keep the column's completion order, read or not. */
+/** Read results on top with no header, then Unread; both keep the column's completion order. */
 function DoneTasks({ tasks, renderCard }: { tasks: BoardTask[]; renderCard: (task: BoardTask) => ReactElement }) {
-  const work = tasks.filter((task) => task.workstream === "shopify");
-  const other = tasks.filter((task) => task.workstream !== "shopify");
+  const read = tasks.filter((task) => !task.unread);
+  const unread = tasks.filter((task) => task.unread);
   return (
     <>
-      {work.map(renderCard)}
-      {other.length > 0 ? (
-        <div role="group" aria-label="Other" className="space-y-1 pt-1">
-          <GroupHeader title="Other" count={other.length} />
-          {other.map(renderCard)}
+      {read.map(renderCard)}
+      {unread.length > 0 ? (
+        <div role="group" aria-label="Unread" className="space-y-1 pt-1">
+          <GroupHeader title="Unread" count={unread.length} countTone={UNREAD_BADGE.emerald} />
+          {unread.map(renderCard)}
         </div>
       ) : null}
     </>
@@ -390,7 +390,17 @@ function BoardColumnView({ column, title, tasks, count, renderCard, dragging, dr
   );
 }
 
-export function BoardView({ api, work, remote, radar }: { api: BoardApi; work: WorkApi; remote: RemoteApi; radar: RadarApi }) {
+/**
+ * The open domain's columns. Shopify has the full board; Other is just its threads in Queue (Parked included), Working
+ * and Done, with no Radar, pull requests or Remote.
+ */
+export function BoardView({ api, domain, work, remote, radar }: {
+  api: BoardApi;
+  domain: Domain;
+  work: WorkApi;
+  remote: RemoteApi;
+  radar: RadarApi;
+}) {
   const context = useBbContext();
   const selectedThreadId = context.threadId;
   const navigate = useBbNavigate();
@@ -403,12 +413,12 @@ export function BoardView({ api, work, remote, radar }: { api: BoardApi; work: W
     const live = new Map(liveThreads.map((thread) => [thread.id, thread]));
     return {
       ...board,
-      tasks: board.tasks.map((task) => {
+      tasks: board.tasks.filter((task) => task.domain === domain).map((task) => {
         const thread = live.get(task.threadId);
         return thread ? { ...task, unread: thread.isUnread, completedAt: new Date(thread.latestAttentionAt).toISOString() } : task;
       }),
     };
-  }, [board, liveThreads]);
+  }, [board, liveThreads, domain]);
   // Cards parked from the board move to Parked right away, until the server's board has them parked too.
   const [parkedLocally, changeParked] = usePending<BoardState, true>(board, (_, id, served) =>
     served.tasks.some((task) => task.threadId === id && task.status !== "parked"),
@@ -481,6 +491,7 @@ export function BoardView({ api, work, remote, radar }: { api: BoardApi; work: W
       prompt: prompt || "New thread",
       projectId: request.projectId,
       composer: { ...request },
+      domain,
     });
     refetch();
   };
@@ -496,6 +507,7 @@ export function BoardView({ api, work, remote, radar }: { api: BoardApi; work: W
     writeStored(QUEUE_TAB_KEY, tab);
   };
   const tasksIn = (column: BoardColumn) => grouped.get(column) ?? [];
+  const shopify = domain === "shopify";
   // Out shows while its lists load, and once Shipped has a search configured; Queue always shows.
   const outgoingShown = !workItems.state || workItems.lists.includes("shipped");
   const tabCounts: Record<QueueTab, number> = {
@@ -504,9 +516,9 @@ export function BoardView({ api, work, remote, radar }: { api: BoardApi; work: W
     outgoing: workItems.byList.shipped.length,
   };
   const tabs = QUEUE_TABS.filter((tab) => tab.id !== "outgoing" || outgoingShown).map((tab) => ({ ...tab, count: tabCounts[tab.id] }));
-  const queueTab = chosenTab === "outgoing" && !outgoingShown ? "queue" : chosenTab;
+  const queueTab = !shopify || (chosenTab === "outgoing" && !outgoingShown) ? "queue" : chosenTab;
   // Outgoing PRs show once their search is configured.
-  const inFlightSection = workItems.lists.includes("open") ? (
+  const inFlightSection = shopify && workItems.lists.includes("open") ? (
     <div className="pt-1">
       <WorkGroup list="open" work={workItems} now={now} />
     </div>
@@ -533,9 +545,10 @@ export function BoardView({ api, work, remote, radar }: { api: BoardApi; work: W
     />
   );
 
-  const unreadDone = tasksIn("done").filter((task) => task.unread).length;
   // Threads holding a working slot; Blocked ones sit in the column too but don't count against the limit.
   const working = tasksIn("wip").filter((task) => task.status === "wip").length;
+  // The limit spans both domains, so its picker counts every domain's working threads.
+  const workingEverywhere = board?.tasks.filter((task) => task.status === "wip").length ?? 0;
 
   const renderColumn = (column: { id: BoardColumn; title: string }) => (
     <BoardColumnView
@@ -543,7 +556,7 @@ export function BoardView({ api, work, remote, radar }: { api: BoardApi; work: W
       column={column.id}
       title={column.title}
       tasks={tasksIn(column.id)}
-      count={column.id === "wip" ? working : column.id === "done" ? unreadDone : tasksIn(column.id).length}
+      count={column.id === "wip" ? working : tasksIn(column.id).length}
       renderCard={renderCard}
       dragging={draggingId !== null}
       drop={column.id === "wip" && draggingStartable ? { label: "Drop to start now", icon: "Play", onDrop: startTask } : null}
@@ -552,17 +565,17 @@ export function BoardView({ api, work, remote, radar }: { api: BoardApi; work: W
         column.id === "wip" && board ? (
           <WipLimitControl
             limit={board.wipLimit.limit}
-            working={working}
+            working={workingEverywhere}
             waiting={board.wipLimit.waiting}
             onChange={setWipLimit}
           />
         ) : null
       }
-      tabs={column.id === "queue" ? <QueueTabs tabs={tabs} active={queueTab} onSelect={selectTab} /> : null}
+      tabs={column.id === "queue" && shopify ? <QueueTabs tabs={tabs} active={queueTab} onSelect={selectTab} /> : null}
       body={column.id === "queue" ? queueBody : null}
       inFlight={column.id === "queue" ? inFlightSection : null}
       parked={column.id === "queue" ? { tasks: tasksIn("parked"), onDrop: dropPark } : null}
-      remote={column.id === "wip" ? <RemoteSection remote={remote} now={now} /> : null}
+      remote={column.id === "wip" && shopify ? <RemoteSection remote={remote} now={now} /> : null}
       addForm={
         column.id === "queue" && adding ? (
           <AddTaskForm onAdd={addTask} onClose={() => setAdding(false)} onError={report} />

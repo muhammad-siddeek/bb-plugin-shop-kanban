@@ -161,7 +161,7 @@ export function createRadar(bb: BbPluginApi, spawn: Spawn): RadarService {
       if (!prompt.trim()) throw new Error("The implementation request cannot be empty.");
       let threadId: string | null = null;
       try {
-        await spawn({ shortName: JSON.parse(row.payload).title.slice(0, 40), prompt, composer }, (created) => {
+        await spawn({ shortName: JSON.parse(row.payload).title.slice(0, 40), prompt, composer, domain: "shopify" }, (created) => {
           threadId = created;
           db.prepare("UPDATE radar_items SET state='read', thread_id=? WHERE id=?").run(created, id);
           changed();

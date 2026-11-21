@@ -18,6 +18,13 @@ const resultSchema = z.enum(["success", "failed"]);
 export type Result = z.infer<typeof resultSchema>;
 
 /**
+ * The board's domains, one title-bar tab each: Shopify work (the Shopify bag) and everything else (the gamepad). A
+ * thread joins one when it is created and never moves.
+ */
+export const domainSchema = z.enum(["shopify", "other"]);
+export type Domain = z.infer<typeof domainSchema>;
+
+/**
  * Longest failure message a card stores. Every card's state shares one KV row capped at 256KB, so one unbounded
  * message would fail every later board write.
  */
@@ -85,8 +92,8 @@ const boardTaskSchema = z.object({
   /** bb's unread state: new activity since the user last opened the thread. */
   unread: z.boolean(),
   createdAt: z.string(),
-  /** Subject classification from the labeler; null until classified (shown under Other). */
-  workstream: z.enum(["shopify", "other"]).nullable(),
+  /** The domain (title-bar tab) the card is under: the one its thread was created in, for good. */
+  domain: domainSchema,
   updatedAt: z.string(),
   lastUserInputAt: z.string().nullable(),
   /** When the thread last finished a turn (bb's latest attention time); null before its first. Done sorts by it. */
@@ -102,7 +109,13 @@ export const WIP_LIMIT_MAX = 50;
 const wipLimitSchema = z.object({ limit: z.number().int().nullable(), waiting: z.number().int() });
 export type WipLimitView = z.infer<typeof wipLimitSchema>;
 
-const boardStateSchema = z.object({ columns: z.array(boardColumnSchema), tasks: z.array(boardTaskSchema), wipLimit: wipLimitSchema });
+const boardStateSchema = z.object({
+  columns: z.array(boardColumnSchema),
+  tasks: z.array(boardTaskSchema),
+  wipLimit: wipLimitSchema,
+  /** The open tab; a thread created from now on joins it, unless it is a child of a thread in the other domain. */
+  domain: domainSchema,
+});
 
 const shortNameInput = z.string().trim().min(1).max(40);
 const threadRefSchema = z.object({ threadId: z.string() });
@@ -335,6 +348,8 @@ export const rpcContract = {
        * environment, rich input), forwarded to `threads.spawn` unchanged; bb validates them there.
        */
       composer: z.looseObject({ projectId: z.string(), input: z.array(z.unknown()).min(1) }).optional(),
+      /** The tab the thread was started from. */
+      domain: domainSchema.optional(),
     }),
     output: boardTaskSchema,
   },
@@ -347,6 +362,8 @@ export const rpcContract = {
   board_mark_unread: { input: threadRefSchema, output: z.object({ ok: z.boolean() }) },
   /** Set the working limit (null: none); messages that would start another card past it wait in their thread's queue. */
   board_set_wip_limit: { input: z.object({ limit: z.number().int().min(0).max(WIP_LIMIT_MAX).nullable() }), output: wipLimitSchema },
+  /** Open a domain's tab. */
+  board_set_domain: { input: z.object({ domain: domainSchema }), output: z.object({ domain: domainSchema }) },
   board_search: { input: z.object({ query: z.string().trim().min(1).max(200) }), output: searchResponseSchema },
   work_list: { input: z.null(), output: workStateSchema },
   /** Set or clear a mark on a work item. */

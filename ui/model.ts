@@ -5,6 +5,7 @@ import type {
   BoardSession,
   BoardTask,
   Column,
+  Domain,
   RemoteState,
   SearchResponse,
   Status,
@@ -22,7 +23,7 @@ import type {
 // Shared board types, constants, and pure helpers.
 
 // Type-only re-exports of the server's schema types; keeps zod out of the browser bundle.
-export type { AiUsage, BoardSession, BoardTask, RemoteState, SearchResponse, SystemProcesses, SystemStats, WorkItem, WorkList, WorkMark, WorkSource, WorkStage, WorkState };
+export type { AiUsage, BoardSession, BoardTask, Domain, RemoteState, SearchResponse, SystemProcesses, SystemStats, WorkItem, WorkList, WorkMark, WorkSource, WorkStage, WorkState };
 export type RemoteItem = RemoteState["items"][number];
 export type BoardColumn = Column;
 export type BoardStatus = Status;
@@ -135,8 +136,8 @@ export function groupTasksByColumn(
   // Working: blocked cards, which wait on the user, above working ones; each group keeps the server's order.
   const wip = grouped.get("wip") ?? [];
   grouped.set("wip", [...wip.filter((task) => task.status === "blocked"), ...wip.filter((task) => task.status !== "blocked")]);
-  // Done: newest completion first, read or not, so a card keeps its place from the moment it lands. Completion only
-  // moves when a thread finishes another turn, so reading, relabeling or renaming a card doesn't reshuffle the column.
+  // Done: newest completion first. Completion only moves when a thread finishes another turn, so relabeling or
+  // renaming a card doesn't reshuffle the column; the column splits these into read and unread as it draws them.
   grouped.get("done")?.sort((a, b) => (taskActivityTime(b) ?? 0) - (taskActivityTime(a) ?? 0));
   return grouped;
 }

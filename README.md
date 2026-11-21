@@ -4,7 +4,7 @@ A Kanban board for [bb](https://getbb.app) threads. It opens as a drawer along
 the bottom of the bb app and shows every non-archived top-level thread. Child
 threads roll up into their parent thread.
 
-The drawer starts beside bb's sidebar. The board's title bar (thread counts,
+The drawer starts beside bb's sidebar. The board's title bar (domain tabs,
 search, machine resources) runs along its top, next to bb's page, which ends
 at the drawer's upper edge; drag that edge, or focus it and use the arrow
 keys, Page Up/Down, Home and End, to resize. The chevron at the right end of
@@ -12,6 +12,25 @@ the title bar hides the columns: only the title bar stays, with every control
 still there, across the full width of the window's bottom edge, and the
 chevron shows the columns again. The title bar's dropdowns open down over the
 columns, or up over bb's page while the board is hidden.
+
+## Domains
+
+The title bar starts with two tabs, each a separate board: **Shopify** (the
+Shopify bag) and **Other** (a gamepad). Each tab shows its own count badges
+while any of its threads work or wait on you, and clicking one shows the
+board if it was hidden. Shopify has every column and section below; Other has
+only its threads in Queue (Parked included), Working and Done, with no Radar,
+Out, Outgoing PRs or Remote. The working limit spans both: its picker counts
+every domain's working threads.
+
+A thread joins a domain when it is created and never moves: one started from
+the board's New thread form joins the open tab, a child thread its parent's
+domain, and any other new thread (bb's New thread page, the CLI) the tab open
+at the time; Radar submissions always join Shopify. The open tab is kept on the
+plugin server across reloads. The domain is stored in the thread's plugin
+metadata (`domain`), so it survives archiving and restoring. Threads from
+before domains were sorted once: those Done listed under Other moved to Other,
+the rest stayed on Shopify.
 
 ## Columns
 
@@ -29,10 +48,9 @@ thread (see Parked) and starting a waiting one (see Working limit).
 - **Working**: the thread or one of its descendants has a turn in progress,
   background work included. Blocked threads sit at the top of Working as red cards: the
   thread is idle and needs you (a pending interaction, an error, or a last
-  reply that asks a question). The title bar shows two count badges, the
-  number of working threads in amber and of blocked threads in red, each gone
-  at zero. The Working limit and the waiting count show only in Working's
-  header.
+  reply that asks a question). Each domain tab in the title bar counts its
+  working threads in amber and blocked threads in red, each gone at zero. The
+  Working limit and the waiting count show only in Working's header.
 - **Remote** (a section at the bottom of Working): Shopify River sessions and
   Torrent tickets you're part of that are live, one line each. River sessions
   are those you have spoken in this week (yours or someone else's thread) with
@@ -45,20 +63,12 @@ thread (see Parked) and starting a waiting one (see Working limit).
   hidden. Remote work doesn't count toward the working limit.
 - **Done**: the thread is idle and its last reply reports completion. Cards
   are one line (status, tag, title, and what the thread's tree has spent, or
-  its age while it has no cost). Work cards (Shopify work) come first with no
-  header, then an **Other** section, each newest finish first; a card keeps
-  its place once it lands, read or unread (unread ones wear a solid check).
-  The age is when the thread finished. Read state and
-  finish time are bb's own (the sidebar's unread dot), and the column's count
-  is its unread cards. The existing labeler classifies the thread's subject
-  from its user messages and the agent's reply, not its AI account or other
-  board titles: Shopify products, internal systems, company operations and
-  Shopify-owned repos are work, including Verdict SDK and ExP; personal
-  projects and unrelated tools are other. Without evidence of Shopify work
-  it chooses other. Until the first
-  classification arrives, cards sit in Other; existing cards classify
-  in the background without retitling them. With the labeler off, cards keep
-  their last classification, or stay in Other if they have none.
+  its age while it has no cost). Read cards come first with no header, then
+  an **Unread** section (unread cards also wear a solid check), each newest
+  finish first. Reading a card moves it up into the read cards; marking it
+  unread moves it back. The age is when the thread finished. Read state and
+  finish time are bb's own (the sidebar's unread dot). The column's count is
+  every Done card, read and unread; the Unread section counts its own.
 - **Parked** (grey): a section under the Queue tab, below the queued threads, one line per card. Idle threads you parked to come back to later, such as a
   finished thread whose suggested next steps can wait. Drag an idle card onto
   Parked (it outlines and shows "Drop to park" while you drag), or hover the
@@ -414,7 +424,7 @@ bb shop-kanban remove <thread-id> [--json]   # archives the thread; exits 1 if n
 From the bb plugin store, or from this repository:
 
 ```sh
-bb plugin install git:https://github.com/muhammad-siddeek/bb-plugin-shop-kanban.git@^0.30.0
+bb plugin install git:https://github.com/muhammad-siddeek/bb-plugin-shop-kanban.git@^0.32.0
 ```
 
 ## Development

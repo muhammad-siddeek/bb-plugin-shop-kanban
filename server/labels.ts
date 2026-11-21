@@ -83,7 +83,7 @@ export function labelPrompt(input: {
       : "No other threads on the board.",
     `Current title of this thread, written from its earlier messages: ${input.currentTitle ?? "(none yet)"}`,
     "",
-    'Return JSON: {"category": string, "intent": string, "summary": string, "needsInput": boolean, "workstream": "shopify" | "other"}',
+    'Return JSON: {"category": string, "intent": string, "summary": string, "needsInput": boolean}',
     `- category: what the thread is about, named the way the user's messages name it: the product, repo, project, tool or topic, in 1-2 lowercase words and at most ${CATEGORY_MAX} characters including the space, e.g. "checkout", "docs site", "ci", "kanban". It is a narrow badge: prefer the one word that names the thing, or a common short form ("infra", "k8s", "auth"), over two words. A name, not an activity. Other threads' categories only settle spelling: reuse one when it names this same thing, never for anything else.`,
     '- intent: at most 5 words, lowercase imperative, the user\'s overall goal across all their messages, e.g. "refine UI", "fix flaky checkout test". Keep acronyms and proper nouns; don\'t repeat the category. Most messages are steps toward the goal earlier ones set, and the latest one usually is too: keep the current title, its category included, if it still names that goal. Replace it only if it is wrong or the user now wants something different (e.g. from explaining a problem to fixing it). Commit, release, review, test, "keep going" and "try again" are steps, never the goal.',
     // Room for about one more card line than the old 18 words: the card shows two lines, and hovering it adds a third.
@@ -91,18 +91,16 @@ export function labelPrompt(input: {
       ? '- summary: one sentence, at most 24 words, saying what the agent is doing now for the last user message and what that involves, present progressive, e.g. "Making board clicks scroll to the latest message and keeping the selected card in view."'
       : '- summary: one sentence, at most 24 words, saying what happened in the latest exchange: the main changes or findings, past tense, no "I", e.g. "Made the board denser, synced titles with bb threads, and added a blocked reason; typecheck passes." Only if it stopped to ask the user something, end with what it needs, e.g. "…; asks whether to merge duplicates."',
     "- needsInput: true only if the reply directly asks the user a question (or says it is waiting on them) and the agent cannot continue the work until they answer. False when the work is finished, even if the reply lists suggested next steps, recommendations, decisions for later, things to review or verify, or optional offers (\"I can also…\", \"let me know if you want…\").",
-    '- workstream: "shopify" only when this thread\'s actual subject is Shopify work: its products, company operations, internal systems, or Shopify-owned repos (e.g. shop/world). Otherwise "other", including personal projects, general questions, and unrelated tools or open-source work. Judge the user\'s requests and the agent\'s reply, not other board titles. Using Shopify AI credentials, working at Shopify, or mentioning Shopify incidentally does not make a thread Shopify work. A tool or plugin with "shop" in its name is not enough; improving this Kanban board or bb itself is "other" unless the requested work is specifically for Shopify. With no evidence of Shopify work, choose "other".',
-    '- Shopify domain context: Verdict SDK is Shopify\'s internal feature-flag and experimentation SDK; ExP and experiments-dashboard belong to that experimentation platform. Work on these systems is Shopify work even when the user does not spell out the company name. Likewise, shop/world and its world/trees checkouts are Shopify\'s monorepo, not personal projects. Generic words such as "verdict", "experiment", "shop" or "world" alone are not ownership evidence.',
-    'Example: {"category": "checkout", "intent": "fix flaky payment test", "summary": "…", "needsInput": false, "workstream": "shopify"}',
+    'Example: {"category": "checkout", "intent": "fix flaky payment test", "summary": "…", "needsInput": false}',
   ]
     .filter((line) => line !== "")
     .join("\n");
 }
 
-export function parseLabel(text: string): { category: string; intent: string; summary: string; needsInput: boolean; workstream: "shopify" | "other" } | null {
+export function parseLabel(text: string): { category: string; intent: string; summary: string; needsInput: boolean } | null {
   // The match runs from `{` to `}`, so whatever parses is an object.
   const raw = replyJson(text) as Record<string, unknown> | undefined;
-  if (!raw || (raw.workstream !== "shopify" && raw.workstream !== "other")) return null;
+  if (!raw) return null;
   // The model's phrase, whole: one cut short ("rank and", "add PR queue with") reads as a typo, and small models
   // often run a word or two past the asked length. The caps only stop runaway replies, at a word boundary.
   const phrase = (value: unknown, maxChars: number) => {
@@ -119,6 +117,6 @@ export function parseLabel(text: string): { category: string; intent: string; su
   const intent = phrase(raw.intent, 60).replace(/[.!]+$/u, "");
   const summary = typeof raw.summary === "string" ? oneLine(raw.summary).slice(0, 280) : "";
   if (!category || !intent || !summary) return null;
-  return { category, intent, summary, needsInput: raw.needsInput === true, workstream: raw.workstream };
+  return { category, intent, summary, needsInput: raw.needsInput === true };
 }
 
